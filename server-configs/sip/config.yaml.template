@@ -1,0 +1,25 @@
+# Template for /opt/aivoice/sip/config.yaml
+# The real file has the key/secret substituted in and is chmod 600 - never commit it.
+#
+# Regenerate on the server with:
+#   set -a; source /opt/aivoice/.env; set +a
+#   envsubst < config.yaml.template > /opt/aivoice/sip/config.yaml
+#   chmod 600 /opt/aivoice/sip/config.yaml
+
+api_key: ${LIVEKIT_API_KEY}
+api_secret: ${LIVEKIT_API_SECRET}
+ws_url: ws://127.0.0.1:7880
+
+redis:
+  address: 127.0.0.1:6379
+
+# 5080, not 5060 - Asterisk owns 5060 and both run on host networking.
+sip_port: 5080
+
+# Must NOT overlap net.ipv4.ip_local_port_range (30000-65000) or Asterisk (10000-19999).
+rtp_port: 20000-29999
+
+use_external_ip: false
+
+logging:
+  level: info

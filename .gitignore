@@ -1,0 +1,37 @@
+# ---- secrets: never commit ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+credentials*
+secrets*
+
+# the real sip config has the API key substituted in - only the template is tracked
+server-configs/sip/config.yaml
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ---- runtime artifacts ----
+*.wav
+*.mp3
+*.log
+recordings/
+monitor/
+lat-*.wav
+
+# ---- editors / os ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

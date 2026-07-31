@@ -1,0 +1,15 @@
+asyncpg==0.31.0
+av==18.0.0
+livekit==1.1.13
+livekit-agents==1.6.7
+livekit-api==1.2.0
+livekit-blingfire==1.1.0
+livekit-local-inference==0.2.6
+livekit-plugins-openai==1.6.7
+livekit-plugins-sarvam==1.6.7
+livekit-plugins-silero==1.6.7
+livekit-plugins-turn-detector==1.6.7
+livekit-protocol==1.1.21
+numpy==2.5.1
+onnxruntime==1.28.0
+openai==2.51.0

@@ -1,0 +1,74 @@
+# Deployed at /opt/aivoice/docker-compose.yml on 10.130.9.243
+#
+# network_mode: host is required, not optional.
+# Publishing the RTP port ranges through Docker's bridge network spawns a userland
+# proxy per port - memory blowup plus per-packet latency.
+#
+# CPU limits: 1.5 + 0.5 + 2.0 + 1.0 = 5 of 8 vCPU, leaving ~3 for agent workers.
+# The limits exist so agent workers cannot starve the SFU - a starved SFU degrades
+# audio on EVERY call, not just one.
+
+services:
+  asterisk:
+    build: ./asterisk
+    container_name: asterisk
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./asterisk/conf:/conf-override:ro,Z    # :Z = SELinux relabel (host is enforcing)
+      - asterisk-spool:/var/spool/asterisk
+      - asterisk-log:/var/log/asterisk
+    cap_add: [ SYS_NICE ]                       # realtime scheduling for audio threads
+    ulimits:
+      nofile: 65535
+    deploy:
+      resources:
+        limits: { cpus: '1.5' }
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: redis
+    network_mode: host
+    restart: unless-stopped
+    command: redis-server /etc/redis/redis.conf
+    volumes:
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro,Z
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 320M }
+
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    container_name: livekit
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [ redis ]
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro,Z
+    ulimits:
+      nofile: 65535
+    deploy:
+      resources:
+        limits: { cpus: '2.0' }
+
+  sip:
+    image: livekit/sip:v1.8.0
+    container_name: sip
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [ redis, livekit ]
+    command: --config /etc/sip.yaml
+    volumes:
+      - ./sip/config.yaml:/etc/sip.yaml:ro,Z
+    ulimits:
+      nofile: 65535
+    deploy:
+      resources:
+        limits: { cpus: '1.0' }
+
+volumes:
+  asterisk-spool:
+  asterisk-log:
