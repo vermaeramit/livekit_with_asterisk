@@ -3,9 +3,9 @@
 Low-latency AI voice agent for an existing Asterisk SIP dialer.
 Real-time conversation with **STT → LLM → TTS**, live **barge-in**, and a **knowledge base**.
 
-> **Current status:** Step 9 (knowledge base) complete. The agent holds a real conversation
-> in Hindi over the phone, answers from a **PDF knowledge base**, and **no longer invents
-> facts** — it says "I don't have that" and offers to escalate.
+> **Current status:** Step 9 complete. The agent holds a real conversation in Hindi over the
+> phone, answers from a **PDF knowledge base**, **no longer invents facts**, and **hands the
+> call to a human** when asked.
 > See [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed step log and
 > [docs/RUNBOOK.md](docs/RUNBOOK.md) for day-to-day commands.
 
@@ -218,8 +218,8 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 7 | Echo agent — **end-to-end latency baseline** | ✅ **205 ms** |
 | 8 | Real pipeline: Sarvam STT → `gpt-4.1-mini` → Sarvam TTS + barge-in | ✅ **~1.9 s median** |
 | 9 | Knowledge base + grounding | ✅ **no hallucinations** |
-| 9b | Human transfer tool | ⏭️ **Next** |
-| 10 | systemd service, first-call fix, fallbacks, monitoring, load test | ⬜ |
+| 9b | Human transfer (SIP REFER) | ✅ verified end to end |
+| 10 | systemd service, first-call fix, fallbacks, monitoring, load test | ⏭️ **Next** |
 | 11 | Admin panel — agent config, live monitoring, call review | ⬜ |
 
 ### Knowledge base — two layers

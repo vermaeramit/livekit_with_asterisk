@@ -303,6 +303,69 @@ UPDATE agent_config SET kb_min_score = 0.20          WHERE name='default';
 
 ---
 
+## 3c. Human transfer
+
+The agent hands off with a SIP REFER. The caller's channel detaches from LiveKit and lands
+on an extension in Asterisk's `from-livekit` context.
+
+### Settings
+
+```sql
+UPDATE agent_config SET transfer_enabled = true                    WHERE name='default';
+UPDATE agent_config SET transfer_to = 'sip:800@10.130.9.243'       WHERE name='default';
+UPDATE agent_config SET transfer_message = 'Ek minute, main aapko jod raha hoon.'
+                                                                    WHERE name='default';
+```
+
+### Point it at a real destination
+
+`800` is currently a stand-in that plays a prompt and echoes. For production, edit
+`/opt/aivoice/asterisk/conf/extensions.conf`:
+
+```ini
+[from-livekit]
+exten => 800,1,NoOp(<-- TRANSFER landed)
+ same => n,Dial(PJSIP/1002,30)          ; a human's extension
+ ; or: same => n,Queue(support)
+ same => n,Hangup()
+```
+
+then `docker compose restart asterisk`.
+
+> 🚨 The target extension **must** be in `from-livekit` (that is the `livekit` endpoint's
+> context, where the REFER arrives) and **must come before the `_.` catch-all**, which
+> would otherwise match it and hang up the transfer.
+
+### Verify a transfer
+
+```bash
+# agent side
+#   TOOL transfer_to_human('...') -> sip:800@10.130.9.243  participant=sip_1001
+#   TRANSFER OK -> sip:800@10.130.9.243
+
+# asterisk side - this is the proof the call actually landed
+docker compose logs --tail=40 asterisk | grep -E 'TRANSFER landed|left .simple_bridge|Playback'
+
+# call record
+docker exec postgres psql -U aivoice -d aivoice -c "
+SELECT id, end_reason, transferred_to, transfer_reason, duration_ms
+  FROM calls WHERE transferred_to IS NOT NULL ORDER BY id DESC LIMIT 5;"
+```
+
+`TRANSFER OK` in the agent log only means LiveKit **sent** the REFER. The Asterisk log is
+what confirms the call reached the destination.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| Handoff line cut off mid-sentence | `wait_for_playout()` not awaited before the REFER |
+| Call drops instead of transferring | Target extension missing from `from-livekit`, or shadowed by the `_.` catch-all |
+| `transfer failed` in the agent log | Check `res_pjsip_refer.so` is loaded: `docker exec asterisk asterisk -rx "module show like refer"` |
+| Transfers on questions it could answer | Tighten the HANDOFF rules in the prompt |
+
+---
+
 ## 4. Health checks
 
 ```bash

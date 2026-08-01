@@ -3,8 +3,8 @@
 Detailed record of every step performed on `10.130.9.243`.
 Overview and architecture live in [../README.md](../README.md).
 
-**Currently at:** Step 9 — human transfer tool remaining
-**Last completed:** Step 9 (KB) — PDF knowledge base with grounding. **Hallucinations eliminated.**
+**Currently at:** Step 10 — production hardening
+**Last completed:** Step 9 — PDF knowledge base with grounding + human transfer. **Hallucinations eliminated.**
 
 ---
 
@@ -964,21 +964,132 @@ Grounding costs ~300–500 ms. Acceptable for eliminating fabricated answers.
 | `operator does not exist: text %% text` | `%` was escaped as `%%`. asyncpg uses `$1` placeholders and does **not** do `%` formatting. |
 | Retrieval returned 0 hits in the agent but worked standalone | The standalone test used romanized queries; the agent got Devanagari from STT. **The test was wrong, not the code.** |
 
-### ⚠️ Open
+---
 
-1. **Turn 1 is slow** (~1926 ms TTFT) until the prompt cache warms.
-2. **`kb_tool` takes ~1569 ms** — the embedding API call is slow for a 7 ms-away endpoint.
-   Now only on tool-call turns, but worth chasing.
-3. **Human transfer tool** not built yet.
-4. Scanned PDFs are unsupported — no OCR. Text-based only, which matches the requirement.
+## ✅ Step 9b — Human Transfer
+
+Blind transfer via SIP REFER. Verified end to end.
+
+### Flow
+
+```
+Eyebeam -> Asterisk -> livekit-sip -> LiveKit room -> AI agent
+                                                        | transfer_to_human()
+                                                        v
+                                        LiveKit SIP TransferSIPParticipant
+                                                        |  SIP REFER
+                                                        v
+                                        Asterisk -> extension 800
+```
+
+**Cold transfer, not warm.** The alternative — dialling the human into the room for a
+three-way then dropping the AI — gives the human context but needs an outbound leg and an
+exit dance. Cold transfer is what dialers do, and the architecture leaves room to add warm
+transfer later without changing anything else.
+
+### Announce, then transfer
+
+The handoff line must finish playing **before** the REFER goes out, or the caller gets
+abrupt silence and then a stranger. `RunContext` provides everything needed:
+
+```python
+context.disallow_interruptions()
+handle = await context.session.say(msg, allow_interruptions=False)
+await handle.wait_for_playout()      # <- the important line
+# ... only now send the REFER
+```
+
+Verified in the timeline:
+
+```
+12:00:31.919  tool execution start
+12:00:35.933  [assistant] "Ek minute, main aapko humare representative se jod raha hoon."
+12:00:35.936  TOOL transfer_to_human(...) -> sip:800@10.130.9.243  participant=sip_1001
+12:00:36.954  TRANSFER OK
+```
+
+### Asterisk side
+
+The REFER arrives on the `livekit` endpoint, so the target extension must live in that
+endpoint's context — `from-livekit` — and must be declared **before** the `_.` catch-all,
+which would otherwise match and hang up the transfer.
+
+```ini
+[from-livekit]
+; 800 -> transfer target. In production this becomes Dial(PJSIP/1002) or Queue(support).
+exten => 800,1,NoOp(<-- TRANSFER landed: human agent)
+ same => n,Answer()
+ same => n,Wait(1)
+ same => n,Playback(demo-thanks)
+ same => n,Echo()
+ same => n,Hangup()
+
+exten => _.,1,NoOp(<-- Inbound from LiveKit: ${EXTEN})
+ same => n,Hangup()
+```
+
+`res_pjsip_refer.so` must be loaded (it is, by default).
+
+Confirmed in the Asterisk log — the caller's channel detached from the LiveKit bridge and
+landed on 800:
+
+```
+Channel PJSIP/livekit-00000001 left 'simple_bridge'
+Executing [800@from-livekit:1] NoOp("<-- TRANSFER landed: human agent")
+Executing [800@from-livekit:4] Playback("demo-thanks")
+```
+
+### Config
+
+| Column | Purpose |
+|---|---|
+| `agent_config.transfer_enabled` | Master switch |
+| `agent_config.transfer_to` | SIP URI, e.g. `sip:800@10.130.9.243` |
+| `agent_config.transfer_message` | Spoken before the REFER |
+| `calls.transferred_to` / `transfer_reason` | Recorded for review |
+
+```
+15 | call_1001_R3AttWQGwj8P | transferred | sip:800@10.130.9.243 |
+     Customer requested to speak with an agent | 49827 ms
+```
+
+### When it fires
+
+Prompt rules keep it from triggering on answerable questions:
+
+```
+- Call transfer_to_human when the caller asks for a person, sounds frustrated,
+  wants to complain, or asks something you still cannot answer after searching.
+- Do NOT transfer for anything you can answer yourself.
+- Do not announce the handoff yourself - the tool speaks the line and moves the call.
+```
+
+Same call: *"price kya hai?"* was answered from the prompt with `kb_tool_calls=0` and no
+transfer; *"mujhe kisi agent se baat kara do"* transferred immediately.
 
 ---
 
-## ⏭️ Next
+### ⚠️ Open
 
-- Human transfer tool (completes Step 9)
-- Step 10 — systemd service, first-call fix, provider fallbacks, monitoring, load test
-- Step 11 — admin panel
+1. **Turn 1 is slow** (~1560–1926 ms TTFT) until the prompt cache warms. Every call pays
+   this on its first answer, which is the one that sets the caller's impression.
+2. **`kb_tool` takes ~1569 ms** — the embedding API call is slow for a 7 ms-away endpoint.
+   Only on tool-call turns now, but worth chasing.
+3. **First call after a worker restart still only rings** (worker needs ~7 s to register).
+4. Scanned PDFs unsupported — no OCR. Text-based only, which matches the requirement.
+5. Minor: the `h` (hangup) extension falls through the `from-livekit` catch-all and logs
+   noise. Harmless; exclude it when convenient.
+
+---
+
+## ⏭️ Step 10 — production hardening (next)
+
+- systemd unit running `voice_agent.py start`, fixing the first-call ring
+- `Dial(...,8)` + fallback route so a down worker fails over instead of ringing 30 s
+- Provider fallbacks (a TTS spike of 1.26 s against a 0.23 s norm was observed)
+- Prompt-cache warming at call start
+- Prometheus/Grafana, per-call cost guardrails
+- Load test toward 18–20 concurrent
 
 ---
 

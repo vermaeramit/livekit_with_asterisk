@@ -32,6 +32,9 @@ class AgentConfig:
     kb_min_score: float
     kb_inline_max_tokens: int
     kb_summary: Optional[str]
+    transfer_enabled: bool
+    transfer_to: str
+    transfer_message: Optional[str]
 
 
 async def pool() -> asyncpg.Pool:

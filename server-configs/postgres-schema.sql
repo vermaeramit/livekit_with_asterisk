@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict A7arS9lyFuLcMsCjlT7jpQBQWUcL6pVaVFMJOJwOAxS66wC1xFv9dDKOrbduOEh
+\restrict 6RlFnIMGhTwWisrjjBCY6jb06OxeLj9pGNdeoaMsg4S4j8AvNBgDOXWpkHXevDS
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -77,7 +77,10 @@ CREATE TABLE public.agent_config (
     kb_top_k integer DEFAULT 3 NOT NULL,
     kb_min_score real DEFAULT 0.25 NOT NULL,
     kb_inline_max_tokens integer DEFAULT 6000 NOT NULL,
-    kb_summary text
+    kb_summary text,
+    transfer_enabled boolean DEFAULT true NOT NULL,
+    transfer_to text DEFAULT 'sip:800@10.130.9.243'::text NOT NULL,
+    transfer_message text
 );
 
 
@@ -118,7 +121,9 @@ CREATE TABLE public.calls (
     duration_ms integer,
     end_reason text,
     outcome text,
-    recording_path text
+    recording_path text,
+    transferred_to text,
+    transfer_reason text
 );
 
 
@@ -417,5 +422,5 @@ ALTER TABLE ONLY public.turns
 -- PostgreSQL database dump complete
 --
 
-\unrestrict A7arS9lyFuLcMsCjlT7jpQBQWUcL6pVaVFMJOJwOAxS66wC1xFv9dDKOrbduOEh
+\unrestrict 6RlFnIMGhTwWisrjjBCY6jb06OxeLj9pGNdeoaMsg4S4j8AvNBgDOXWpkHXevDS
 
