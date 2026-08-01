@@ -3,9 +3,10 @@
 Low-latency AI voice agent for an existing Asterisk SIP dialer.
 Real-time conversation with **STT → LLM → TTS**, live **barge-in**, and a **knowledge base**.
 
-> **Current status:** Step 9 complete. The agent holds a real conversation in Hindi over the
-> phone, answers from a **PDF knowledge base**, **no longer invents facts**, and **hands the
-> call to a human** when asked.
+> **Current status:** Step 10a complete. The agent holds a real conversation in Hindi over
+> the phone, answers from a **PDF knowledge base**, **no longer invents facts**, **hands the
+> call to a human** when asked, runs under systemd, and has been load-tested to
+> **10 concurrent calls at full quality**.
 > See [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed step log and
 > [docs/RUNBOOK.md](docs/RUNBOOK.md) for day-to-day commands.
 
@@ -219,8 +220,29 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 8 | Real pipeline: Sarvam STT → `gpt-4.1-mini` → Sarvam TTS + barge-in | ✅ **~1.9 s median** |
 | 9 | Knowledge base + grounding | ✅ **no hallucinations** |
 | 9b | Human transfer (SIP REFER) | ✅ verified end to end |
-| 10 | systemd service, first-call fix, fallbacks, monitoring, load test | ⏭️ **Next** |
+| 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
+| 10b | Provider fallbacks, monitoring, cost guardrails | ⏭️ **Next** |
 | 11 | Admin panel — agent config, live monitoring, call review | ⬜ |
+
+### Measured capacity
+
+| Concurrent | p50 | p95 | System load (8 cores) |
+|---|---|---|---|
+| 1 | 1921 ms | ~2400 ms | — |
+| **10** | **2001 ms** | **2776 ms** | 2.0–2.2 (~27 %) |
+
+Three worker instances; latency essentially flat under load. Above 10 is untested — the
+headroom suggests 18–20 is reachable with 4–5 workers, but that is extrapolation.
+
+**Two bugs that only exist in production mode** were found here. `WorkerOptions` carries
+separate dev and prod defaults, and both prod values broke things:
+
+- `load_threshold` (dev `inf`, prod `0.7`) stopped dispatch at **3 concurrent** while the
+  machine sat at 12 % CPU. The metric clamps to 0–1, so any threshold below 1.0 trips on a
+  momentary spike — it has to be set above 1.0 to disable.
+- `port` (dev random, prod fixed `8081`) made every extra worker crash-loop on
+  `address already in use`. `systemctl is-active` reported all three healthy while only one
+  had registered — three load-test runs were interpreted on that false assumption.
 
 ### Knowledge base — two layers
 

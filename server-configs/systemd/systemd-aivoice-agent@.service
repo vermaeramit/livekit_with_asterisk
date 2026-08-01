@@ -1,0 +1,37 @@
+[Unit]
+Description=AI Voice Agent worker %i
+Documentation=https://github.com/vermaeramit/livekit_with_asterisk
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aivoice/agent
+EnvironmentFile=/opt/aivoice/.env
+Environment=LOAD_THRESHOLD=5.0
+Environment=NUM_IDLE_PROCESSES=4
+Environment=AGENT_HTTP_PORT=808%i
+Environment=LIVEKIT_URL=ws://127.0.0.1:7880
+
+# "start", not "dev": dev mode keeps num_idle_processes at 0, which is why the
+# first call after a restart only rang - there was no warm process to take the
+# job and livekit-sip will not answer until an agent subscribes to its track.
+ExecStart=/opt/aivoice/agent/.venv/bin/python /opt/aivoice/agent/voice_agent.py start
+
+Restart=always
+RestartSec=5
+
+# livekit-agents drains in-flight calls on SIGINT. Give it room so a deploy or
+# a restart does not cut live conversations mid-sentence.
+KillSignal=SIGINT
+TimeoutStopSec=180
+
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aivoice-agent-%i
+
+[Install]
+WantedBy=multi-user.target

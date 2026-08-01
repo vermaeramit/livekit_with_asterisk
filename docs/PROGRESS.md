@@ -3,8 +3,9 @@
 Detailed record of every step performed on `10.130.9.243`.
 Overview and architecture live in [../README.md](../README.md).
 
-**Currently at:** Step 10 — production hardening
-**Last completed:** Step 9 — PDF knowledge base with grounding + human transfer. **Hallucinations eliminated.**
+**Currently at:** Step 10 — monitoring + provider fallbacks remaining
+**Last completed:** Step 10 (deployment + capacity) — **10 concurrent calls at full quality**, two
+production-only bugs found and fixed.
 
 ---
 
@@ -1082,14 +1083,197 @@ transfer; *"mujhe kisi agent se baat kara do"* transferred immediately.
 
 ---
 
-## ⏭️ Step 10 — production hardening (next)
+## ✅ Step 10a — Deployment, fallback, capacity
 
-- systemd unit running `voice_agent.py start`, fixing the first-call ring
-- `Dial(...,8)` + fallback route so a down worker fails over instead of ringing 30 s
-- Provider fallbacks (a TTS spike of 1.26 s against a 0.23 s norm was observed)
-- Prompt-cache warming at call start
-- Prometheus/Grafana, per-call cost guardrails
-- Load test toward 18–20 concurrent
+### Result: **10 concurrent calls at full quality**
+
+| | Single call | 10 concurrent |
+|---|---|---|
+| p50 | 1921 ms | **2001 ms** |
+| p95 | ~2400 ms | **2776 ms** |
+| max | — | 2947 ms |
+| eou / llm / tts | 1030 / 915 / 241 | 966 / 898 / 271 |
+| System load | — | 2.0–2.2 on 8 cores (**~27 %**) |
+| RAM | — | 4.7 / 11 GB |
+
+Latency essentially unchanged under load. Three workers, jobs distributed 0/4/3.
+
+> Tested to 10, not 20. At ~27 % CPU the headroom suggests the 18–20 target is reachable
+> with 4–5 workers, but that is an extrapolation, not a measurement.
+
+---
+
+### systemd — and the first-call fix
+
+The agent was being started by hand, which is why the first call after a restart only rang:
+the worker needs ~7 s to register (the inference executor alone takes ~4.7 s), and
+livekit-sip will not answer until an agent subscribes to its track.
+
+Two units:
+
+| Unit | Purpose |
+|---|---|
+| `aivoice-agent@.service` | Template — one instance per worker |
+| `aivoice-cache-warmer.service` | Keeps the OpenAI prompt cache hot |
+
+Key settings and why:
+
+```ini
+ExecStart=... voice_agent.py start      # not `dev` - see the trap below
+Restart=always
+KillSignal=SIGINT                       # livekit-agents drains in-flight calls on SIGINT
+TimeoutStopSec=180                      # so a deploy does not cut live conversations
+Environment=AGENT_HTTP_PORT=808%i       # per-instance, see bug 2
+Environment=LOAD_THRESHOLD=5.0          # see bug 1
+```
+
+### Dial timeout + fallback
+
+`Dial(PJSIP/700@livekit,8)` and, on timeout, `Goto(from-livekit,800,1)` — the same
+extension the agent transfers to. Before this, a down worker meant 30 s of ringing and a
+dead call; one crashed worker would have stalled the whole dialer.
+
+Verified by stopping the agent and dialling: ~8 s, then the human extension. Confirmed
+again during load testing, where overflow calls fell through cleanly instead of dropping.
+
+---
+
+### 🔴 Two bugs that only exist in production mode
+
+Both were invisible in `dev` and appeared the moment the agent moved to systemd.
+`WorkerOptions` uses `ServerEnvOption(dev_default=..., prod_default=...)`, and the
+production defaults are the dangerous ones:
+
+| Option | dev_default | prod_default |
+|---|---|---|
+| `load_threshold` | `inf` | **0.7** |
+| `port` | `0` (random) | **8081** (fixed) |
+| `num_idle_processes` | `0` | 2 |
+
+**Bug 1 — `load_threshold` blocked dispatch at 3 concurrent calls.**
+
+```
+12:29:01  received job request  (1)
+12:29:02  received job request  (2)
+12:29:03  received job request  (3)
+12:29:04  worker is at full capacity   load: 1.0   threshold: 0.7
+12:29:17  below capacity                            (13 s later)
+```
+
+Calls 4 and 5 were never dispatched and fell through to the human fallback. The machine was
+**not** loaded — system load average was 0.94 across 8 cores (~12 %) at that moment. The
+worker's own metric samples `psutil.cpu_percent()` over a short window, and spawning job
+processes (each loading Silero + onnxruntime) spikes it.
+
+> The load value is **clamped to 0–1**, so *any* threshold below 1.0 trips on a momentary
+> 100 % sample. Raising 0.7 → 0.9 changed nothing; only a value above 1.0 disables it.
+> Set to `5.0` and the real ceiling becomes latency rather than a proxy metric.
+
+**Bug 2 — every extra worker instance silently crash-looped.**
+
+```
+OSError: [Errno 98] error while attempting to bind on address ('::', 8081):
+         address already in use
+```
+
+All instances tried to bind the same fixed health-server port. Only one survived.
+
+**`systemctl is-active` reported `active` for all three** — `Restart=always` kept restarting
+the dead ones, so the unit looked healthy while the worker never registered. Three separate
+load-test runs were interpreted on the assumption that three workers were running when only
+one ever was.
+
+Fixed with a per-instance port (`AGENT_HTTP_PORT=808%i`). Verification afterwards:
+
+```
+worker 1: active  registered=1     8081  pid 437017
+worker 2: active  registered=1     8082  pid 437040
+worker 3: active  registered=1     8083  pid 437018
+```
+
+> **Lesson: `systemctl is-active` is not proof a worker is working.** Check for
+> `registered worker` in the journal and confirm the port is bound.
+
+---
+
+### The load test, and three wrong hypotheses
+
+`loadtest.sh` originates N calls through `Local/s@loadtest` bridged to `700`, so real speech
+flows and the whole STT → LLM → TTS path runs — silence would only have exercised transport.
+
+Same 10-call test, four runs:
+
+| Run | Config | Calls |
+|---|---|---|
+| 1 | 1 worker, `load_threshold=0.7` | 3 |
+| 2 | 1 worker, `load_threshold=5.0` | 5 |
+| 3 | "3 workers" (2 were crash-looping) | 7 |
+| 4 | **3 real workers** | **10** |
+
+Three explanations were proposed and disproved along the way — CPU saturation, the
+`load_threshold` value, and burst arrival rate. Widening the originate stagger from 0.5 s to
+2.5 s made results *worse*, which killed the burst theory. The actual cause was that the
+extra workers had never started.
+
+> The check that would have caught it — confirming `registered worker` after
+> `systemctl enable --now` — was skipped. Three subsequent runs were built on that
+> assumption.
+
+### Measurement mistakes worth remembering
+
+- `ps -C python` measured only the **parent** process (1.2 %); the work happens in spawned
+  job processes. It made the agent look idle at 10–15 % CPU.
+- `docker exec` **needs `-i`** to accept a heredoc. Without it psql receives nothing and
+  prints nothing — no error.
+- `--since "-4min"` windows repeatedly cut off the start of a test and produced phantom
+  "only 7 of 10 connected" results. Query by call id instead.
+
+---
+
+### Prompt-cache warming — measured, then deliberately not pursued further
+
+`cache_warmer.py` runs as its own service, sending the same system prompt every 120 s.
+Cache persistence measured directly:
+
+| | ttft | cached |
+|---|---|---|
+| cold | 1198 ms | 0 |
+| +2 s | 805 ms | 1152 / 1343 |
+| +60 s | 989 ms | 1152 |
+| **+180 s** | 950 ms | 1152 |
+
+But across 17 real calls the first-turn penalty was smaller than the noise:
+
+| | count | avg | p50 | max |
+|---|---|---|---|---|
+| First turn | 17 | 1274 ms | 1091 ms | 3301 ms |
+| Later turns | 51 | 915 ms | 852 ms | 2157 ms |
+
+A ~240 ms p50 gap against a 682–3301 ms spread. Matching the warmer's prefix to the agent's
+(which also sends tool definitions) would be real work for a gain that could not be reliably
+observed. **The warmer stays because it is free; the tool-schema matching was dropped.**
+
+---
+
+### ⚠️ Open
+
+1. **Capacity above 10 is untested.** ~27 % CPU at 10 concurrent suggests room, but 18–20
+   needs verifying — ideally with `sipp` rather than Asterisk Local channels, which added
+   their own noise here.
+2. **No provider fallbacks.** A Sarvam TTS spike of 1.26 s against a 0.23 s norm was
+   observed; a Sarvam outage would leave the agent mute.
+3. **`transfer_to_human` can fail** — seen once as `503 Service Unavailable`. Currently only
+   apologises; no retry or alternate route.
+4. **No monitoring or cost guardrails.**
+5. **`kb_tool` takes ~1569 ms** — slow for a 7 ms-away embedding endpoint.
+
+---
+
+## ⏭️ Next
+
+- Step 10b — provider fallbacks, monitoring, cost guardrails
+- Capacity test to 20 with a proper SIP load tool
+- Step 11 — admin panel
 
 ---
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenAI prompt cache warmer
+After=network-online.target docker.service aivoice-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aivoice/agent
+EnvironmentFile=/opt/aivoice/.env
+ExecStart=/opt/aivoice/agent/.venv/bin/python /opt/aivoice/agent/cache_warmer.py
+Restart=always
+RestartSec=15
+SyslogIdentifier=aivoice-warmer
+
+[Install]
+WantedBy=multi-user.target

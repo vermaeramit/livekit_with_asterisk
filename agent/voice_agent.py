@@ -26,6 +26,8 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, sarvam, silero
 
+import prompt as prompt_mod
+
 # NOTE: livekit.agents.inference.TurnDetector is the newer API, but its signature
 # (base_url/api_key/conn_options) shows it can call a remote gateway. Turn
 # detection runs on EVERY turn - a network hop there would wreck the endpointing
@@ -40,30 +42,6 @@ CONFIG_NAME = os.getenv("AGENT_CONFIG", "default")
 MIN_ENDPOINTING = float(os.getenv("MIN_ENDPOINTING_DELAY", "0.25"))
 # The 4.0 default froze calls for 4s when a short closing scored below threshold.
 MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
-
-
-GROUNDING_RULES = """
-
-KNOWLEDGE RULES - these override every other instruction:
-- The "REFERENCE INFORMATION" section above is your primary source. Answer from it.
-- If it does not answer the question, call search_knowledge_base once, then answer
-  from what it returns.
-- If neither has the answer, say plainly that you do not have that information.
-- Never invent or guess a price, date, phone number, policy, name, or availability.
-  A confident wrong number is far worse than admitting you do not know - the caller
-  will act on it.
-- Do not fill gaps with general knowledge.
-"""
-
-TRANSFER_RULES = """
-
-HANDOFF:
-- Call transfer_to_human when the caller asks for a person, sounds frustrated,
-  wants to complain, or asks something you still cannot answer after searching.
-- Do NOT transfer for anything you can answer yourself.
-- Do not announce the handoff yourself - the tool speaks the line and moves the
-  call. Just call it.
-"""
 
 
 def prewarm(proc: JobProcess):
@@ -232,23 +210,13 @@ class KBAgent(Agent):
 
 
 async def entrypoint(ctx: JobContext):
-    import kb
     import store
 
     cfg = await store.load_config(CONFIG_NAME)
     stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
 
-    instructions = cfg.instructions
-    kb_mode, kb_tokens = "off", 0
-    if cfg.kb_enabled:
-        text, kb_tokens, kb_mode = await kb.load_inline(cfg.name, cfg.kb_inline_max_tokens)
-        if text:
-            label = ("REFERENCE INFORMATION" if kb_mode == "full" else
-                     "AVAILABLE DOCUMENTS (use search_knowledge_base for details)")
-            instructions += f"\n\n=== {label} ===\n{text}\n=== END ===\n"
-        instructions += GROUNDING_RULES
-    if cfg.transfer_enabled:
-        instructions += TRANSFER_RULES
+    # built in prompt.py so the cache warmer emits a byte-identical prefix
+    instructions, kb_mode, kb_tokens = await prompt_mod.build_instructions(cfg)
 
     logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
                 cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
@@ -268,7 +236,8 @@ async def entrypoint(ctx: JobContext):
 
     session = AgentSession(
         stt=sarvam.STT(**stt_kw),
-        llm=openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature),
+        llm=openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature,
+                       prompt_cache_key=cfg.name),
         tts=sarvam.TTS(**tts_kw),
         vad=ctx.proc.userdata["vad"],
         turn_detection=MultilingualModel(),
@@ -361,7 +330,25 @@ if __name__ == "__main__":
     _kw = {"entrypoint_fnc": entrypoint, "prewarm_fnc": prewarm}
     _p = inspect.signature(WorkerOptions.__init__).parameters
     if "num_idle_processes" in _p:
-        _kw["num_idle_processes"] = int(os.getenv("NUM_IDLE_PROCESSES", "3"))
+        # A bigger warm buffer means fewer processes are spawned at once when
+        # calls arrive together. Each spawn loads Silero + onnxruntime, and it is
+        # those spikes - not sustained load - that were tripping the threshold.
+        _kw["num_idle_processes"] = int(os.getenv("NUM_IDLE_PROCESSES", "6"))
+    if "port" in _p:
+        # prod_default is a FIXED 8081 (dev_default is 0 = random), so every
+        # extra worker instance on this box collides:
+        #   OSError [Errno 98] address already in use -> worker exits at startup
+        # systemd's Restart=always then hides it: the unit reads "active" while
+        # the worker is actually crash-looping and never registers.
+        _kw["port"] = int(os.getenv("AGENT_HTTP_PORT", "8081"))
+    if "load_threshold" in _p:
+        # prod_default is 0.7 and dev_default is inf, so this only bites once the
+        # worker runs in `start` mode. Load-tested at 5 concurrent: the worker
+        # marked itself unavailable at load=1.0 after only 3 calls and LiveKit
+        # stopped dispatching - two callers fell through to the human fallback.
+        # System load average at that moment was 0.94 across 8 cores (~12%), so
+        # the machine was fine; psutil was sampling the spawn spikes.
+        _kw["load_threshold"] = float(os.getenv("LOAD_THRESHOLD", "0.9"))
     if "drain_timeout" in _p:
         _kw["drain_timeout"] = int(os.getenv("DRAIN_TIMEOUT", "150"))
     cli.run_app(WorkerOptions(**_kw))

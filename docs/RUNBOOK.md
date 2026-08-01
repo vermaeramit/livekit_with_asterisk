@@ -59,25 +59,63 @@ docker compose restart asterisk   # one service
 | `sip` | SIP ↔ WebRTC gateway on port 5080 |
 | `postgres` | Agent config, call logs, transcripts |
 
-### The AI agent
+### The AI agent (systemd)
 
-Currently started **manually** — this is why the first call after a restart only rings
-(see §6). A systemd unit is planned for Step 10.
+Three worker instances plus the prompt-cache warmer:
+
+```bash
+systemctl status  aivoice-agent@1 aivoice-agent@2 aivoice-agent@3
+systemctl restart aivoice-agent@1 aivoice-agent@2 aivoice-agent@3
+systemctl status  aivoice-cache-warmer
+
+journalctl -u aivoice-agent@2 -f | grep -A 1 -E "voice-agent|ERROR"
+journalctl -u aivoice-cache-warmer -f
+```
+
+Add a worker (each needs its **own port**, see below):
+
+```bash
+systemctl enable --now aivoice-agent@4     # binds 8084 via AGENT_HTTP_PORT=808%i
+```
+
+> 🚨 **`systemctl is-active` is NOT proof a worker is working.** With `Restart=always`, a
+> crash-looping worker still reads `active`. Always verify registration:
+
+```bash
+for i in 1 2 3; do
+  printf "worker %s: %-8s registered=%s errors=%s\n" $i \
+    "$(systemctl is-active aivoice-agent@$i)" \
+    "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'registered worker')" \
+    "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'worker failed')"
+done
+ss -tlnp | grep -E ':808[0-9]'      # one listener per worker
+```
+
+This exact failure cost three load-test runs: two workers were crash-looping on
+`[Errno 98] address already in use` (fixed port 8081) while systemd reported all three
+healthy.
+
+### Manual run (debugging only)
 
 ```bash
 cd /opt/aivoice/agent && source .venv/bin/activate
 export LIVEKIT_URL=ws://127.0.0.1:7880
 set -a; source /opt/aivoice/.env; set +a
-
-# development - verbose, no idle processes (cold start on first call)
-python voice_agent.py dev
-
-# production - pre-warmed processes
-python voice_agent.py start
+python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent|ERROR|Traceback"
 ```
 
-**Wait for `registered worker` before dialling.** Startup takes ~7 s: the inference
-executor alone needs ~4.7 s.
+⚠️ Stop the systemd workers first, or jobs land randomly across them.
+
+> **`dev` and `start` behave differently in ways that matter.** `WorkerOptions` uses
+> separate dev/prod defaults, and the production ones caused two real outages:
+>
+> | Option | dev | **prod** |
+> |---|---|---|
+> | `load_threshold` | `inf` | **0.7** — blocked dispatch at 3 concurrent |
+> | `port` | `0` (random) | **8081** (fixed) — extra workers crash-loop |
+> | `num_idle_processes` | `0` | 2 — first call after restart only rang |
+>
+> A problem that does not reproduce in `dev` may still be real in production.
 
 Readable log filter (keeps the timing continuation lines):
 
@@ -363,6 +401,67 @@ what confirms the call reached the destination.
 | Call drops instead of transferring | Target extension missing from `from-livekit`, or shadowed by the `_.` catch-all |
 | `transfer failed` in the agent log | Check `res_pjsip_refer.so` is loaded: `docker exec asterisk asterisk -rx "module show like refer"` |
 | Transfers on questions it could answer | Tighten the HANDOFF rules in the prompt |
+
+---
+
+## 3d. Load testing
+
+```bash
+/opt/aivoice/loadtest.sh <concurrent> [stagger_seconds]
+/opt/aivoice/loadtest.sh 10 0.5
+```
+
+Originates N calls through `Local/s@loadtest` bridged to `700`, so real speech flows and the
+full STT → LLM → TTS path runs. It samples load, channels, per-container CPU and rooms every
+2 s to `/tmp/loadtest-*.log`.
+
+⚠️ Costs real API calls — each test call runs ~8 turns of STT + LLM + TTS.
+
+### Reading the result
+
+```bash
+# by call id, NOT a time window - "--since -4min" repeatedly cut off the start
+# of a test and produced phantom "only 7 of 10" results
+docker exec -i postgres psql -U aivoice -d aivoice -c \
+ "SELECT id, room_name, duration_ms FROM calls ORDER BY id DESC LIMIT 12;"
+
+docker exec -i postgres psql -U aivoice -d aivoice -c "
+SELECT count(*) AS turns,
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms))  AS p50,
+       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms)) AS p95,
+       round(avg(eou_ms)) AS eou, round(avg(llm_ttft_ms)) AS llm, round(avg(tts_ttfb_ms)) AS tts
+  FROM turns t JOIN calls c ON c.id=t.call_id
+ WHERE c.id BETWEEN <first> AND <last> AND t.role='agent' AND t.total_ms>0;"
+
+# job distribution across workers
+for i in 1 2 3; do
+  printf "worker %s: " $i
+  journalctl -u aivoice-agent@$i --since "HH:MM" --until "HH:MM" --no-pager \
+    | grep -c "received job request"
+done
+
+# calls that fell through to the human fallback
+docker compose -f /opt/aivoice/docker-compose.yml logs --since 10m asterisk \
+  | grep -c "AI UNAVAILABLE"
+```
+
+### Measured
+
+| Concurrent | p50 | p95 | System load (8 cores) |
+|---|---|---|---|
+| 1 | 1921 ms | ~2400 ms | — |
+| **10** | **2001 ms** | **2776 ms** | 2.0–2.2 (~27 %) |
+
+Three workers, jobs distributed 0/4/3. Above 10 is untested.
+
+### If calls do not connect
+
+| Check | |
+|---|---|
+| All workers registered? | See §1 — `is-active` alone is not enough |
+| `AI UNAVAILABLE` in Asterisk log | Dial timed out; agent did not join in 8 s |
+| `full capacity` in the journal | `load_threshold` blocking — it clamps to 0–1, so any value below 1.0 trips on a momentary spike. Use > 1.0 to disable. |
+| `processing invite` vs `received job request` | SIP took the call but no agent was dispatched |
 
 ---
 
