@@ -35,3 +35,8 @@ lat-*.wav
 *~
 .DS_Store
 Thumbs.db
+
+# ---- GCP service account credentials ----
+gcp/
+*-sa.json
+service-account*.json

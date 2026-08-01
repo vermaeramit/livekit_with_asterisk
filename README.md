@@ -221,7 +221,24 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 9 | Knowledge base + grounding | ✅ **no hallucinations** |
 | 9b | Human transfer (SIP REFER) | ✅ verified end to end |
 | 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
-| 10b | Provider fallbacks, monitoring, cost guardrails | ⏭️ **Next** |
+| 10b | Provider fallbacks — benchmarked, chain decided, **not yet wired** | 🔬 |
+| 10c | Monitoring, cost guardrails | ⏭️ **Next** |
+
+### Provider fallback — decided, pending implementation
+
+| Layer | Primary | Fallback |
+|---|---|---|
+| STT | Sarvam `saarika:v2.5` | OpenAI `gpt-4o-mini-transcribe` |
+| TTS | Sarvam `bulbul:v3` (241 ms) | OpenAI `gpt-4o-mini-tts` (889 ms) |
+| **LLM** | OpenAI `gpt-4.1-mini` (608 ms) | **Gemini `flash-lite-latest`** (650 ms) |
+
+**All four Gemini TTS models were tested and rejected** — 3.5–15 s TTFB, consistent across
+runs. Four seconds of silence before every reply is worse than a changed voice. The GCP
+setup it took to find that out (org policy, service account, Vertex AI role, `LINEAR16`
+encoding) is all in place and documented.
+
+LLM is the only layer with genuine provider diversity: Gemini flash-lite matches the
+primary's latency, so a full OpenAI outage costs speech and hearing but not thought.
 | 11 | Admin panel — agent config, live monitoring, call review | ⬜ |
 
 ### Measured capacity

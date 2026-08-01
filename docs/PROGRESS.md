@@ -1269,9 +1269,109 @@ observed. **The warmer stays because it is free; the tool-schema matching was dr
 
 ---
 
+---
+
+## 🔬 Step 10b — Provider fallbacks: benchmarked, not yet wired
+
+Every candidate was measured before writing any integration code. The chain below is
+**decided but not implemented** — `voice_agent.py` still constructs providers directly.
+
+### Chosen chain
+
+| Layer | Primary | Fallback | Cost when it fires |
+|---|---|---|---|
+| STT | Sarvam `saarika:v2.5` | OpenAI `gpt-4o-mini-transcribe` | Lower Indic accuracy |
+| TTS | Sarvam `bulbul:v3` | OpenAI `gpt-4o-mini-tts` | +650 ms, voice changes |
+| **LLM** | OpenAI `gpt-4.1-mini` | **Google `gemini-flash-lite-latest`** | ~none |
+
+`livekit-agents` ships `FallbackAdapter` for all three layers, so the integration is
+straightforward — but the **default timeouts are wrong for voice**:
+
+```
+stt.FallbackAdapter  attempt_timeout = 10.0 s   <- caller sits in silence that long
+llm.FallbackAdapter  attempt_timeout =  5.0 s   <- our TTFT is ~900 ms
+```
+
+If the primary hangs, the call is already lost before the fallback is even attempted.
+Both need to be ~3 s. `tts.FallbackAdapter` also needs `sample_rate=22050` (Sarvam's
+native rate) so the **primary** path never resamples — only the fallback pays that cost.
+And `stt.FallbackAdapter` needs `vad=` passed, because a non-streaming fallback STT
+cannot chunk audio without it.
+
+---
+
+### TTS — measured, warm, 4 runs each
+
+| Provider / model | TTFB | Verdict |
+|---|---|---|
+| **Sarvam `bulbul:v3`** | **241 ms** | primary |
+| **OpenAI `gpt-4o-mini-tts`** | **889–980 ms** (cold 2543) | ✅ **chosen fallback** |
+| Gemini `2.5-flash-lite-preview-tts` | 3557–4024 ms | ❌ |
+| Gemini `3.1-flash-tts-preview` | 3964–4078 ms | ❌ |
+| Gemini `2.5-flash-tts` | 4173–5367 ms | ❌ |
+| Gemini `2.5-pro-tts` | 5463–**15431** ms + a timeout | ❌❌ |
+
+**All four Gemini TTS models sit at a ~4 s floor.** It is consistent across runs, not a
+cold-start artefact. Four seconds of silence before every reply would make the call feel
+broken — worse than the voice simply changing. **Do not revisit this without new evidence
+that Google has changed something.**
+
+Getting to that answer took real setup, all of which now exists and works:
+
+| Step | Note |
+|---|---|
+| Gemini API key | AI Studio. Free tier hit `limit: 0` on some models — upgraded to Tier 1 |
+| Service account | Blocked by org policy `iam.disableServiceAccountKeyCreation` on `ai-worxpertise-org`; disabled at org level |
+| Vertex AI | `google.TTS` routes through **Vertex**, not Cloud TTS — needs `aiplatform.googleapis.com` enabled |
+| IAM role | `roles/aiplatform.user`. "Vertex AI Tuning Service Agent" does **not** include `aiplatform.endpoints.predict`. The console role picker did not list it; `gcloud projects add-iam-policy-binding` worked. |
+| Audio encoding | Default `PCM` returns `400 Unsupported audio encoding`. **`LINEAR16` + `use_streaming=True`** works. |
+
+### LLM — Gemini is the real win
+
+| Model | min | median | max |
+|---|---|---|---|
+| `gpt-4.1-mini` (primary) | 580 ms | 608 ms | 665 ms |
+| **`gemini-flash-lite-latest`** | **579 ms** | **650 ms** | 1152 ms |
+| `gemini-flash-latest` | 1997 ms | 2554 ms | 3475 ms |
+| `gemini-2.0-flash` | — | quota `limit: 0` on free tier | — |
+
+`gemini-flash-lite-latest` matches the primary. This is the **only layer with true provider
+diversity** — STT and TTS both fall back within reach of a single vendor, so a full OpenAI
+outage would still cost speech and hearing, but not thought.
+
+> ⚠️ A free-tier fallback cannot absorb the load it exists to catch. When the primary fails,
+> *all* traffic shifts at once and free-tier limits return 429 immediately. Billing is now on
+> Tier 1, which is why this is viable.
+
+### Also worth knowing
+
+- `google.STT` and `google.TTS` are **Cloud/Vertex** products — they take
+  `credentials_info`/`credentials_file`, **not** `api_key`. A Gemini API key alone is not
+  enough. `google.LLM` does take `api_key`.
+- Sarvam's plugin cannot be exercised outside a job context
+  (`Attempted to use an http session outside of a job context`) — it uses the agent's shared
+  HTTP session. Benchmark it from a real call, not a standalone script.
+
+### DB is ready, code is not
+
+The schema and default rows are in place, so wiring this up is only agent-side work:
+
+```sql
+agent_config.fallback_enabled, stt_fallback_provider/model,
+             tts_fallback_provider/model, llm_fallback_provider/model
+calls.fallback_used
+```
+
+> `store.py`'s `AgentConfig` dataclass was **not** extended, deliberately. Extra DB columns
+> are harmless — `load_config()` only reads fields the dataclass declares. Adding fields
+> there without the columns is what breaks things, not the reverse.
+
+---
+
 ## ⏭️ Next
 
-- Step 10b — provider fallbacks, monitoring, cost guardrails
+- **Wire up the fallback chain** (decided above; ~1 hour of agent-side work)
+- Monitoring, cost guardrails
 - Capacity test to 20 with a proper SIP load tool
 - Step 11 — admin panel
 
