@@ -1,5 +1,6 @@
 asyncpg==0.31.0
 av==18.0.0
+indic_transliteration==2.3.82
 livekit==1.1.13
 livekit-agents==1.6.7
 livekit-api==1.2.0
@@ -13,3 +14,7 @@ livekit-protocol==1.1.21
 numpy==2.5.1
 onnxruntime==1.28.0
 openai==2.51.0
+pymupdf==1.28.0
+pymupdf-layout==1.28.0
+pymupdf4llm==1.28.0
+tiktoken==0.13.0

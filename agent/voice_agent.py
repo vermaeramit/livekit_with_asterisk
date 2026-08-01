@@ -1,9 +1,19 @@
 """
-Sarvam STT -> OpenAI LLM -> Sarvam TTS, with Silero VAD + multilingual turn detection.
+Sarvam STT -> OpenAI LLM -> Sarvam TTS, with Silero VAD, multilingual turn
+detection, and a two-layer knowledge base.
 
-Config comes from Postgres so the admin UI (Step 11) can change prompt/voice/model
-without touching this file. Tuning knobs are env vars so latency can be iterated on
-without editing code.
+Layer 1 - prompt: a small KB is injected whole; a large one contributes an index
+of its headings. Costs nothing per turn.
+Layer 2 - tool: search_knowledge_base(), called only when layer 1 falls short.
+
+Retrieving on EVERY turn was tried and rejected: it cost 390-1244 ms on every
+turn whether or not the question needed it. Here the common questions are
+answered straight from the prompt at zero cost, and only the rare ones pay for
+a lookup.
+
+It also removes the cross-script retrieval failure. When the model writes the
+search query it writes English, and English queries score 0.44-0.48 against this
+KB where the caller's raw Devanagari scored 0.13-0.20 and ranked the wrong chunk.
 """
 from __future__ import annotations
 
@@ -13,15 +23,15 @@ import os
 import time
 
 from livekit.agents import (
-    Agent, AgentSession, JobContext, JobProcess,
-    RoomInputOptions, WorkerOptions, cli, metrics,
+    Agent, AgentSession, JobContext, JobProcess, RoomInputOptions,
+    WorkerOptions, cli, function_tool, metrics,
 )
 from livekit.plugins import openai, sarvam, silero
 
 # NOTE: livekit.agents.inference.TurnDetector is the newer API, but its signature
-# (base_url/api_key/conn_options) shows it can call a remote gateway. Turn detection
-# runs on EVERY turn - a network hop there would wreck the endpointing budget.
-# MultilingualModel is confirmed local (onnxruntime). Deprecated but pinned.
+# (base_url/api_key/conn_options) shows it can call a remote gateway. Turn
+# detection runs on EVERY turn - a network hop there would wreck the endpointing
+# budget. MultilingualModel is confirmed local (onnxruntime). Deprecated, pinned.
 import warnings
 warnings.filterwarnings("ignore", message=".*turn_detector.*deprecated.*")
 from livekit.plugins.turn_detector.multilingual import MultilingualModel  # noqa: E402
@@ -29,21 +39,29 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel  # noqa
 logger = logging.getLogger("voice-agent")
 
 CONFIG_NAME = os.getenv("AGENT_CONFIG", "default")
-# Biggest latency lever: how long to wait before deciding the caller stopped.
 MIN_ENDPOINTING = float(os.getenv("MIN_ENDPOINTING_DELAY", "0.25"))
-# Cap on how long the turn detector may stall when it is unsure. At the default
-# 4.0s, short closings like "ओके थैंक यू" scored below threshold and froze the
-# call for the full 4 seconds. 1.5s bounds that.
+# The 4.0 default froze calls for 4s when a short closing scored below threshold.
 MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
 
 
-def prewarm(proc: JobProcess):
-    """Load VAD before any job arrives.
+GROUNDING_RULES = """
 
-    Only VAD goes here. MultilingualModel needs a job context (it talks to the
-    inference executor process), so instantiating it in prewarm crashes the worker.
-    That executor is pre-warmed separately at worker startup anyway.
-    """
+KNOWLEDGE RULES - these override every other instruction:
+- The "REFERENCE INFORMATION" section above is your primary source. Answer from it.
+- If it does not answer the question, call search_knowledge_base once, then answer
+  from what it returns.
+- If neither has the answer, say plainly that you do not have that information and
+  offer to connect the caller to a colleague.
+- Never invent or guess a price, date, phone number, policy, name, or availability.
+  A confident wrong number is far worse than admitting you do not know - the caller
+  will act on it.
+- Do not fill gaps with general knowledge.
+"""
+
+
+def prewarm(proc: JobProcess):
+    """Only VAD belongs here. MultilingualModel needs a job context (it talks to
+    the inference executor process) and crashes the worker if loaded in prewarm."""
     t = time.perf_counter()
     proc.userdata["vad"] = silero.VAD.load()
     logger.info("prewarm (VAD) complete in %.0f ms", (time.perf_counter() - t) * 1000)
@@ -52,38 +70,27 @@ def prewarm(proc: JobProcess):
 def _stt_kwargs(cfg):
     """Sarvam STT options, tunable from env.
 
-    Sarvam's SERVER-side VAD decides END_SPEECH; only then does the plugin send a
-    flush and the transcript comes back ~120ms later. Measured ~700ms between our
-    local Silero saying "user stopped" and Sarvam agreeing. The plugin has no hook
-    for the local VAD to force a flush, so these params are the only lever.
-
-    Caveat: MODEL_CONFIGS['saarika:*'].supports_vad_params is False, so the
-    fine-grained knobs are silently DROPPED for saarika. Only high_vad_sensitivity
-    and flush_signal survive. saaras:v3 has supports_vad_params=True.
+    Sarvam's SERVER-side VAD decides END_SPEECH and only then does the plugin
+    flush - measured ~700 ms behind the local Silero VAD. high_vad_sensitivity
+    removes almost all of it. Note saarika:* has supports_vad_params=False, so
+    negative_frames_count and friends are silently dropped; flush_signal measured
+    as a no-op.
     """
-    model = os.getenv("SARVAM_STT_MODEL") or cfg.stt_model or "saarika:v2.5"
-    kw = {"language": cfg.language, "model": model}
-
+    kw = {"language": cfg.language,
+          "model": os.getenv("SARVAM_STT_MODEL") or cfg.stt_model or "saarika:v2.5"}
     if os.getenv("SARVAM_STT_MODE"):
         kw["mode"] = os.getenv("SARVAM_STT_MODE")
-
-    # not gated by supports_vad_params - work on every model
     if os.getenv("SARVAM_HIGH_VAD"):
         kw["high_vad_sensitivity"] = os.getenv("SARVAM_HIGH_VAD") == "1"
     if os.getenv("SARVAM_FLUSH_SIGNAL"):
         kw["flush_signal"] = os.getenv("SARVAM_FLUSH_SIGNAL") == "1"
-
-    # gated by supports_vad_params - saaras:v3 only
-    for env, key, cast in (
-        ("SARVAM_NEG_FRAMES", "negative_frames_count", int),
-        ("SARVAM_NEG_WINDOW", "negative_frames_window", int),
-        ("SARVAM_NEG_THRESH", "negative_speech_threshold", float),
-        ("SARVAM_POS_THRESH", "positive_speech_threshold", float),
-        ("SARVAM_MIN_SPEECH", "min_speech_frames", int),
-    ):
-        v = os.getenv(env)
-        if v:
-            kw[key] = cast(v)
+    for env, key, cast in (("SARVAM_NEG_FRAMES", "negative_frames_count", int),
+                           ("SARVAM_NEG_WINDOW", "negative_frames_window", int),
+                           ("SARVAM_NEG_THRESH", "negative_speech_threshold", float),
+                           ("SARVAM_POS_THRESH", "positive_speech_threshold", float),
+                           ("SARVAM_MIN_SPEECH", "min_speech_frames", int)):
+        if os.getenv(env):
+            kw[key] = cast(os.getenv(env))
     return kw
 
 
@@ -103,13 +110,70 @@ def _sip_attr(participant, *keys):
     return None
 
 
+class KBAgent(Agent):
+    def __init__(self, instructions: str, cfg, kb_mode: str):
+        super().__init__(instructions=instructions)
+        self.cfg = cfg
+        self.kb_mode = kb_mode
+        self.tool_calls = 0
+        self.last_kb_ms = 0
+
+    @function_tool
+    async def search_knowledge_base(self, query: str) -> str:
+        """Look up details in the company documents.
+
+        Use this ONLY when the REFERENCE INFORMATION in your instructions does not
+        answer the caller's question.
+
+        Args:
+            query: A short search query in ENGLISH describing what to find, e.g.
+                "cancellation policy refund", "baggage allowance". Always English,
+                even when the caller speaks another language - the documents are
+                in English and an English query matches them far better.
+        """
+        import kb
+        self.tool_calls += 1
+        t0 = time.perf_counter()
+        try:
+            hits = await kb.search(query, self.cfg.name,
+                                   self.cfg.kb_top_k, self.cfg.kb_min_score)
+        except Exception:
+            logger.exception("kb search failed")
+            return "The knowledge base is unavailable right now."
+        self.last_kb_ms = int((time.perf_counter() - t0) * 1000)
+        logger.info("  TOOL search_knowledge_base(%r) -> %d hit(s) in %d ms  %s",
+                    query, len(hits), self.last_kb_ms,
+                    [f"{h['score']:.2f}" for h in hits])
+        if not hits:
+            # Say it explicitly. Returning an empty string reads as permission to
+            # answer from general knowledge, which is where invented phone numbers
+            # come from.
+            return ("No relevant information found in the documents. "
+                    "Tell the caller you do not have that information.")
+        return kb.format_context(hits)
+
+
 async def entrypoint(ctx: JobContext):
+    import kb
     import store
 
     cfg = await store.load_config(CONFIG_NAME)
     stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
-    logger.info("config=%s lang=%s stt=%s llm=%s tts=%s",
-                cfg.name, cfg.language, stt_kw, cfg.llm_model, tts_kw)
+
+    instructions = cfg.instructions
+    kb_mode, kb_tokens = "off", 0
+    if cfg.kb_enabled:
+        text, kb_tokens, kb_mode = await kb.load_inline(
+            cfg.name, cfg.kb_inline_max_tokens)
+        if text:
+            label = ("REFERENCE INFORMATION" if kb_mode == "full" else
+                     "AVAILABLE DOCUMENTS (use search_knowledge_base for details)")
+            instructions += f"\n\n=== {label} ===\n{text}\n=== END ===\n"
+        instructions += GROUNDING_RULES
+
+    logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok)",
+                cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled,
+                kb_mode, kb_tokens)
 
     await ctx.connect()
 
@@ -120,6 +184,8 @@ async def entrypoint(ctx: JobContext):
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name, cfg.language)
     logger.info("call_id=%s caller=%s callee=%s", call_id, caller, callee)
+
+    agent = KBAgent(instructions, cfg, kb_mode)
 
     session = AgentSession(
         stt=sarvam.STT(**stt_kw),
@@ -141,13 +207,16 @@ async def entrypoint(ctx: JobContext):
         try:
             m = ev.metrics
             usage.collect(m)
-            name = type(m).__name__
-            if name == "EOUMetrics":
+            n = type(m).__name__
+            if n == "EOUMetrics":
                 pending["eou_ms"] = int(m.end_of_utterance_delay * 1000)
                 pending["stt_ms"] = int(m.transcription_delay * 1000)
-            elif name == "LLMMetrics":
-                pending["llm_ttft_ms"] = int(m.ttft * 1000)
-            elif name == "TTSMetrics":
+            elif n == "LLMMetrics":
+                # a tool call produces two LLM turns; keep the first TTFT
+                pending.setdefault("llm_ttft_ms", int(m.ttft * 1000))
+                pending["prompt_tokens"] = getattr(m, "prompt_tokens", 0)
+                pending["cached_tokens"] = getattr(m, "prompt_cached_tokens", 0)
+            elif n == "TTSMetrics":
                 pending["tts_ttfb_ms"] = int(m.ttfb * 1000)
         except Exception:
             logger.exception("metrics handler failed")
@@ -161,36 +230,51 @@ async def entrypoint(ctx: JobContext):
             role = getattr(item, "role", "?")
             text = getattr(item, "text_content", None) or str(getattr(item, "content", ""))
             t = dict(pending) if role == "assistant" else {}
+            extra = ""
             if t:
-                # eou ALREADY includes stt (transcription_delay); summing all four
-                # double-counts. Time-to-first-audio = eou + llm_ttft + tts_ttfb.
+                # eou ALREADY includes stt; summing all four double-counts.
                 t["total_ms"] = (t.get("eou_ms", 0) + t.get("llm_ttft_ms", 0)
                                  + t.get("tts_ttfb_ms", 0))
+                extra = (f"  prompt={t.pop('prompt_tokens', 0)}tok"
+                         f"  cached={t.pop('cached_tokens', 0)}")
+                if agent.last_kb_ms:
+                    extra += f"  kb_tool={agent.last_kb_ms}ms"
+                    agent.last_kb_ms = 0
                 pending.clear()
 
-            bits = "  ".join(f"{k[:-3]}={v}ms" for k, v in t.items())
-            logger.info("[%-9s] %s%s", role, text, f"\n            {bits}" if bits else "")
+            bits = "  ".join(f"{k[:-3]}={v}ms" for k, v in t.items() if k.endswith("_ms"))
+            logger.info("[%-9s] %s%s", role, text,
+                        f"\n            {bits}{extra}" if bits else "")
             asyncio.create_task(store.log_turn(
-                call_id, seq, "agent" if role == "assistant" else "user", text, **t))
+                call_id, seq, "agent" if role == "assistant" else "user", text,
+                **{k: v for k, v in t.items() if k.endswith("_ms")}))
         except Exception:
             logger.exception("transcript handler failed")
 
     async def _shutdown():
         try:
-            logger.info("usage: %s", usage.get_summary())
+            logger.info("usage: %s  kb_tool_calls=%d", usage.get_summary(), agent.tool_calls)
             await store.end_call(call_id, "completed")
             await store.close()
         except Exception:
             logger.exception("shutdown failed")
 
     ctx.add_shutdown_callback(_shutdown)
-
-    await session.start(room=ctx.room, agent=Agent(instructions=cfg.instructions),
+    await session.start(room=ctx.room, agent=agent,
                         room_input_options=RoomInputOptions())
-
     if cfg.greeting:
         await session.say(cfg.greeting, allow_interruptions=cfg.allow_interrupt)
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    # Step 7 measured a 2.3 s cold spawn on the first job; dev mode defaults
+    # num_idle_processes to 0, which is why the first call after starting the
+    # worker just rang.
+    import inspect
+    _kw = {"entrypoint_fnc": entrypoint, "prewarm_fnc": prewarm}
+    _p = inspect.signature(WorkerOptions.__init__).parameters
+    if "num_idle_processes" in _p:
+        _kw["num_idle_processes"] = int(os.getenv("NUM_IDLE_PROCESSES", "3"))
+    if "drain_timeout" in _p:
+        _kw["drain_timeout"] = int(os.getenv("DRAIN_TIMEOUT", "150"))
+    cli.run_app(WorkerOptions(**_kw))

@@ -3,8 +3,8 @@
 Detailed record of every step performed on `10.130.9.243`.
 Overview and architecture live in [../README.md](../README.md).
 
-**Currently at:** Step 9 — Knowledge base + tools
-**Last completed:** Step 8 — Full AI pipeline live in Hindi, median turn latency **~1.9 s**, barge-in working
+**Currently at:** Step 9 — human transfer tool remaining
+**Last completed:** Step 9 (KB) — PDF knowledge base with grounding. **Hallucinations eliminated.**
 
 ---
 
@@ -776,13 +776,209 @@ python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent - \[|user transcript"
 
 ---
 
-## ⏭️ Step 9 — Knowledge base + tools (next)
+## ✅ Step 9 — Knowledge Base + Grounding
 
-- pgvector-backed KB (tables land in the existing Postgres)
-- Retrieval as a **tool call**, not stuffed into every prompt — full context per turn would
-  push LLM TTFT past 800 ms
-- Function calling: transfer to human, CRM lookup, appointment booking
-- Grounding rules so the agent says "I don't know" instead of inventing phone numbers
+PDF knowledge base with a two-layer design. **The agent no longer invents facts.**
+
+### Final architecture
+
+```
+Layer 1  prompt   small KB injected whole (or its heading index if large)
+                  -> 0 ms per turn, answers the common questions
+Layer 2  tool     search_knowledge_base(query)
+                  -> only fires when layer 1 falls short
+```
+
+The design came from the user's suggestion: *keep the common answers in the prompt and
+only reach for the KB when the prompt does not cover the question.*
+
+### Why not retrieve on every turn
+
+The first implementation pre-fetched on every user turn. Measured cost: **390–1244 ms on
+every turn**, needed or not.
+
+| Design | Cost |
+|---|---|
+| Pre-fetch every turn | +400–1200 ms on 100 % of turns |
+| Prompt + tool fallback | 0 ms on ~85 % of turns, +~1500 ms on the rest → **~225 ms average** |
+
+### The finding that decided it: cross-script retrieval collapses
+
+Sarvam STT emits Devanagari. The KB is English. Same question, three scripts:
+
+| Question | Devanagari | Romanized | English |
+|---|---|---|---|
+| package price | **0.188** ← wrong chunk | 0.416 | 0.442 ✅ |
+| which hotel in option 1 | **0.199** | 0.441 | 0.475 ✅ |
+| flight from Delhi | **0.147** ← wrong chunk | 0.478 | 0.455 ✅ |
+
+Not a threshold problem — the correct chunk did not even rank. Any threshold low enough to
+admit the right answer also admits everything else.
+
+**Auto-transliteration was tried and rejected.** ITRANS/HK/IAST/SLP1 all tested:
+
+```
+पैकेज  -> paikeja     (not "package")
+प्राइस -> praisa      (not "price")
+फ्लाइट -> phlaita     (not "flight")
+```
+
+Scores rose from 0.13–0.20 to 0.23–0.31, but only **1 of 4** queries retrieved the right
+chunk. Transliteration is phonetic, so the English loanwords never reconstruct. Ranking is
+what matters, and ranking stayed wrong.
+
+**The tool design solved it for free.** When the *model* writes the search query, it writes
+English — and the tool's docstring instructs it to. Observed live:
+
+```
+[user]  ओके तो इसमें कैंसिलेशन पॉलिसी क्या रहेगी
+TOOL    search_knowledge_base('cancellation policy refund Dubai package')
+        -> 3 hits  ['0.61', '0.56', '0.55']
+```
+
+0.61 against 0.19 for the same question asked directly. No translation pipeline, no dual
+index, no re-ingest.
+
+---
+
+### Extraction: plain `get_text()` is not enough
+
+`fitz.get_text()` reads designed layouts in geometric order, not reading order. On a
+two-column pricing block it fused both options into one unusable chunk:
+
+```
+Land: INR 150,000  Flight: INR 30,000  Land: INR 120,000  Flight: INR 30,000
+HOTELS  HOTELS  Pullman Dubai Downtown  The Creekside Hotel
+```
+
+*"Which hotel is in Option 1?"* had no chunk that could answer it. A manual y-band sort
+made it worse — it read **across** the columns.
+
+**`pymupdf4llm`** resolves reading order and emits markdown. Same page after:
+
+```
+Option 1  Recommended
+**TOTAL PRICE** INR 180,000
+HOTELS  Pullman Dubai Downtown ★★★★ 3 N
+
+**Option 2**
+**TOTAL PRICE** INR 150,000
+HOTELS  The Creekside Hotel ★★★★★ 3 N
+```
+
+It also turned the flight schedule into a real markdown table, which fixed the
+*"flight timing"* query that had been retrieving the BBQ-dinner chunk.
+
+Retrieval went from **3/6 to 5/6** answerable queries on that change alone.
+
+> PyMuPDF prints `Consider using the pymupdf_layout package...` on every ingest with plain
+> extraction. That hint was the fix.
+
+### Chunking
+
+- Split on markdown headings, tracking depth as a stack, so each chunk carries its path
+  (`Dubai Package > DAY-BY-DAY ITINERARY > Desert Safari with BBQ Dinner`). Short questions
+  retrieve measurably better when a chunk knows where it came from.
+- ~250 tokens with 50-token overlap; markdown tables kept atomic.
+- Chunks under 40 tokens are folded into a neighbour — a 5-token chunk answers nothing but
+  still competes in retrieval and displaces a real result.
+
+### Hybrid search
+
+Vector (pgvector HNSW cosine) **+** lexical (`pg_trgm`), merged on best score.
+
+> Use `word_similarity(query, content)`, **not** `similarity()`. The latter compares whole
+> strings, so a 250-token chunk against a 6-word question scores ~0 and the lexical leg
+> never fires. That bug was live until the logs showed every hit tagged `[vec]` and none
+> `[lex]`. After the fix, lexical took the top slot on *"what is the total price"* (0.565).
+
+### Ingestion — built for easy updates
+
+```bash
+cp new-doc.pdf /opt/aivoice/kb/inbox/
+python ingest.py                # unchanged files are skipped by sha256
+python ingest.py --force        # re-ingest regardless
+```
+
+| Case | Behaviour |
+|---|---|
+| Same file again | Hash matches → no-op |
+| File changed | Old chunks deleted, new inserted, **one transaction** — a failed ingest leaves the previous version intact |
+| Document retired | `kb_documents.enabled = false`, content kept |
+
+`ingest_file()` is the single entry point; the folder watcher and Step 11 admin UI will
+call the same function rather than reimplementing the pipeline.
+
+---
+
+### 🎉 Prompt caching activated as a side effect
+
+Step 8 showed `prompt_cached_tokens: 0` on every call — OpenAI's caching needs a ≥1024-token
+prefix and the prompt was ~250 tokens. Injecting the KB crossed that line, and the KB is
+identical on every turn:
+
+| Turn | prompt | cached | llm_ttft |
+|---|---|---|---|
+| 1 | 1624 | **0** | **1926 ms** |
+| 2 | 2304 | 1536 | 1160 ms |
+| 3 | 2359 | 2176 | **852 ms** |
+| 4 | 2422 | **2304 (95 %)** | 1021 ms |
+
+Net cost of carrying the whole KB: **+114 ms** on cached turns (852 vs 738 ms baseline).
+
+### Grounding
+
+```
+[user]      नहीं मुझे होटल का फ़ोन नंबर दे दो
+[assistant] Mujhe maaf kijiye, hotel ka phone number mere paas available nahi hai,
+            par main aapko Skywing Travels ke number +918802807777 par jod sakta hoon.
+```
+
+Refused to invent the hotel number, and the number it did give is genuinely in the KB.
+Compare Step 8, where it produced a fabricated bank helpline. **Zero hallucinations across
+the test call.**
+
+Two rules did the work:
+- *"If the retrieved information is only loosely related, treat it as NOT having the answer."*
+  Retrieval scores cannot separate "answers the question" from "same topic" — a question with
+  no answer in the KB still returns chunks at 0.35 while a correctly-answered one can sit at
+  0.21. The model can make that call; a number cannot.
+- An empty result returns **explicit text** saying so. Returning `""` reads as permission to
+  answer from general knowledge.
+
+### Latency
+
+| | |
+|---|---|
+| Turn 1 | 3728 ms — cold prompt cache |
+| Steady state | **2015–2773 ms** |
+| Step 8 baseline (no KB) | 1921 ms median |
+
+Grounding costs ~300–500 ms. Acceptable for eliminating fabricated answers.
+
+### Bugs hit
+
+| Symptom | Cause |
+|---|---|
+| Call rang, never connected, no error visible | `kb_enabled` etc. were added to the DB but **not to the `AgentConfig` dataclass** in `store.py`. `load_config()` builds from `fields(AgentConfig)`, so the attribute was missing and the entrypoint raised. Hidden because the log filter was `grep -E "voice-agent"` — the traceback came from `livekit.agents`. **Always grep `ERROR\|Traceback` too.** |
+| `operator does not exist: text %% text` | `%` was escaped as `%%`. asyncpg uses `$1` placeholders and does **not** do `%` formatting. |
+| Retrieval returned 0 hits in the agent but worked standalone | The standalone test used romanized queries; the agent got Devanagari from STT. **The test was wrong, not the code.** |
+
+### ⚠️ Open
+
+1. **Turn 1 is slow** (~1926 ms TTFT) until the prompt cache warms.
+2. **`kb_tool` takes ~1569 ms** — the embedding API call is slow for a 7 ms-away endpoint.
+   Now only on tool-call turns, but worth chasing.
+3. **Human transfer tool** not built yet.
+4. Scanned PDFs are unsupported — no OCR. Text-based only, which matches the requirement.
+
+---
+
+## ⏭️ Next
+
+- Human transfer tool (completes Step 9)
+- Step 10 — systemd service, first-call fix, provider fallbacks, monitoring, load test
+- Step 11 — admin panel
 
 ---
 

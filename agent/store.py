@@ -27,6 +27,11 @@ class AgentConfig:
     allow_interrupt: bool
     max_turns: int
     max_duration_sec: int
+    kb_enabled: bool
+    kb_top_k: int
+    kb_min_score: float
+    kb_inline_max_tokens: int
+    kb_summary: Optional[str]
 
 
 async def pool() -> asyncpg.Pool:
@@ -78,9 +83,10 @@ async def log_turn(call_id: int, seq: int, role: str, text: str | None, **t):
     await (await pool()).execute(
         """INSERT INTO turns
              (call_id, seq, role, text, eou_ms, stt_ms, llm_ttft_ms,
-              tts_ttfb_ms, total_ms, interrupted)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+              tts_ttfb_ms, total_ms, interrupted, kb_chunk_ids, kb_scores)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
         call_id, seq, role, text,
         t.get("eou_ms"), t.get("stt_ms"), t.get("llm_ttft_ms"),
         t.get("tts_ttfb_ms"), t.get("total_ms"), bool(t.get("interrupted", False)),
+        t.get("kb_chunk_ids"), t.get("kb_scores"),
     )

@@ -82,17 +82,21 @@ executor alone needs ~4.7 s.
 Readable log filter (keeps the timing continuation lines):
 
 ```bash
-python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent - \[|user transcript"
+python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent|ERROR|Traceback"
 ```
 
 > `-A 1` matters. Per-turn timings are printed on a continuation line with no
 > `voice-agent` prefix, so a plain grep silently drops them.
+>
+> 🚨 **Always keep `ERROR|Traceback` in the filter.** A crash in the entrypoint is logged
+> under `livekit.agents`, not `voice-agent` — filtering on the agent name alone hides it,
+> and the only symptom is a call that rings forever. That cost real debugging time twice.
 
 Wider filter when debugging:
 
 ```bash
 python voice_agent.py dev 2>&1 \
-  | grep -A 1 -E "voice-agent|EOU metrics|LLM metrics|TTS metrics|user transcript|eou prediction"
+  | grep -A 1 -E "voice-agent|ERROR|Traceback|EOU metrics|LLM metrics|TTS metrics|eou prediction"
 ```
 
 ---
@@ -196,6 +200,106 @@ Recreate the dispatch rule (use **flags**, not a JSON file — see §6):
 ```bash
 lk sip dispatch create --name lab-dispatch --trunks ST_xxxxx --individual call
 ```
+
+---
+
+## 3b. Knowledge base
+
+### Add or update a document
+
+```bash
+cp new-policy.pdf /opt/aivoice/kb/inbox/
+
+cd /opt/aivoice/agent && source .venv/bin/activate
+set -a; source /opt/aivoice/.env; set +a
+python ingest.py                 # unchanged files are skipped by sha256
+python ingest.py --force         # re-ingest everything
+```
+
+Text-based PDFs only — there is no OCR. A scanned PDF reports
+`no extractable text`.
+
+| Case | What happens |
+|---|---|
+| Same file again | Hash matches → no-op |
+| File changed | Old chunks deleted and new ones inserted in one transaction |
+| New file | Added; nothing else is re-indexed |
+
+### Inspect what is stored
+
+```bash
+docker exec postgres psql -U aivoice -d aivoice -c "
+SELECT filename, page_count, chunk_count, enabled, updated_at
+  FROM kb_documents ORDER BY filename;"
+
+# dump every chunk with its heading path
+python - <<'PY'
+import asyncio, store
+async def m():
+    rows = await (await store.pool()).fetch(
+        "SELECT seq, page, n_tokens, heading, content FROM kb_chunks ORDER BY seq")
+    for r in rows:
+        print("="*76)
+        print(f"[{r['seq']}] p{r['page']} {r['n_tokens']}tok  {r['heading'] or '(none)'}")
+        print(r["content"])
+    await store.close()
+asyncio.run(m())
+PY
+```
+
+### Retire a document without deleting it
+
+```bash
+docker exec postgres psql -U aivoice -d aivoice -c \
+  "UPDATE kb_documents SET enabled=false WHERE filename='old.pdf';"
+```
+
+### Test retrieval without making a call
+
+```bash
+python - <<'PY'
+import asyncio, kb, store
+async def m():
+    for q in ["cancellation policy refund", "baggage allowance", "hotel name"]:
+        hits = await kb.search(q, top_k=3, min_score=-1)   # -1 = show raw scores
+        print(f"\nQ: {q}")
+        for h in hits:
+            print(f"  [{h['src']}] {h['score']:.3f}  {h['heading'] or '-'}")
+    await store.close()
+asyncio.run(m())
+PY
+```
+
+> ⚠️ **Test with English queries** — that is what the agent's tool sends. Testing with
+> Devanagari gives misleadingly bad scores (0.13–0.20 vs 0.44–0.48) and sent us chasing a
+> non-existent bug. See PROGRESS.md §9.
+
+### Two layers, and which one answered
+
+```
+kb=True(full, 1144 tok)     <- whole KB is in the prompt; no per-turn retrieval
+kb=True(index, 8200 tok)    <- too big to inline; only headings are in the prompt
+```
+
+The switch is `agent_config.kb_inline_max_tokens` (default 6000). Below it the KB goes into
+the prompt whole; above it only a heading index goes in and the model uses the tool.
+
+A `TOOL search_knowledge_base(...)` line in the log means layer 1 did not cover the
+question. Common questions should **not** produce one — that is the whole point.
+
+### KB settings
+
+```sql
+UPDATE agent_config SET kb_enabled = true            WHERE name='default';
+UPDATE agent_config SET kb_inline_max_tokens = 6000  WHERE name='default';
+UPDATE agent_config SET kb_top_k = 3                 WHERE name='default';
+UPDATE agent_config SET kb_min_score = 0.20          WHERE name='default';
+```
+
+> 🚨 **Adding a column to `agent_config` means also adding the field to the `AgentConfig`
+> dataclass in `store.py`.** `load_config()` builds from `fields(AgentConfig)`, so a column
+> missing there never reaches the agent — and the failure shows up as calls that ring
+> forever with no visible error.
 
 ---
 

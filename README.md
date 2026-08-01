@@ -3,9 +3,11 @@
 Low-latency AI voice agent for an existing Asterisk SIP dialer.
 Real-time conversation with **STT → LLM → TTS**, live **barge-in**, and a **knowledge base**.
 
-> **Current status:** Step 8 of 11 complete. **The AI agent holds a real conversation in
-> Hindi over the phone**, with working barge-in, at a median turn latency of ~1.9 s.
-> See [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed step log.
+> **Current status:** Step 9 (knowledge base) complete. The agent holds a real conversation
+> in Hindi over the phone, answers from a **PDF knowledge base**, and **no longer invents
+> facts** — it says "I don't have that" and offers to escalate.
+> See [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed step log and
+> [docs/RUNBOOK.md](docs/RUNBOOK.md) for day-to-day commands.
 
 ---
 
@@ -215,9 +217,33 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 6 | LiveKit SIP gateway + Asterisk trunk wiring | ✅ Done |
 | 7 | Echo agent — **end-to-end latency baseline** | ✅ **205 ms** |
 | 8 | Real pipeline: Sarvam STT → `gpt-4.1-mini` → Sarvam TTS + barge-in | ✅ **~1.9 s median** |
-| 9 | Knowledge base (RAG) + tool calling + human transfer | ⏭️ **Next** |
-| 10 | Monitoring, provider fallbacks, load test | ⬜ |
+| 9 | Knowledge base + grounding | ✅ **no hallucinations** |
+| 9b | Human transfer tool | ⏭️ **Next** |
+| 10 | systemd service, first-call fix, fallbacks, monitoring, load test | ⬜ |
 | 11 | Admin panel — agent config, live monitoring, call review | ⬜ |
+
+### Knowledge base — two layers
+
+```
+Layer 1  prompt   small KB injected whole (heading index if large)  ->  0 ms/turn
+Layer 2  tool     search_knowledge_base(query)                      ->  only on a miss
+```
+
+Retrieving on every turn was measured at **390–1244 ms per turn** whether or not the
+question needed it. This way common questions cost nothing and only the rare ones pay.
+
+Two results worth carrying forward:
+
+- **Cross-script retrieval collapses.** STT emits Devanagari, the KB is English: the same
+  question scored **0.19 and ranked the wrong chunk** in Devanagari vs **0.44** in English.
+  Auto-transliteration was tested and rejected (phonetic output — `package` → `paikeja`).
+  Making the KB a *tool* fixed it for free: the model writes the search query, in English.
+- **Plain `get_text()` is not enough for real PDFs.** On a two-column layout it fused both
+  pricing options into one unusable chunk. `pymupdf4llm` resolves reading order and emits
+  markdown; retrieval went from 3/6 to 5/6 answerable queries on that change alone.
+
+Injecting the KB also pushed the prompt past OpenAI's 1024-token caching threshold —
+**95 % of the prompt is now cached**, so carrying the whole KB costs only ~114 ms.
 
 ### Carried into Step 10
 
