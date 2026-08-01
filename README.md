@@ -222,7 +222,8 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 9b | Human transfer (SIP REFER) | ✅ verified end to end |
 | 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
 | 10b | Provider fallbacks — benchmarked, chain decided, **not yet wired** | 🔬 |
-| 10c | Monitoring, cost guardrails | ⏭️ **Next** |
+| 10c | Cost guardrails + Grafana monitoring | ✅ |
+| 11 | Admin panel — agent config, live monitoring, call review | ⏭️ **Next** |
 
 ### Provider fallback — decided, pending implementation
 
@@ -239,7 +240,29 @@ encoding) is all in place and documented.
 
 LLM is the only layer with genuine provider diversity: Gemini flash-lite matches the
 primary's latency, so a full OpenAI outage costs speech and hearing but not thought.
-| 11 | Admin panel — agent config, live monitoring, call review | ⬜ |
+### Guardrails and monitoring
+
+Until Step 10c the system had **no brake at all** — `max_turns` and `max_duration_sec` had
+been in the config since Step 8 but nothing read them, so a call could run indefinitely and
+a looping LLM had nothing stopping it. Three limits now enforce, and a breach makes the
+agent speak a closing line and wait for playout before ending the call:
+
+| Limit | Default |
+|---|---|
+| `max_duration_sec` | 600 |
+| `max_turns` | 40 |
+| `max_prompt_tokens` | 150000 |
+
+The token cap is what actually bounds spend — one observed call used **32,816 prompt
+tokens**, because the knowledge base rides along on every request.
+
+Monitoring is **Grafana straight onto Postgres** — every call metric already lives in
+`calls`/`turns`, so no Prometheus or exporter is involved. The worker's HTTP port was
+checked first: it answers `/` but exposes no `/metrics`.
+
+The most useful panel is **"Where the time goes"** — `eou` vs `llm_ttft` vs `tts_ttfb`
+stacked. A rising `eou` is our machine (VAD and turn detection run locally); rising
+`llm`/`tts` is the provider. That one chart separates the two.
 
 ### Measured capacity
 

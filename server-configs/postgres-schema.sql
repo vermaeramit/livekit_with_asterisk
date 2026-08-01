@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 7pFgOTCLAIUo7uYyMjzNYxtc5J5LJ8LnKIa4QAj5XBgxelz90DTiB7Bif6JHcib
+\restrict W2JBnTrPEsjGZ3rURprrQjWFxsfbWA8kBttVhUgcGwa8AZAazZeW8lVXRA0dMv4
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -80,7 +80,9 @@ CREATE TABLE public.agent_config (
     kb_summary text,
     transfer_enabled boolean DEFAULT true NOT NULL,
     transfer_to text DEFAULT 'sip:800@10.130.9.243'::text NOT NULL,
-    transfer_message text
+    transfer_message text,
+    max_prompt_tokens integer DEFAULT 150000 NOT NULL,
+    limit_message text
 );
 
 
@@ -123,7 +125,15 @@ CREATE TABLE public.calls (
     outcome text,
     recording_path text,
     transferred_to text,
-    transfer_reason text
+    transfer_reason text,
+    llm_prompt_tokens integer,
+    llm_prompt_cached_tokens integer,
+    llm_completion_tokens integer,
+    tts_characters integer,
+    tts_audio_seconds real,
+    stt_audio_seconds real,
+    turn_count integer,
+    limit_hit text
 );
 
 
@@ -422,5 +432,5 @@ ALTER TABLE ONLY public.turns
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 7pFgOTCLAIUo7uYyMjzNYxtc5J5LJ8LnKIa4QAj5XBgxelz90DTiB7Bif6JHcib
+\unrestrict W2JBnTrPEsjGZ3rURprrQjWFxsfbWA8kBttVhUgcGwa8AZAazZeW8lVXRA0dMv4
 

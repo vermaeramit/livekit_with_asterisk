@@ -1352,27 +1352,121 @@ outage would still cost speech and hearing, but not thought.
   (`Attempted to use an http session outside of a job context`) — it uses the agent's shared
   HTTP session. Benchmark it from a real call, not a standalone script.
 
-### DB is ready, code is not
+### Nothing is wired yet — schema included
 
-The schema and default rows are in place, so wiring this up is only agent-side work:
+The columns below are **not** in the database; the ALTER was drafted but never run. Whoever
+picks this up starts from a clean slate:
 
 ```sql
-agent_config.fallback_enabled, stt_fallback_provider/model,
-             tts_fallback_provider/model, llm_fallback_provider/model
-calls.fallback_used
+ALTER TABLE agent_config
+    ADD COLUMN fallback_enabled      BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN stt_fallback_provider TEXT, ADD COLUMN stt_fallback_model TEXT,
+    ADD COLUMN tts_fallback_provider TEXT, ADD COLUMN tts_fallback_model TEXT,
+    ADD COLUMN llm_fallback_provider TEXT, ADD COLUMN llm_fallback_model TEXT;
+ALTER TABLE calls ADD COLUMN fallback_used TEXT;
 ```
 
-> `store.py`'s `AgentConfig` dataclass was **not** extended, deliberately. Extra DB columns
-> are harmless — `load_config()` only reads fields the dataclass declares. Adding fields
-> there without the columns is what breaks things, not the reverse.
+> When adding these, extend `store.py`'s `AgentConfig` dataclass **in the same change**.
+> Extra DB columns are harmless — `load_config()` only reads fields the dataclass declares —
+> but a dataclass field with no column raises on every call, and the symptom is calls that
+> ring forever with no visible error. That cost real time twice in this project.
+
+---
+
+---
+
+## ✅ Step 10c — Cost guardrails + monitoring
+
+### Guardrails — the system had no brake at all
+
+`agent_config` has carried `max_turns` (40) and `max_duration_sec` (600) since Step 8, but
+**nothing ever read them**. A call could run indefinitely and a looping LLM had nothing
+stopping it. Now enforced, plus a token cap:
+
+| Limit | Default | Enforced by |
+|---|---|---|
+| `max_duration_sec` | 600 | Watchdog task, 5 s poll |
+| `max_turns` | 40 | Counter on each assistant turn |
+| **`max_prompt_tokens`** | 150000 | Cumulative across the call |
+
+The token cap is the one that actually bounds spend. A single observed call used
+**32,816 prompt tokens** — the knowledge base rides along on every request, so prompt
+tokens dominate, not completions.
+
+**Breaching a limit does not cut the caller off.** The agent speaks `limit_message`, waits
+for playout, then `ctx.delete_room()`:
+
+```python
+h = await session.say(msg, allow_interruptions=False)
+await h.wait_for_playout()     # never cut mid-sentence
+await ctx.delete_room()
+```
+
+Verified with `max_duration_sec=45`:
+
+```
+id 57 | limit | max_duration_sec=45 | 4 turns | 52199 ms | 3619 tokens | 697 tts chars
+```
+
+52 s against a 45 s limit — the extra 7 s is the 5 s watchdog poll plus the closing
+message. Expected.
+
+### Usage recorded per call
+
+`UsageSummary` is stored on every call: prompt/cached/completion tokens, TTS characters,
+TTS and STT audio seconds, turn count, and which limit fired.
+
+> **Usage is stored, not cost.** Rates change; usage does not. Multiply at query time with
+> whatever the rates are that day. Hard-coding prices into the schema would age badly.
+
+### Monitoring — Grafana straight onto Postgres
+
+No Prometheus, no exporter. Every call metric already lives in `calls` and `turns`, so
+Grafana queries Postgres directly.
+
+> The worker's HTTP server (`:8081`) answers `/` with `200 OK` but has **no `/metrics`** —
+> checked before building anything. `prometheus-client` being a dependency does not mean an
+> endpoint is exposed. System metrics (CPU, worker health) would still need
+> node_exporter + Prometheus; that is a separate, less urgent piece.
+
+`grafana/provisioning/` holds the datasource (fixed `uid: aivoice`, reachable as
+`postgres:5432` over the compose network) and the dashboard JSON, so both come up
+automatically on a fresh deploy.
+
+**Dashboard** — `http://<server>:3000/d/aivoice-ops`, firewalled to the workstation only:
+
+| Panel | Reads |
+|---|---|
+| Calls / p50 / p95 / transfer % / limit hits | Top-row stats, thresholded |
+| **Where the time goes** | eou vs llm_ttft vs tts_ttfb, stacked — **eou rising is our machine; llm/tts rising is the provider** |
+| Turn latency | p50 and p95 over time |
+| How calls ended | completed / transferred / limit |
+| LLM tokens | cached vs uncached, stacked — the cost driver |
+| Recent calls | Full per-call record |
+
+> ⚠️ **`Transferred to human: 70.8%` in the first screenshot is a load-test artefact** — the
+> synthetic `demo-thanks` audio was repeatedly read as "customer wants an agent". On real
+> traffic this is the single most important business metric: a high rate means the agent is
+> not earning its keep.
+
+### Grafana gotcha
+
+The admin password is read from `GF_SECURITY_ADMIN_PASSWORD` **only on first boot**; after
+that it lives in Grafana's own database. Changing `.env` later does nothing. Either:
+
+```bash
+docker exec -it grafana grafana cli admin reset-admin-password "$GRAFANA_PASSWORD"
+# or, if nothing is saved yet:
+docker compose rm -sf grafana && docker volume rm aivoice_grafana-data && docker compose up -d grafana
+```
 
 ---
 
 ## ⏭️ Next
 
-- **Wire up the fallback chain** (decided above; ~1 hour of agent-side work)
-- Monitoring, cost guardrails
+- **Wire up the fallback chain** (decided and benchmarked; ~1 hour of agent-side work)
 - Capacity test to 20 with a proper SIP load tool
+- System metrics (node_exporter + Prometheus) and alerting
 - Step 11 — admin panel
 
 ---

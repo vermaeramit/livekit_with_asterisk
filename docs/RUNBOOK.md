@@ -465,6 +465,84 @@ Three workers, jobs distributed 0/4/3. Above 10 is untested.
 
 ---
 
+## 3e. Monitoring + guardrails
+
+### Dashboard
+
+**`http://10.130.9.243:3000/d/aivoice-ops`** — login `admin`, password in `/opt/aivoice/.env`
+(`GRAFANA_PASSWORD`). Firewalled to the workstation only.
+
+> The admin password is read from the env **only on first boot**. Changing `.env` afterwards
+> does nothing — Grafana keeps it in its own database:
+> ```bash
+> docker exec -it grafana grafana cli admin reset-admin-password "$GRAFANA_PASSWORD"
+> ```
+
+Reading it:
+
+| Panel | What it tells you |
+|---|---|
+| **Where the time goes** | `eou` rising → **our machine** (VAD + turn detector run locally). `llm_ttft`/`tts_ttfb` rising → **the provider**. This single panel separates the two. |
+| Transfer % | The business metric. High means the agent is not earning its keep. |
+| Hit a limit | Red if any call was cut by a guardrail — check whether the limits are too tight or a call ran away |
+| LLM tokens | Cached vs uncached. The KB rides on every request, so prompt tokens dominate. |
+
+### Guardrails
+
+```sql
+UPDATE agent_config SET max_duration_sec = 600   WHERE name='default';  -- seconds
+UPDATE agent_config SET max_turns        = 40    WHERE name='default';
+UPDATE agent_config SET max_prompt_tokens= 150000 WHERE name='default';
+UPDATE agent_config SET limit_message = 'Maaf kijiye, samay poora ho gaya hai.'
+                                                  WHERE name='default';
+```
+
+On breach the agent **speaks `limit_message`, waits for playout, then deletes the room** —
+the caller is never cut off mid-sentence. A guardrail firing is recorded in
+`calls.limit_hit`.
+
+Testing without waiting 10 minutes:
+
+```bash
+docker exec -i postgres psql -U aivoice -d aivoice -c \
+  "UPDATE agent_config SET max_duration_sec=45, max_turns=4 WHERE name='default';"
+# dial 700, keep talking
+docker exec -i postgres psql -U aivoice -d aivoice -c \
+  "UPDATE agent_config SET max_duration_sec=600, max_turns=40 WHERE name='default';"
+```
+
+### Cost queries
+
+Usage is stored, **not cost** — rates change, usage does not. Multiply at query time:
+
+```bash
+docker exec -i postgres psql -U aivoice -d aivoice <<'SQL'
+-- most expensive calls by token use
+SELECT id, started_at::timestamp(0), round(duration_ms/1000.0) AS secs, turn_count,
+       llm_prompt_tokens, llm_prompt_cached_tokens, llm_completion_tokens,
+       tts_characters, round(stt_audio_seconds) AS stt_secs, end_reason, limit_hit
+  FROM calls
+ WHERE started_at > now() - interval '24 hours'
+ ORDER BY llm_prompt_tokens DESC NULLS LAST LIMIT 20;
+
+-- daily usage totals
+SELECT date_trunc('day', started_at)::date AS day, count(*) AS calls,
+       sum(llm_prompt_tokens)        AS prompt_tok,
+       sum(llm_prompt_cached_tokens) AS cached_tok,
+       sum(llm_completion_tokens)    AS compl_tok,
+       sum(tts_characters)           AS tts_chars,
+       round(sum(stt_audio_seconds)) AS stt_secs
+  FROM calls GROUP BY 1 ORDER BY 1 DESC LIMIT 14;
+
+-- how calls end
+SELECT coalesce(end_reason,'unknown') AS reason, count(*),
+       round(100.0*count(*)/sum(count(*)) OVER (), 1) AS pct
+  FROM calls WHERE started_at > now() - interval '24 hours' GROUP BY 1 ORDER BY 2 DESC;
+SQL
+```
+
+---
+
 ## 4. Health checks
 
 ```bash

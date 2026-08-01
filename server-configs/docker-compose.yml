@@ -1,13 +1,3 @@
-# Deployed at /opt/aivoice/docker-compose.yml on 10.130.9.243
-#
-# network_mode: host is required, not optional.
-# Publishing the RTP port ranges through Docker's bridge network spawns a userland
-# proxy per port - memory blowup plus per-packet latency.
-#
-# CPU limits: 1.5 + 0.5 + 2.0 + 1.0 = 5 of 8 vCPU, leaving ~3 for agent workers.
-# The limits exist so agent workers cannot starve the SFU - a starved SFU degrades
-# audio on EVERY call, not just one.
-
 services:
   asterisk:
     build: ./asterisk
@@ -15,10 +5,10 @@ services:
     network_mode: host
     restart: unless-stopped
     volumes:
-      - ./asterisk/conf:/conf-override:ro,Z    # :Z = SELinux relabel (host is enforcing)
+      - ./asterisk/conf:/conf-override:ro,Z
       - asterisk-spool:/var/spool/asterisk
       - asterisk-log:/var/log/asterisk
-    cap_add: [ SYS_NICE ]                       # realtime scheduling for audio threads
+    cap_add: [ SYS_NICE ]
     ulimits:
       nofile: 65535
     deploy:
@@ -69,6 +59,50 @@ services:
       resources:
         limits: { cpus: '1.0' }
 
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro,Z
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 512M }
+
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on: [ postgres ]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 512M }
+
+
 volumes:
+  grafana-data:
+  pgdata:
   asterisk-spool:
   asterisk-log:

@@ -1,0 +1,18 @@
+apiVersion: 1
+datasources:
+  - name: aivoice
+    uid: aivoice
+    type: postgres
+    access: proxy
+    # service name, not 127.0.0.1 - Grafana runs in a container and shares the
+    # compose network with postgres
+    url: postgres:5432
+    database: aivoice
+    user: aivoice
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: true

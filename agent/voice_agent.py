@@ -110,6 +110,9 @@ class KBAgent(Agent):
         self.tool_calls = 0
         self.last_kb_ms = 0
         self.transferred: tuple[str, str] | None = None
+        self.turn_count = 0
+        self.prompt_tokens = 0
+        self.limit_hit: str | None = None
 
     # ────────────────────────── knowledge ──────────────────────────
 
@@ -250,6 +253,38 @@ async def entrypoint(ctx: JobContext):
     pending: dict[str, int] = {}
     seq = 0
 
+    # ---- guardrails ----
+    # agent_config has carried max_turns and max_duration_sec since Step 8 but
+    # nothing ever read them: a call could run forever and a looping LLM had no
+    # brake at all. One observed call used 32,816 prompt tokens, so the token cap
+    # is the one that actually bounds spend - the KB rides along on every request.
+    async def enforce_limit(reason: str):
+        if agent.limit_hit:
+            return
+        agent.limit_hit = reason
+        logger.warning("LIMIT HIT (%s) - closing call %s", reason, call_id)
+        try:
+            msg = cfg.limit_message or "Is call ka samay poora ho gaya hai. Dhanyavaad."
+            h = await session.say(msg, allow_interruptions=False)
+            await h.wait_for_playout()      # never cut the caller off mid-sentence
+        except Exception:
+            logger.exception("limit message failed - closing anyway")
+        try:
+            await ctx.delete_room()
+        except Exception:
+            logger.exception("delete_room failed")
+            ctx.shutdown(reason=f"limit:{reason}")
+
+    async def duration_watchdog():
+        deadline = time.monotonic() + cfg.max_duration_sec
+        while not agent.limit_hit:
+            await asyncio.sleep(5)
+            if time.monotonic() >= deadline:
+                await enforce_limit(f"max_duration_sec={cfg.max_duration_sec}")
+                return
+
+    asyncio.create_task(duration_watchdog())
+
     @session.on("metrics_collected")
     def _on_metrics(ev):
         try:
@@ -264,6 +299,11 @@ async def entrypoint(ctx: JobContext):
                 pending.setdefault("llm_ttft_ms", int(m.ttft * 1000))
                 pending["prompt_tokens"] = getattr(m, "prompt_tokens", 0)
                 pending["cached_tokens"] = getattr(m, "prompt_cached_tokens", 0)
+                agent.prompt_tokens += getattr(m, "prompt_tokens", 0)
+                if agent.prompt_tokens > cfg.max_prompt_tokens and not agent.limit_hit:
+                    asyncio.create_task(enforce_limit(
+                        f"max_prompt_tokens={cfg.max_prompt_tokens} "
+                        f"(used {agent.prompt_tokens})"))
             elif n == "TTSMetrics":
                 pending["tts_ttfb_ms"] = int(m.ttfb * 1000)
         except Exception:
@@ -290,6 +330,11 @@ async def entrypoint(ctx: JobContext):
                     agent.last_kb_ms = 0
                 pending.clear()
 
+            if role == "assistant":
+                agent.turn_count += 1
+                if agent.turn_count >= cfg.max_turns and not agent.limit_hit:
+                    asyncio.create_task(enforce_limit(f"max_turns={cfg.max_turns}"))
+
             bits = "  ".join(f"{k[:-3]}={v}ms" for k, v in t.items() if k.endswith("_ms"))
             logger.info("[%-9s] %s%s", role, text,
                         f"\n            {bits}{extra}" if bits else "")
@@ -301,16 +346,21 @@ async def entrypoint(ctx: JobContext):
 
     async def _shutdown():
         try:
-            logger.info("usage: %s  kb_tool_calls=%d  transferred=%s",
-                        usage.get_summary(), agent.tool_calls, agent.transferred)
+            summary = usage.get_summary()
+            u = summary.__dict__ if hasattr(summary, "__dict__") else dict(summary)
+            logger.info("usage: %s  turns=%d  kb_tools=%d  limit=%s  transferred=%s",
+                        summary, agent.turn_count, agent.tool_calls,
+                        agent.limit_hit, agent.transferred)
+
+            reason = ("transferred" if agent.transferred
+                      else "limit" if agent.limit_hit else "completed")
+            await store.end_call_usage(call_id, reason, agent.limit_hit,
+                                       agent.turn_count, u)
             if agent.transferred:
-                dest, reason = agent.transferred
-                await store.end_call(call_id, "transferred", outcome=reason)
+                dest, why = agent.transferred
                 await (await store.pool()).execute(
-                    "UPDATE calls SET transferred_to=$2, transfer_reason=$3 WHERE id=$1",
-                    call_id, dest, reason)
-            else:
-                await store.end_call(call_id, "completed")
+                    "UPDATE calls SET transferred_to=$2, transfer_reason=$3, outcome=$3 "
+                    "WHERE id=$1", call_id, dest, why)
             await store.close()
         except Exception:
             logger.exception("shutdown failed")

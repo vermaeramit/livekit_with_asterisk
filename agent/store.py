@@ -27,6 +27,8 @@ class AgentConfig:
     allow_interrupt: bool
     max_turns: int
     max_duration_sec: int
+    max_prompt_tokens: int
+    limit_message: Optional[str]
     kb_enabled: bool
     kb_top_k: int
     kb_min_score: float
@@ -81,6 +83,36 @@ async def end_call(call_id: int, reason: str, outcome: str | None = None):
         call_id, reason, outcome,
     )
 
+
+async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
+                         turn_count: int, usage: dict):
+    """Store per-call usage so expensive calls can be found afterwards.
+
+    Usage is stored, NOT cost - rates change, usage does not. Multiply at query
+    time with whatever the rates are today.
+    """
+    await (await pool()).execute(
+        """UPDATE calls SET
+               ended_at    = now(),
+               duration_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
+               end_reason  = $2,
+               limit_hit   = $3,
+               turn_count  = $4,
+               llm_prompt_tokens        = $5,
+               llm_prompt_cached_tokens = $6,
+               llm_completion_tokens    = $7,
+               tts_characters           = $8,
+               tts_audio_seconds        = $9,
+               stt_audio_seconds        = $10
+         WHERE id = $1""",
+        call_id, reason, limit_hit, turn_count,
+        int(usage.get("llm_prompt_tokens", 0)),
+        int(usage.get("llm_prompt_cached_tokens", 0)),
+        int(usage.get("llm_completion_tokens", 0)),
+        int(usage.get("tts_characters_count", 0)),
+        float(usage.get("tts_audio_duration", 0)),
+        float(usage.get("stt_audio_duration", 0)),
+    )
 
 async def log_turn(call_id: int, seq: int, role: str, text: str | None, **t):
     await (await pool()).execute(
