@@ -167,23 +167,39 @@ A starved SFU degrades audio on **every** call, not just one.
 
 ```
 livekit_with_asterisk/
-├── README.md                  ← this file
+├── README.md                  ← this file: architecture, decisions, latency
+├── .env.example               ← required env vars, no values
 ├── docs/
-│   ├── PROGRESS.md            ← step-by-step log of everything done
-│   └── SERVER.md              ← server inventory, ports, credentials, runbook
-└── server-configs/            ← mirror of configs deployed on 10.130.9.243
-    └── asterisk/
-        ├── Dockerfile
-        ├── entrypoint.sh
-        └── conf/
-            ├── pjsip.conf
-            ├── extensions.conf
-            ├── rtp.conf
-            └── modules.conf
+│   ├── RUNBOOK.md             ← 🔧 commands, config, debugging — start here day-to-day
+│   ├── PROGRESS.md            ← full build log, including what did NOT work
+│   └── SERVER.md              ← inventory, ports, credentials map
+├── agent/
+│   ├── voice_agent.py         ← the agent (STT → LLM → TTS, barge-in, metrics)
+│   ├── store.py               ← Postgres config + call/turn logging
+│   ├── echo_agent.py          ← transport-only echo (Step 7)
+│   ├── measure_latency.py     ← round-trip measurement via cross-correlation
+│   ├── bench_llm.py           ← per-model TTFT benchmark
+│   └── requirements.txt
+└── server-configs/            ← mirror of what is deployed on the server
+    ├── docker-compose.yml
+    ├── postgres-schema.sql
+    ├── asterisk/{Dockerfile,entrypoint.sh,conf/*}
+    ├── livekit/livekit.yaml
+    ├── redis/redis.conf
+    └── sip/config.yaml.template
 ```
 
-> This folder is not yet a git repo. `git init` is recommended — config changes across
-> 10 steps are much easier to review and roll back with history.
+**Secrets are never committed.** The real `.env` lives only on the server; `.gitignore`
+blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
+
+### Tags
+
+| Tag | Milestone |
+|---|---|
+| `v0.3.0` | Step 8 — working AI voice pipeline |
+| `v0.4.0` | Step 9 — knowledge base + tools *(planned)* |
+| `v0.5.0` | Step 10 — production hardening *(planned)* |
+| `v1.0.0` | Step 11 — admin panel *(planned)* |
 
 ---
 
