@@ -1597,11 +1597,65 @@ this project.
 persisted. Concurrent refreshes share one promise — since the backend rotates on
 use, two parallel refreshes would revoke each other and log the user out at random.
 
+### ✅ Phase 2a — clients, users, campaigns
+
+Until this landed the panel had exactly one hand-seeded superadmin and no way to
+create anything, so no client could sign in. Everything else was blocked behind it.
+
+**Migration 002** (additive): `must_change_password`, `created_by`,
+`password_changed_at`, plus slug-format CHECKs on `tenants` and `campaigns` —
+campaign slugs end up inside `agent_config.name`, which the workers key on, so
+they are constrained in the database rather than trusted from the UI.
+
+| Screen | Notable behaviour |
+|---|---|
+| Clients | create, suspend, reactivate |
+| Users | create with generated password, reset, disable, delete |
+| Campaigns | create (with its agent config), enable/disable, delete |
+
+**Decisions worth keeping:**
+
+*There is no delete for a client.* It would cascade through campaigns, users and
+the knowledge base and detach every historical call — irreversible, behind one
+click. Suspend instead.
+
+*Creating a campaign creates its `agent_config` in the same transaction.* A
+campaign without one cannot take a call, so a half-created pair is not a state
+worth allowing. The config name is `{tenant-slug}-{campaign-slug}` — derived from
+slugs, not labels, so it stays stable when migration 003 switches the workers to
+`campaign_id`.
+
+*A campaign with call history cannot be deleted*, only disabled. At that point
+deletion is destroying evidence, not tidying up.
+
+*`must_change_password` is enforced server-side*, by a new `active_user`
+dependency that every data endpoint depends on. An admin picks the initial
+password, so until it is replaced that admin can sign in as the user — a
+client-side redirect is a suggestion, not a control. `current_user` (identity
+only) still backs `/auth/me`, `/auth/change-password` and `/auth/logout`, which a
+half-onboarded user must be able to reach.
+
+*A suspended tenant is refused at login and on every request*, not just hidden in
+the UI.
+
+*Resetting or changing a password revokes every session for that user.* A reset
+prompted by a suspected compromise is pointless if the intruder keeps a week-long
+refresh token.
+
+**RBAC rules that are tested, not just intended:** a `tenant_admin` cannot mint a
+superadmin, cannot reach another tenant (404, not 403 — a distinct 403 confirms
+the id exists), and cannot deactivate or delete itself. The last active
+superadmin cannot be removed.
+
+**Trap:** TypeScript does not narrow a union on `'to' in item` when the other
+variant declares `to?: never` — the nav needed a real `kind` discriminant. Six
+type errors, all pointing at the wrong line.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
 |---|---|
-| 2 | Campaign + agent-config CRUD, KB upload/management from the panel |
+| 2b | Agent-config editor + KB upload/management from the panel |
 | 3 | Analytics in-panel (replaces Grafana), then retire it |
 | 4 | Call recordings — storage, retention, auth'd playback |
 | 5 | Live call monitoring + alerting |
