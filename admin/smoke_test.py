@@ -19,6 +19,32 @@ PASS, FAIL = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m"
 failures = 0
 
 
+def _json_or_none(raw: bytes) -> dict | None:
+    """Bodies here are usually JSON, but not always - the recording endpoint
+    returns audio. Decoding blindly crashed the whole run on the first one."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {"_bytes": len(raw)}
+
+
+def fetch_headers(base: str, path: str, *, token: str,
+                  extra: dict[str, str] | None = None
+                  ) -> tuple[int, dict[str, str], int]:
+    """-> (status, headers, body length). For endpoints whose body is not JSON."""
+    req = urllib.request.Request(base + path)
+    req.add_header("Authorization", f"Bearer {token}")
+    for k, v in (extra or {}).items():
+        req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, dict(r.headers), len(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), len(e.read())
+
+
 def call(base: str, path: str, *, method: str = "GET",
          body: dict | None = None, token: str | None = None
          ) -> tuple[int, dict | None]:
@@ -30,14 +56,9 @@ def call(base: str, path: str, *, method: str = "GET",
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            raw = r.read()
-            return r.status, (json.loads(raw) if raw else None)
+            return r.status, _json_or_none(r.read())
     except urllib.error.HTTPError as e:
-        raw = e.read()
-        try:
-            return e.code, json.loads(raw) if raw else None
-        except json.JSONDecodeError:
-            return e.code, {"detail": raw.decode()[:200]}
+        return e.code, _json_or_none(e.read())
     except urllib.error.URLError as e:
         print(f"  cannot reach {base}: {e.reason}", file=sys.stderr)
         raise SystemExit(2)
@@ -205,11 +226,48 @@ def main() -> int:
         available = bool((detail or {}).get("recording_available"))
         print(f"  call {newest}: recording "
               f"{'present' if available else 'absent (not recorded, or expired)'}")
-        st, _ = call(args.base, f"/calls/{newest}/recording", token=access)
+        st, headers, size = fetch_headers(args.base, f"/calls/{newest}/recording",
+                                          token=access)
         # The flag is resolved from disk, so it must agree with the endpoint.
         # A mismatch means the console offers a player for audio that is gone.
         check("endpoint agrees with recording_available",
               (st == 200) == available, f"got {st}, flag={available}")
+
+        if st == 200:
+            check("served as audio", headers.get("Content-Type") == "audio/ogg",
+                  headers.get("Content-Type", ""))
+            check("advertises byte ranges",
+                  headers.get("Accept-Ranges") == "bytes",
+                  headers.get("Accept-Ranges", "missing"))
+
+            # Seeking in a browser's audio element is entirely a Range feature.
+            # Without 206 the scrubber moves and the audio does not.
+            st_r, h_r, n_r = fetch_headers(
+                args.base, f"/calls/{newest}/recording", token=access,
+                extra={"Range": "bytes=0-99"})
+            check("Range request -> 206", st_r == 206, f"got {st_r}")
+            check("returns exactly the requested bytes", n_r == 100, f"got {n_r}")
+            check("Content-Range is correct",
+                  h_r.get("Content-Range", "").startswith(f"bytes 0-99/{size}"),
+                  h_r.get("Content-Range", "missing"))
+
+            # "bytes=-64" is the LAST 64 bytes, not the first 64 - the easiest
+            # part of the spec to implement backwards.
+            st_s, h_s, n_s = fetch_headers(
+                args.base, f"/calls/{newest}/recording", token=access,
+                extra={"Range": "bytes=-64"})
+            check("suffix range returns the tail", st_s == 206 and n_s == 64,
+                  f"got {st_s}, {n_s} bytes")
+            check("suffix range points at the end",
+                  h_s.get("Content-Range", "").startswith(
+                      f"bytes {size - 64}-{size - 1}/"),
+                  h_s.get("Content-Range", "missing"))
+
+            st_b, h_b, _ = fetch_headers(
+                args.base, f"/calls/{newest}/recording", token=access,
+                extra={"Range": f"bytes={size + 10}-"})
+            check("range past the end -> 416", st_b == 416, f"got {st_b}")
+
         st, _ = call(args.base, f"/calls/{newest}/recording", token=None)
         check("recording without a token -> 401", st == 401, f"got {st}")
 
