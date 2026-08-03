@@ -1,10 +1,20 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
     <title>AI Voice Console</title>
+    <script>
+      // Applied before first paint. Without this a dark-theme user sees a white
+      // flash on every navigation while React boots.
+      try {
+        if (localStorage.getItem('aivoice.theme') === 'dark') {
+          document.documentElement.classList.add('dark')
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

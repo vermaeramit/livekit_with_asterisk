@@ -32,13 +32,13 @@ function Stat({
   hint?: string
 }) {
   return (
-    <Card className="p-3">
+    <Card className="p-4">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
-      <p className="mt-1.5 tnum text-lg font-semibold leading-none">{value}</p>
-      {hint && <p className="mt-1.5 text-[11px] text-muted-foreground">{hint}</p>}
+      <p className="mt-2 tnum text-xl font-semibold leading-none">{value}</p>
+      {hint && <p className="mt-1.5 text-2xs text-muted-foreground">{hint}</p>}
     </Card>
   )
 }
@@ -75,7 +75,7 @@ function LatencyBar({ turn, max }: { turn: Turn; max: number }) {
           />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-2xs text-muted-foreground">
         {segs.map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1">
             <span className={cn('h-1.5 w-1.5 rounded-full', s.cls)} />
@@ -105,7 +105,7 @@ function Citations({ turn, chunks }: { turn: Turn; chunks: Record<string, KbChun
     <div className="mt-2">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/20"
       >
         <BookOpen className="h-3 w-3" />
         {turn.kb_chunk_ids.length} knowledge-base {turn.kb_chunk_ids.length === 1 ? 'source' : 'sources'}
@@ -119,7 +119,7 @@ function Citations({ turn, chunks }: { turn: Turn; chunks: Record<string, KbChun
             const score = turn.kb_scores?.[i]
             return (
               <div key={id} className="rounded-md border border-border bg-muted/40 p-2.5">
-                <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between gap-2 text-2xs text-muted-foreground">
                   <span className="truncate font-medium text-foreground/80">
                     {chunk ? (chunk.title || chunk.filename) : `chunk #${id}`}
                     {chunk?.heading ? ` · ${chunk.heading}` : ''}
@@ -169,7 +169,7 @@ function TurnRow({
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-2 text-2xs text-muted-foreground">
           <span className="font-medium text-foreground/80">{isAgent ? 'Agent' : 'Caller'}</span>
           <span className="tnum">{formatDateTime(turn.ts)}</span>
           {turn.interrupted && (
@@ -208,7 +208,7 @@ export function CallDetail() {
 
   if (call.isLoading) {
     return (
-      <div className="mx-auto max-w-5xl space-y-4 p-4 lg:p-6">
+      <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
         <Skeleton className="h-8 w-48" />
         <div className="grid gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -255,7 +255,7 @@ export function CallDetail() {
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-4 lg:p-6">
+    <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link
@@ -265,7 +265,7 @@ export function CallDetail() {
             <ArrowLeft className="h-3.5 w-3.5" />
             All calls
           </Link>
-          <h1 className="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold tracking-tight">
+          <h1 className="mt-1.5 flex flex-wrap items-center gap-2 text-xl font-semibold tracking-tight">
             <span className="tnum">{c.caller ?? 'unknown'}</span>
             <span className="text-muted-foreground">→</span>
             <span className="tnum">{c.callee ?? 'unknown'}</span>
@@ -281,7 +281,7 @@ export function CallDetail() {
       </div>
 
       {c.transferred_to && (
-        <Card className="border-primary/30 bg-primary/5 p-3">
+        <Card className="border-primary/30 bg-primary/5 p-4">
           <div className="flex items-start gap-2 text-sm">
             <ArrowRightLeft className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <div>
@@ -296,7 +296,7 @@ export function CallDetail() {
       )}
 
       {c.limit_hit && (
-        <Card className="border-warning/30 bg-warning/5 p-3">
+        <Card className="border-warning/30 bg-warning/5 p-4">
           <div className="flex items-start gap-2 text-sm">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
@@ -344,7 +344,7 @@ export function CallDetail() {
       <Card>
         <CardHeader className="flex items-center justify-between">
           <CardTitle>Transcript</CardTitle>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {timed.length} timed turn{timed.length === 1 ? '' : 's'}
           </span>
         </CardHeader>

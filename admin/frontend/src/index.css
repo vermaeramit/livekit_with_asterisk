@@ -3,72 +3,100 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light is the default. Enterprise consoles are read for hours in lit offices
+     and printed into tickets; a near-black canvas is the wrong default for that. */
   :root {
-    --background: 210 20% 98%;
-    --foreground: 222 24% 12%;
+    --background: 220 20% 97%;
+    --foreground: 222 47% 11%;
+
     --card: 0 0% 100%;
-    --card-foreground: 222 24% 12%;
-    --muted: 214 20% 95%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 214 24% 94%;
-    --accent-foreground: 222 24% 12%;
-    --primary: 221 83% 53%;
+    --card-foreground: 222 47% 11%;
+
+    --muted: 220 16% 96%;
+    --muted-foreground: 215 14% 44%;
+
+    --accent: 220 16% 94%;
+    --accent-foreground: 222 47% 11%;
+
+    --primary: 222 78% 52%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 214 20% 95%;
-    --secondary-foreground: 222 24% 12%;
-    --danger: 0 72% 51%;
+
+    --secondary: 220 16% 95%;
+    --secondary-foreground: 222 47% 20%;
+
+    --danger: 0 68% 48%;
     --danger-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 30 40% 12%;
-    --success: 152 61% 38%;
+    --warning: 32 90% 44%;
+    --warning-foreground: 0 0% 100%;
+    --success: 152 58% 32%;
     --success-foreground: 0 0% 100%;
-    --border: 216 16% 88%;
-    --input: 216 16% 88%;
-    --ring: 221 83% 53%;
-    --sidebar: 222 30% 12%;
-    --sidebar-foreground: 214 20% 88%;
-    --radius: 0.6rem;
+
+    --border: 218 20% 90%;
+    --input: 218 20% 88%;
+    --ring: 222 78% 52%;
+
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 222 20% 34%;
+
+    --radius: 0.5rem;
   }
 
+  /* Dark is slate, not black. The previous values sat at 9% lightness, which
+     reads as an unlit screen rather than a designed surface. */
   .dark {
-    --background: 222 26% 9%;
-    --foreground: 210 20% 94%;
-    --card: 222 24% 12%;
-    --card-foreground: 210 20% 94%;
-    --muted: 220 18% 17%;
-    --muted-foreground: 218 12% 62%;
-    --accent: 220 18% 19%;
-    --accent-foreground: 210 20% 94%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 10%;
-    --secondary: 220 18% 17%;
-    --secondary-foreground: 210 20% 94%;
-    --danger: 0 72% 58%;
+    --background: 222 20% 13%;
+    --foreground: 213 26% 92%;
+
+    --card: 220 18% 16%;
+    --card-foreground: 213 26% 92%;
+
+    --muted: 220 15% 21%;
+    --muted-foreground: 216 14% 65%;
+
+    --accent: 220 15% 23%;
+    --accent-foreground: 213 26% 94%;
+
+    --primary: 217 90% 63%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 220 15% 21%;
+    --secondary-foreground: 213 26% 92%;
+
+    --danger: 0 72% 62%;
     --danger-foreground: 0 0% 100%;
-    --warning: 38 92% 55%;
-    --warning-foreground: 30 40% 10%;
-    --success: 152 55% 45%;
-    --success-foreground: 150 40% 8%;
-    --border: 220 16% 22%;
-    --input: 220 16% 22%;
-    --ring: 217 91% 60%;
-    --sidebar: 224 30% 8%;
-    --sidebar-foreground: 214 20% 82%;
+    --warning: 38 88% 58%;
+    --warning-foreground: 30 45% 10%;
+    --success: 152 50% 50%;
+    --success-foreground: 150 45% 8%;
+
+    --border: 219 14% 26%;
+    --input: 219 14% 28%;
+    --ring: 217 90% 63%;
+
+    --sidebar: 222 20% 15%;
+    --sidebar-foreground: 216 16% 72%;
   }
 
   * {
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'tnum';
+  html {
+    -webkit-text-size-adjust: 100%;
   }
 
-  /* Tabular figures everywhere numbers are compared down a column - latency and
-     token counts are unreadable when the digits jitter. */
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Tabular figures wherever numbers are compared down a column. Latency and
+     token counts are unreadable when the digits jitter between rows. */
   .tnum {
     font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.2);
   }
 }
 
@@ -78,12 +106,18 @@
     scrollbar-color: hsl(var(--border)) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background-color: hsl(var(--border));
+    border: 3px solid transparent;
+    background-clip: content-box;
     border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+    background-clip: content-box;
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;

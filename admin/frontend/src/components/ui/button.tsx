@@ -3,19 +3,20 @@ import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type Variant = 'default' | 'secondary' | 'ghost' | 'outline' | 'danger'
-type Size = 'sm' | 'md' | 'icon'
+type Size = 'sm' | 'md' | 'lg' | 'icon'
 
 const variants: Record<Variant, string> = {
-  default: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm',
-  secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-  ghost: 'hover:bg-accent hover:text-accent-foreground',
-  outline: 'border border-border bg-transparent hover:bg-accent',
-  danger: 'bg-danger text-danger-foreground hover:bg-danger/90 shadow-sm',
+  default: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs',
+  secondary: 'bg-secondary text-secondary-foreground hover:bg-accent',
+  ghost: 'text-muted-foreground hover:bg-accent hover:text-foreground',
+  outline: 'border border-border bg-card shadow-xs hover:bg-accent',
+  danger: 'bg-danger text-danger-foreground hover:bg-danger/90 shadow-xs',
 }
 
 const sizes: Record<Size, string> = {
-  sm: 'h-8 px-3 text-xs',
-  md: 'h-9 px-4 text-sm',
+  sm: 'h-8 px-2.5 text-xs',
+  md: 'h-9 px-3.5 text-sm',
+  lg: 'h-10 px-5 text-sm',
   icon: 'h-9 w-9',
 }
 

@@ -1564,6 +1564,39 @@ a wrong password take the same time — otherwise response timing enumerates acc
   the row straight into the token issuer would have minted tokens under the wrong
   subject. `_issue()` now takes explicit arguments instead of a row.
 
+### ✅ Phase 1 — frontend: React console
+
+`admin/frontend/` — React 18 + Vite + TypeScript + Tailwind. No component-library
+CLI in the loop; the primitives are hand-written in the same idiom, so there is
+nothing to re-generate and no build-time network dependency.
+
+| Screen | What it shows |
+|---|---|
+| Login | Split brand panel; errors inline, never a blank redirect |
+| Calls | Filter (search / campaign / outcome / date), paginate, click through |
+| Call detail | Transcript, per-turn latency breakdown, KB citations, token usage |
+
+**Design correction.** The first cut defaulted to dark, and the dark itself sat at
+9% lightness — it read as an unlit screen rather than a designed surface. Enterprise
+consoles are read for hours in lit offices and pasted into tickets, so:
+
+- **light is now the default**, dark is opt-in and remembered
+- dark was rebuilt on slate (13–16% lightness), not black
+- a pre-paint script in `index.html` applies the stored theme before React boots,
+  otherwise a dark-theme user gets a white flash on every navigation
+- system font stack only (Segoe UI / SF) — the panel must render identically with
+  no network access
+
+**The latency bar is the point of the detail screen.** Three stacked segments:
+turn detection (ours), LLM first token, TTS first byte. When a call feels slow this
+says whose fault it is. `stt_ms` is deliberately *not* a segment — it is already
+inside `eou`, and adding it double-counts, which is a mistake made once already in
+this project.
+
+**Token handling.** The access token lives in memory; only the refresh token is
+persisted. Concurrent refreshes share one promise — since the backend rotates on
+use, two parallel refreshes would revoke each other and log the user out at random.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |

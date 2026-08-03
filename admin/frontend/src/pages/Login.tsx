@@ -1,10 +1,16 @@
 import { useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, Eye, EyeOff, Radio } from 'lucide-react'
+import { AlertCircle, Eye, EyeOff, Radio, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/primitives'
 import { useAuth } from '@/lib/auth'
 import { ApiError } from '@/lib/api'
+
+const HIGHLIGHTS = [
+  'Per-turn latency, split by turn detection, LLM and speech',
+  'Full transcripts with the knowledge-base sources behind each answer',
+  'Campaign-level isolation across every client',
+]
 
 export function Login() {
   const { user, ready, signIn } = useAuth()
@@ -37,47 +43,65 @@ export function Login() {
   }
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      {/* left: brand panel, hidden on small screens */}
-      <div className="relative hidden flex-col justify-between bg-sidebar p-10 text-sidebar-foreground lg:flex">
-        <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground">
+    <div className="grid min-h-screen bg-background lg:grid-cols-[1.05fr_1fr]">
+      {/* Brand panel. Deliberately fixed dark in both themes - it is a marketing
+          surface, not a working one, and it should not flip with the toggle. */}
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-slate-900 p-12 lg:flex">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-blue-600/25 blur-3xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-indigo-500/15 blur-3xl"
+        />
+
+        <div className="relative flex items-center gap-2.5">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-600 text-white">
             <Radio className="h-4 w-4" />
           </span>
-          <span className="font-semibold tracking-tight">Voice Console</span>
+          <span className="font-semibold tracking-tight text-white">Voice Console</span>
         </div>
-        <div className="max-w-md">
-          <h1 className="text-2xl font-semibold leading-snug tracking-tight text-white">
-            Every call, every turn, every millisecond.
+
+        <div className="relative max-w-md">
+          <h1 className="text-3xl font-semibold leading-tight tracking-tight text-white">
+            Every call, every turn,
+            <br />
+            every millisecond.
           </h1>
-          <p className="mt-3 text-sm text-sidebar-foreground/60">
-            Transcripts, latency breakdowns and knowledge-base citations for the whole voice
-            estate — in one place.
-          </p>
+          <ul className="mt-7 space-y-3">
+            {HIGHLIGHTS.map((h) => (
+              <li key={h} className="flex items-start gap-2.5 text-sm text-slate-300">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
+                {h}
+              </li>
+            ))}
+          </ul>
         </div>
-        <p className="text-xs text-sidebar-foreground/35">
-          Authorised access only. Sessions are logged.
+
+        <p className="relative text-xs text-slate-500">
+          Authorised access only. Sessions are recorded against your account.
         </p>
       </div>
 
-      {/* right: the form */}
+      {/* form */}
       <div className="flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2 lg:hidden">
-            <span className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground">
+        <div className="w-full max-w-[22rem]">
+          <div className="mb-9 flex items-center gap-2.5 lg:hidden">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground">
               <Radio className="h-4 w-4" />
             </span>
             <span className="font-semibold tracking-tight">Voice Console</span>
           </div>
 
-          <h2 className="text-xl font-semibold tracking-tight">Sign in</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Use the account your administrator gave you.
+          <h2 className="text-2xl font-semibold tracking-tight">Sign in</h2>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Use the account your administrator issued.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-6 space-y-4">
+          <form onSubmit={onSubmit} className="mt-7 space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email address</Label>
               <Input
                 id="email"
                 type="email"
@@ -86,6 +110,7 @@ export function Login() {
                 autoFocus
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                className="h-10"
                 placeholder="you@company.com"
               />
             </div>
@@ -100,12 +125,12 @@ export function Login() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pr-9"
+                  className="h-10 pr-10"
                 />
                 <button
                   type="button"
                   onClick={() => setReveal((r) => !r)}
-                  className="absolute right-0 top-0 grid h-9 w-9 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+                  className="absolute right-0 top-0 grid h-10 w-10 place-items-center text-muted-foreground transition-colors hover:text-foreground"
                   aria-label={reveal ? 'Hide password' : 'Show password'}
                   tabIndex={-1}
                 >
@@ -117,17 +142,21 @@ export function Login() {
             {error && (
               <div
                 role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger/10 p-2.5 text-xs text-danger ring-1 ring-inset ring-danger/25"
+                className="flex items-start gap-2 rounded-md bg-danger/10 p-3 text-xs text-danger ring-1 ring-inset ring-danger/20"
               >
                 <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
-            <Button type="submit" className="w-full" loading={busy}>
+            <Button type="submit" size="lg" className="w-full" loading={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          <p className="mt-8 text-center text-2xs text-muted-foreground">
+            Trouble signing in? Contact your administrator.
+          </p>
         </div>
       </div>
     </div>
