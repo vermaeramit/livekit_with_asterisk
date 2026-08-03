@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
-from ..schemas import AgentConfigOut, AgentConfigUpdate, AuditEntry
+from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
+                       CampaignRoute, CampaignRouteCreate)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -71,6 +73,65 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
                        action="update", tenant_id=tenant_id, campaign_id=campaign_id,
                        changes=audit.diff(before, fields))
     return AgentConfigOut(**await _get(campaign_id))
+
+
+@router.get("/routes", response_model=list[CampaignRoute])
+async def list_routes(campaign_id: int, user: CurrentUser = Depends(active_user)):
+    await assert_campaign_visible(user, campaign_id)
+    rows = await db.pool().fetch(
+        """SELECT id, campaign_id, did, description, created_at
+             FROM campaign_routes WHERE campaign_id = $1 ORDER BY did""",
+        campaign_id)
+    return [CampaignRoute(**dict(r)) for r in rows]
+
+
+@router.post("/routes", response_model=CampaignRoute,
+             status_code=status.HTTP_201_CREATED)
+async def add_route(campaign_id: int, body: CampaignRouteCreate,
+                    actor: CurrentUser = Depends(editor)):
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+    try:
+        row = await db.pool().fetchrow(
+            """INSERT INTO campaign_routes (campaign_id, did, description)
+               VALUES ($1, $2, $3)
+               RETURNING id, campaign_id, did, description, created_at""",
+            campaign_id, body.did, body.description)
+    except asyncpg.UniqueViolationError:
+        # DIDs are unique across every tenant. Say which campaign has it only
+        # when the caller is allowed to see that campaign - otherwise the error
+        # would leak another client's configuration.
+        owner = await db.pool().fetchrow(
+            """SELECT c.name, c.tenant_id FROM campaign_routes r
+                 JOIN campaigns c ON c.id = r.campaign_id WHERE r.did = $1""",
+            body.did)
+        where = (f" (used by '{owner['name']}')"
+                 if owner and (actor.is_superadmin
+                               or owner["tenant_id"] == actor.tenant_id) else "")
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"{body.did} is already routed{where}")
+
+    await audit.record(actor, entity="campaign_route", entity_id=body.did,
+                       action="create", tenant_id=tenant_id,
+                       campaign_id=campaign_id,
+                       changes=audit.diff(None, body.model_dump()))
+    return CampaignRoute(**dict(row))
+
+
+@router.delete("/routes/{route_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_route(campaign_id: int, route_id: int,
+                       actor: CurrentUser = Depends(editor)):
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+    row = await db.pool().fetchrow(
+        "SELECT did FROM campaign_routes WHERE id = $1 AND campaign_id = $2",
+        route_id, campaign_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "route not found")
+
+    await db.pool().execute("DELETE FROM campaign_routes WHERE id = $1", route_id)
+    await audit.record(actor, entity="campaign_route", entity_id=row["did"],
+                       action="delete", tenant_id=tenant_id,
+                       campaign_id=campaign_id,
+                       changes={"did": {"from": row["did"], "to": None}})
 
 
 @router.get("/audit", response_model=list[AuditEntry])

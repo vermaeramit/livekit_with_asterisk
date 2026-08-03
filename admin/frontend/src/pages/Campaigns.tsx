@@ -296,17 +296,13 @@ export function Campaigns() {
         }
       />
 
-      {/* Honesty: campaigns.enabled is not read anywhere at call time yet. The
-          workers still select their config from the AGENT_CONFIG env var, so a
-          disabled campaign keeps answering until migration 003 lands. Saying so
-          beats a switch that quietly does nothing. */}
       <div className="flex items-start gap-2 rounded-md bg-primary/5 p-3 text-xs text-muted-foreground ring-1 ring-inset ring-primary/15">
         <Info className="mt-px h-3.5 w-3.5 shrink-0 text-primary" />
         <span className="leading-relaxed">
-          Disabling a campaign hides it here but does <strong>not</strong> stop calls yet — the
-          workers still pick their configuration from <code>AGENT_CONFIG</code>. Campaign-aware
-          routing arrives with migration 003. Prompt, voice and limits edits <em>do</em> take effect
-          on the next call.
+          A campaign only receives calls once an inbound number points at it —
+          set that under <strong>Configure → Routing</strong>. Disabling a campaign takes
+          effect on the next call: it is dropped straight to your human extension rather
+          than answered.
         </span>
       </div>
 

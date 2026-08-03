@@ -116,6 +116,23 @@ class CampaignOut(BaseModel):
     config_name: str | None = None
 
 
+# ───────────────────────────── routing ─────────────────────────────
+
+class CampaignRouteCreate(BaseModel):
+    # Same shape the database CHECK enforces, so a bad number is refused with a
+    # readable message instead of a constraint violation.
+    did: str = Field(min_length=1, max_length=64, pattern=r"^[0-9A-Za-z+*#._-]+$")
+    description: str | None = Field(default=None, max_length=200)
+
+
+class CampaignRoute(BaseModel):
+    id: int
+    campaign_id: int
+    did: str
+    description: str | None
+    created_at: datetime
+
+
 # ───────────────────────────── agent config ─────────────────────────────
 # Only the fields the agent actually reads are exposed. stt_provider /
 # llm_provider / tts_provider are columns the worker ignores - it constructs

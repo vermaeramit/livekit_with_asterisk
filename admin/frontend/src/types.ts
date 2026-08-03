@@ -224,6 +224,14 @@ export interface TimeBucket {
   tts_ttfb_ms: number | null
 }
 
+export interface CampaignRoute {
+  id: number
+  campaign_id: number
+  did: string
+  description: string | null
+  created_at: string
+}
+
 export interface AuditEntry {
   id: number
   entity: string

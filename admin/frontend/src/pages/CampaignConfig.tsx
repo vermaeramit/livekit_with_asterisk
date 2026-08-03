@@ -8,11 +8,13 @@ import {
   Info,
   MessageSquare,
   PhoneForwarded,
+  PhoneIncoming,
   ShieldCheck,
   TriangleAlert,
   Undo2,
   Waves,
 } from 'lucide-react'
+import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
@@ -70,12 +72,13 @@ const VOICES = [
   { value: 'hitesh', label: 'hitesh — male' },
 ]
 
-type TabKey = 'conversation' | 'voice' | 'knowledge' | 'limits' | 'history'
+type TabKey = 'conversation' | 'voice' | 'knowledge' | 'routing' | 'limits' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
   { key: 'voice', label: 'Voice & model', icon: Waves },
   { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
+  { key: 'routing', label: 'Routing', icon: PhoneIncoming },
   { key: 'limits', label: 'Limits & handoff', icon: ShieldCheck },
   { key: 'history', label: 'History', icon: History },
 ]
@@ -472,6 +475,23 @@ export function CampaignConfig() {
             </CardBody>
           </Card>
         </div>
+      )}
+
+      {tab === 'routing' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Inbound numbers</CardTitle>
+          </CardHeader>
+          <CardBody className="space-y-5">
+            <Note>
+              A call reaches this campaign when the number it dialled is listed here.
+              That is also what makes the enable/disable switch real: a call to a
+              disabled campaign is dropped immediately and falls through to your human
+              extension, rather than being answered by the wrong agent.
+            </Note>
+            <CampaignRoutes campaignId={campaignId} />
+          </CardBody>
+        </Card>
       )}
 
       {tab === 'limits' && (
