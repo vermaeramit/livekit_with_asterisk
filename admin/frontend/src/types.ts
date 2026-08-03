@@ -112,6 +112,48 @@ export interface KbChunk {
   title: string | null
 }
 
+export interface AgentConfig {
+  campaign_id: number
+  name: string
+  language: string
+  greeting: string | null
+  instructions: string
+
+  stt_model: string | null
+  llm_model: string
+  llm_temperature: number
+  tts_model: string | null
+  tts_voice: string | null
+  allow_interrupt: boolean
+
+  kb_enabled: boolean
+  kb_top_k: number
+  kb_min_score: number
+  kb_inline_max_tokens: number
+  kb_summary: string | null
+
+  max_turns: number
+  max_duration_sec: number
+  max_prompt_tokens: number
+  limit_message: string | null
+
+  transfer_enabled: boolean
+  transfer_to: string
+  transfer_message: string | null
+
+  updated_at: string
+}
+
+export interface AuditEntry {
+  id: number
+  entity: string
+  entity_id: string | null
+  action: string
+  changes: Record<string, { from: unknown; to: unknown }> | null
+  created_at: string
+  user_email: string | null
+}
+
 export interface CallFilters {
   search?: string
   campaign_id?: number

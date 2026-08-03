@@ -116,6 +116,102 @@ class CampaignOut(BaseModel):
     config_name: str | None = None
 
 
+# ───────────────────────────── agent config ─────────────────────────────
+# Only the fields the agent actually reads are exposed. stt_provider /
+# llm_provider / tts_provider are columns the worker ignores - it constructs
+# sarvam.STT, openai.LLM and sarvam.TTS unconditionally - so offering them as
+# controls would be a lie. They come back when the fallback chain is wired.
+#
+# agent_config.enabled is also deliberately absent: load_config() selects
+# "WHERE name = $1 AND enabled" and raises when it misses, which makes calls ring
+# forever with no visible error. That switch belongs on the campaign, not here.
+
+class AgentConfigOut(BaseModel):
+    campaign_id: int
+    name: str
+    language: str
+    greeting: str | None
+    instructions: str
+
+    stt_model: str | None
+    llm_model: str
+    llm_temperature: float
+    tts_model: str | None
+    tts_voice: str | None
+    allow_interrupt: bool
+
+    kb_enabled: bool
+    kb_top_k: int
+    kb_min_score: float
+    kb_inline_max_tokens: int
+    kb_summary: str | None
+
+    max_turns: int
+    max_duration_sec: int
+    max_prompt_tokens: int
+    limit_message: str | None
+
+    transfer_enabled: bool
+    transfer_to: str
+    transfer_message: str | None
+
+    updated_at: datetime
+
+
+class AgentConfigUpdate(BaseModel):
+    """Every field optional - the editor sends only what changed."""
+
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
+    greeting: str | None = Field(default=None, max_length=600)
+    instructions: str | None = Field(default=None, min_length=1, max_length=32000)
+
+    stt_model: str | None = Field(default=None, max_length=80)
+    llm_model: str | None = Field(default=None, min_length=1, max_length=80)
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    tts_model: str | None = Field(default=None, max_length=80)
+    tts_voice: str | None = Field(default=None, max_length=80)
+    allow_interrupt: bool | None = None
+
+    kb_enabled: bool | None = None
+    kb_top_k: int | None = Field(default=None, ge=1, le=10)
+    kb_min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Above roughly 8k the inline KB stops paying for itself - it is prepended to
+    # every prompt, so it is billed on every turn of every call.
+    kb_inline_max_tokens: int | None = Field(default=None, ge=0, le=16000)
+    kb_summary: str | None = Field(default=None, max_length=8000)
+
+    max_turns: int | None = Field(default=None, ge=1, le=300)
+    max_duration_sec: int | None = Field(default=None, ge=30, le=7200)
+    max_prompt_tokens: int | None = Field(default=None, ge=1000, le=1_000_000)
+    limit_message: str | None = Field(default=None, max_length=600)
+
+    transfer_enabled: bool | None = None
+    transfer_to: str | None = Field(default=None, max_length=200)
+    transfer_message: str | None = Field(default=None, max_length=600)
+
+    @field_validator("transfer_to")
+    @classmethod
+    def _check_sip_uri(cls, v: str | None) -> str | None:
+        # A malformed target is only discovered when a real caller asks for a
+        # human and the REFER fails - worth catching at save time.
+        if v is None:
+            return v
+        v = v.strip()
+        if not v.startswith("sip:") or "@" not in v:
+            raise ValueError("must be a SIP URI, e.g. sip:800@10.130.9.243")
+        return v
+
+
+class AuditEntry(BaseModel):
+    id: int
+    entity: str
+    entity_id: str | None
+    action: str
+    changes: dict | None
+    created_at: datetime
+    user_email: str | None = None
+
+
 # ───────────────────────────── users ─────────────────────────────
 
 class UserCreate(BaseModel):

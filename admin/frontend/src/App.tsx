@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
 import { Campaigns } from '@/pages/Campaigns'
+import { CampaignConfig } from '@/pages/CampaignConfig'
 import { ChangePassword } from '@/pages/ChangePassword'
 import { Login } from '@/pages/Login'
 import { Tenants } from '@/pages/Tenants'
@@ -59,6 +60,14 @@ export function App() {
           element={
             <Protected roles={['tenant_admin']}>
               <Campaigns />
+            </Protected>
+          }
+        />
+        <Route
+          path="/campaigns/:id/config"
+          element={
+            <Protected roles={['tenant_admin']}>
+              <CampaignConfig />
             </Protected>
           }
         />

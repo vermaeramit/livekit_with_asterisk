@@ -173,6 +173,50 @@ def main() -> int:
                  body={"slug": "default", "name": "duplicate"})
     check("duplicate tenant slug -> 409", st == 409, f"got {st}")
 
+    print("\nagent config")
+    default_campaign = next((c for c in camps or [] if c["slug"] == "default"), None)
+    if default_campaign:
+        cmp_id = default_campaign["id"]
+        st, cfg = call(args.base, f"/campaigns/{cmp_id}/config", token=access)
+        check("config -> 200", st == 200, f"got {st}")
+        if st == 200:
+            check("instructions are present", bool(cfg.get("instructions")))
+            check("transfer target is a SIP URI",
+                  str(cfg.get("transfer_to", "")).startswith("sip:"),
+                  cfg.get("transfer_to", ""))
+            # The workers ignore the *_provider columns, so the API must not
+            # present them as if changing them would do anything.
+            check("providers are not exposed",
+                  not any(k.endswith("_provider") for k in cfg))
+            check("agent_config.enabled is not exposed", "enabled" not in cfg,
+                  "disabling it makes load_config raise and calls ring forever")
+
+            st, _ = call(args.base, f"/campaigns/{cmp_id}/config", method="PATCH",
+                         token=access, body={"llm_temperature": 5})
+            check("temperature out of range -> 422", st == 422, f"got {st}")
+
+            st, _ = call(args.base, f"/campaigns/{cmp_id}/config", method="PATCH",
+                         token=access, body={"transfer_to": "800@example.com"})
+            check("non-SIP transfer target -> 422", st == 422, f"got {st}")
+
+            # round-trip a real edit, then put it back
+            original = cfg["kb_top_k"]
+            st, updated = call(args.base, f"/campaigns/{cmp_id}/config", method="PATCH",
+                               token=access, body={"kb_top_k": original + 1})
+            check("valid edit -> 200", st == 200, f"got {st}")
+            if st == 200:
+                check("edit is persisted", updated["kb_top_k"] == original + 1)
+            call(args.base, f"/campaigns/{cmp_id}/config", method="PATCH",
+                 token=access, body={"kb_top_k": original})
+
+            st, entries = call(args.base, f"/campaigns/{cmp_id}/audit", token=access)
+            check("audit -> 200", st == 200, f"got {st}")
+            check("the edit was logged",
+                  any(e["entity"] == "agent_config" for e in entries or []))
+
+    st, _ = call(args.base, "/campaigns/99999999/config", token=access)
+    check("config for a missing campaign -> 404", st == 404, f"got {st}")
+
     print("\nrbac")
     st, _ = call(args.base, "/users", method="POST", token=access,
                  body={"email": "weak@example.com", "role": "viewer",
