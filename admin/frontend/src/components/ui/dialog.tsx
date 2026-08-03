@@ -24,23 +24,35 @@ export function Dialog({
   footer?: React.ReactNode
   size?: 'md' | 'lg'
 }) {
-  const panel = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
+
+  // Callers pass an inline arrow, so `onClose` is a new function on every
+  // render. Reading it through a ref keeps the effect below keyed on `open`
+  // alone - otherwise it re-ran on every keystroke and kept stealing focus.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
-    const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+
+    const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current()
     document.addEventListener('keydown', onEsc)
-    const prev = document.body.style.overflow
+
+    const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    // move focus into the dialog so the keyboard follows the eye
-    panel.current?.querySelector<HTMLElement>(
-      'input, select, textarea, button',
-    )?.focus()
+
+    // Focus the first field, not the first focusable element - the close button
+    // comes earlier in the DOM and would otherwise win. Scoped to the content
+    // area so the header is never a candidate.
+    body.current
+      ?.querySelector<HTMLElement>('input, select, textarea')
+      ?.focus()
+
     return () => {
       document.removeEventListener('keydown', onEsc)
-      document.body.style.overflow = prev
+      document.body.style.overflow = prevOverflow
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 
@@ -51,7 +63,6 @@ export function Dialog({
         onClick={onClose}
       />
       <div
-        ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -68,6 +79,7 @@ export function Dialog({
             )}
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="-mr-1 -mt-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Close"
@@ -76,7 +88,9 @@ export function Dialog({
           </button>
         </div>
 
-        <div className="px-5 py-4">{children}</div>
+        <div ref={body} className="px-5 py-4">
+          {children}
+        </div>
 
         {footer && (
           <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/40 px-5 py-3">
