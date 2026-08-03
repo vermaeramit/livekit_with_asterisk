@@ -157,6 +157,13 @@ class AgentConfigOut(BaseModel):
 
     updated_at: datetime
 
+    @field_validator("llm_temperature", "kb_min_score", mode="before")
+    @classmethod
+    def _round_real(cls, v):
+        # These columns are float4. Postgres hands 0.6 back as
+        # 0.6000000238418579, which then shows up verbatim in a number input.
+        return round(float(v), 3) if v is not None else v
+
 
 class AgentConfigUpdate(BaseModel):
     """Every field optional - the editor sends only what changed."""

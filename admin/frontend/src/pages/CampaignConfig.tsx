@@ -14,7 +14,7 @@ import {
   Waves,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
+import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
@@ -45,7 +45,29 @@ const LLM_MODELS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
 ]
 
-const VOICES = ['anushka', 'manisha', 'vidya', 'arya', 'abhilash', 'karun', 'hitesh']
+// Only models and speakers known to exist are listed. Every one of these fails
+// at call time rather than on save if it is wrong, so the list is the safe path
+// and "Custom…" is the escape hatch for anything the provider adds later.
+const STT_MODELS = [
+  { value: 'saarika:v2.5', label: 'saarika:v2.5 — in use' },
+  { value: 'saarika:v2', label: 'saarika:v2' },
+  { value: 'saarika:v1', label: 'saarika:v1' },
+]
+
+const TTS_MODELS = [
+  { value: 'bulbul:v3', label: 'bulbul:v3 — in use' },
+  { value: 'bulbul:v2', label: 'bulbul:v2' },
+]
+
+const VOICES = [
+  { value: 'anushka', label: 'anushka — female' },
+  { value: 'manisha', label: 'manisha — female' },
+  { value: 'vidya', label: 'vidya — female' },
+  { value: 'arya', label: 'arya — female' },
+  { value: 'abhilash', label: 'abhilash — male' },
+  { value: 'karun', label: 'karun — male' },
+  { value: 'hitesh', label: 'hitesh — male' },
+]
 
 type TabKey = 'conversation' | 'voice' | 'knowledge' | 'limits' | 'history'
 
@@ -62,8 +84,10 @@ function Note({ children, tone = 'info' }: { children: React.ReactNode; tone?: '
     <div
       className={cn(
         'flex items-start gap-2 rounded-md p-3 text-xs ring-1 ring-inset',
+        // --warning-foreground is the colour for text ON a solid warning fill;
+        // on a 10% tint it is near-white and effectively invisible.
         tone === 'warn'
-          ? 'bg-warning/10 text-warning-foreground ring-warning/25'
+          ? 'bg-warning/10 text-foreground/90 ring-warning/30'
           : 'bg-primary/5 text-muted-foreground ring-primary/15',
       )}
     >
@@ -316,37 +340,38 @@ export function CampaignConfig() {
             </Note>
 
             <div className="grid gap-5 sm:grid-cols-2">
-              <TextField
+              <ComboField
                 label="Speech-to-text model"
                 value={value.stt_model ?? ''}
-                onChange={(v) => set('stt_model', v || null)}
-                placeholder="saarika:v2.5"
-                hint="Sarvam. Empty uses saarika:v2.5."
+                onChange={(v) => set('stt_model', v.trim() || null)}
+                options={STT_MODELS}
+                placeholder="saarika:…"
+                allowEmpty
+                emptyLabel="Default (saarika:v2.5)"
+                hint="Sarvam."
               />
-              <TextField
+              <ComboField
                 label="Text-to-speech model"
                 value={value.tts_model ?? ''}
-                onChange={(v) => set('tts_model', v || null)}
-                placeholder="bulbul:v3"
-                hint="Sarvam. Empty uses bulbul:v3."
+                onChange={(v) => set('tts_model', v.trim() || null)}
+                options={TTS_MODELS}
+                placeholder="bulbul:…"
+                allowEmpty
+                emptyLabel="Default (bulbul:v3)"
+                hint="Sarvam."
               />
             </div>
 
-            <div>
-              <TextField
-                label="Voice"
-                value={value.tts_voice ?? ''}
-                onChange={(v) => set('tts_voice', v || null)}
-                placeholder="anushka"
-                list="voice-options"
-                hint="A speaker the chosen model does not have will fail at call time, not on save."
-              />
-              <datalist id="voice-options">
-                {VOICES.map((v) => (
-                  <option key={v} value={v} />
-                ))}
-              </datalist>
-            </div>
+            <ComboField
+              label="Voice"
+              value={value.tts_voice ?? ''}
+              onChange={(v) => set('tts_voice', v.trim() || null)}
+              options={VOICES}
+              placeholder="speaker name"
+              allowEmpty
+              emptyLabel="Model default"
+              hint="A speaker the chosen model does not have will fail at call time, not on save."
+            />
 
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField

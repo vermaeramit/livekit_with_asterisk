@@ -147,6 +147,13 @@ export function TextArea({
   )
 }
 
+/**
+ * The whole row is the switch.
+ *
+ * The first version nested a <button> inside a <label>, which looks right and
+ * behaves wrong: a button is not a labelable control, so clicking the text did
+ * nothing while the cursor promised otherwise.
+ */
 export function Toggle({
   label,
   hint,
@@ -159,29 +166,101 @@ export function Toggle({
   onChange: (v: boolean) => void
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-card p-3 transition-colors hover:bg-accent/40">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'flex w-full items-start gap-3 rounded-md border border-border bg-card p-3 text-left transition-colors',
+        'hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25',
+      )}
+    >
+      <span
+        aria-hidden
         className={cn(
-          'relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-          checked ? 'bg-primary' : 'bg-muted-foreground/30',
+          'relative mt-0.5 block h-5 w-9 shrink-0 rounded-full transition-colors',
+          checked ? 'bg-primary' : 'bg-muted-foreground/35',
         )}
       >
         <span
           className={cn(
-            'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-            checked ? 'translate-x-[1.125rem]' : 'translate-x-0.5',
+            'absolute left-0.5 top-0.5 block h-4 w-4 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform',
+            checked && 'translate-x-4',
           )}
         />
-      </button>
+      </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
-        {hint && <span className="mt-0.5 block text-2xs text-muted-foreground">{hint}</span>}
+        {hint && (
+          <span className="mt-0.5 block text-2xs font-normal leading-relaxed text-muted-foreground">
+            {hint}
+          </span>
+        )}
       </span>
-    </label>
+    </button>
+  )
+}
+
+/**
+ * A dropdown of known-good values with an escape hatch.
+ *
+ * A free text box invites a typo that only fails when a real call is in
+ * progress; a closed list would block a model or voice the provider adds
+ * tomorrow. This does both.
+ */
+export function ComboField({
+  label,
+  hint,
+  value,
+  onChange,
+  options,
+  placeholder,
+  allowEmpty,
+  emptyLabel = 'Use the default',
+}: {
+  label: string
+  hint?: React.ReactNode
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label?: string }[]
+  placeholder?: string
+  allowEmpty?: boolean
+  emptyLabel?: string
+}) {
+  const id = `f-${label.replace(/\W+/g, '-').toLowerCase()}`
+  const known = options.some((o) => o.value === value)
+  const custom = value !== '' && !known
+
+  return (
+    <Field label={label} hint={hint} htmlFor={id}>
+      <Select
+        id={id}
+        value={custom ? '__custom__' : value}
+        onChange={(e) => {
+          const v = e.target.value
+          // Switching to custom must not silently keep the previous known value
+          onChange(v === '__custom__' ? ' ' : v)
+        }}
+      >
+        {allowEmpty && <option value="">{emptyLabel}</option>}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label ?? o.value}
+          </option>
+        ))}
+        <option value="__custom__">Custom…</option>
+      </Select>
+
+      {custom && (
+        <Input
+          autoFocus
+          value={value.trimStart()}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="mt-2 font-mono"
+        />
+      )}
+    </Field>
   )
 }
