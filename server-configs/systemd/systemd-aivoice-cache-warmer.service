@@ -5,9 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/aivoice/agent
+# code from the checkout, venv from /opt - see the agent unit for why
+WorkingDirectory=/srv/aivoice/agent
 EnvironmentFile=/opt/aivoice/.env
-ExecStart=/opt/aivoice/agent/.venv/bin/python /opt/aivoice/agent/cache_warmer.py
+ExecStart=/opt/aivoice/agent/.venv/bin/python /srv/aivoice/agent/cache_warmer.py
 Restart=always
 RestartSec=15
 SyslogIdentifier=aivoice-warmer

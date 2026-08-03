@@ -72,6 +72,30 @@ journalctl -u aivoice-agent@2 -f | grep -A 1 -E "voice-agent|ERROR"
 journalctl -u aivoice-cache-warmer -f
 ```
 
+**A restart does not cut live calls.** `KillSignal=SIGINT` plus
+`TimeoutStopSec=180` lets livekit-agents drain in-flight conversations first.
+
+### Deploying agent changes
+
+```bash
+cd /srv/aivoice && git pull
+systemctl restart aivoice-agent@1 aivoice-agent@2 aivoice-agent@3 aivoice-cache-warmer
+```
+
+Code runs from the **checkout** (`/srv/aivoice/agent`); only the virtualenv and
+the secrets stay in `/opt/aivoice`. That split is deliberate: the venv is not in
+git and is expensive to rebuild, and `.env` / `gcp/sa.json` must never live in a
+checkout.
+
+> 🚨 The units originally ran from `/opt/aivoice/agent`, so `git pull` updated a
+> copy nothing executed. A restart then relaunched the old code and looked
+> perfectly healthy — registration logs and all. If an agent change appears to do
+> nothing, check what the unit actually executes:
+>
+> ```bash
+> systemctl cat aivoice-agent@1 | grep -E 'WorkingDirectory|ExecStart'
+> ```
+
 Add a worker (each needs its **own port**, see below):
 
 ```bash
@@ -88,17 +112,22 @@ for i in 1 2 3; do
     "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'registered worker')" \
     "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'worker failed')"
 done
-ss -tlnp | grep -E ':808[0-9]'      # one listener per worker
 ```
 
 This exact failure cost three load-test runs: two workers were crash-looping on
 `[Errno 98] address already in use` (fixed port 8081) while systemd reported all three
 healthy.
 
+> ⚠️ `ss -tlnp | grep ':808[0-9]'` used to be the check here. In `start` mode the
+> workers do **not** bind `AGENT_HTTP_PORT` at all, so an empty result proves
+> nothing — measured after a clean restart where all three had registered.
+> `AGENT_HTTP_PORT` still matters (a fixed value makes extra instances collide
+> once something does bind it), but registration is the health check.
+
 ### Manual run (debugging only)
 
 ```bash
-cd /opt/aivoice/agent && source .venv/bin/activate
+cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
 export LIVEKIT_URL=ws://127.0.0.1:7880
 set -a; source /opt/aivoice/.env; set +a
 python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent|ERROR|Traceback"
@@ -248,7 +277,7 @@ lk sip dispatch create --name lab-dispatch --trunks ST_xxxxx --individual call
 ```bash
 cp new-policy.pdf /opt/aivoice/kb/inbox/
 
-cd /opt/aivoice/agent && source .venv/bin/activate
+cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
 set -a; source /opt/aivoice/.env; set +a
 python ingest.py                 # unchanged files are skipped by sha256
 python ingest.py --force         # re-ingest everything
@@ -671,7 +700,7 @@ LiveKit SFU — a starved SFU degrades audio on **every** call, not just one.
 | Error | Cause |
 |---|---|
 | `no job context found, are you running this code inside a job entrypoint?` | Something needing a job context was put in `prewarm_fnc`. Only `silero.VAD.load()` belongs there; `MultilingualModel()` goes in the entrypoint |
-| `ModuleNotFoundError: No module named 'store'` | Not running from `/opt/aivoice/agent` |
+| `ModuleNotFoundError: No module named 'store'` | Not running from `/srv/aivoice/agent` |
 | `KeyError: 'DATABASE_URL'` | `.env` not sourced (§0) |
 | `401` from OpenAI/Sarvam | Key missing or wrong. OpenAI keys start `sk-`, Sarvam `sk_` |
 
@@ -733,7 +762,7 @@ buffer.
 
 ```bash
 # 1. run the echo agent
-cd /opt/aivoice/agent && source .venv/bin/activate
+cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
 export ECHO_BEEP=0 ECHO_QUEUE_MS=60
 python echo_agent.py dev
 
@@ -756,7 +785,7 @@ when confidence ≥ 0.9.** Baseline is 205 ms.
 ### LLM TTFT across models
 
 ```bash
-cd /opt/aivoice/agent && source .venv/bin/activate
+cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
 set -a; source /opt/aivoice/.env; set +a
 python bench_llm.py
 ```
@@ -810,8 +839,9 @@ firewall-cmd --reload
 | `/opt/aivoice/asterisk/conf/` | Dialplan, endpoints, RTP range |
 | `/opt/aivoice/livekit/livekit.yaml` | `use_external_ip:false`, `node_ip` pinned |
 | `/opt/aivoice/sip/config.yaml` | SIP port 5080, RTP range |
-| `/opt/aivoice/agent/voice_agent.py` | The agent |
-| `/opt/aivoice/agent/store.py` | Postgres config + call logging |
+| `/srv/aivoice/agent/voice_agent.py` | The agent (git checkout - `git pull` deploys it) |
+| `/srv/aivoice/agent/store.py` | Postgres config + call logging |
+| `/opt/aivoice/agent/.venv/` | The virtualenv - NOT in git, not moved by a deploy |
 | `/etc/sysctl.d/99-voip-tuning.conf` | UDP buffers, port range, swappiness |
 | `/etc/docker/daemon.json` | Log rotation, live-restore, systemd cgroups |
 
@@ -847,7 +877,7 @@ sleep 5
 docker compose ps
 
 # then the agent, and wait for "registered worker"
-cd /opt/aivoice/agent && source .venv/bin/activate
+cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
 export LIVEKIT_URL=ws://127.0.0.1:7880
 set -a; source /opt/aivoice/.env; set +a
 python voice_agent.py start

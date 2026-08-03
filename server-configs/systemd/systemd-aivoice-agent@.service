@@ -7,7 +7,15 @@ Requires=docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/aivoice/agent
+
+# CODE comes from the git checkout, so `git pull && systemctl restart` is the
+# whole agent deploy - the same flow as the admin panel.
+#
+# The VENV deliberately stays in /opt: it is not in git, it is expensive to
+# rebuild, and its path has nothing to do with which revision is running.
+# /opt/aivoice also keeps .env and gcp/sa.json, which are secrets and must not
+# live in a checkout.
+WorkingDirectory=/srv/aivoice/agent
 EnvironmentFile=/opt/aivoice/.env
 Environment=LOAD_THRESHOLD=5.0
 Environment=NUM_IDLE_PROCESSES=4
@@ -17,7 +25,7 @@ Environment=LIVEKIT_URL=ws://127.0.0.1:7880
 # "start", not "dev": dev mode keeps num_idle_processes at 0, which is why the
 # first call after a restart only rang - there was no warm process to take the
 # job and livekit-sip will not answer until an agent subscribes to its track.
-ExecStart=/opt/aivoice/agent/.venv/bin/python /opt/aivoice/agent/voice_agent.py start
+ExecStart=/opt/aivoice/agent/.venv/bin/python /srv/aivoice/agent/voice_agent.py start
 
 Restart=always
 RestartSec=5
