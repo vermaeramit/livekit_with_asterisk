@@ -1823,8 +1823,19 @@ Three outcomes, kept distinct on purpose:
 | | |
 |---|---|
 | Routed | that campaign's config |
-| Unmapped number | falls back to `AGENT_CONFIG` **with a warning** — a silent fallback would serve one client's agent to another's caller |
-| Disabled or suspended | the room is deleted, so Asterisk falls through to the human extension at once |
+| Unmapped number | **refused** — room deleted, Asterisk falls through to the human extension |
+| Disabled or suspended | same treatment |
+| No dialled number at all | falls back to `AGENT_CONFIG` — a manual `dev` run has nothing to route on |
+
+> 🔥 The unmapped case shipped as a *fallback to the default agent*, and the
+> commit that introduced it said in as many words that a silent fallback would
+> serve one client's agent to another client's caller. It was written as a
+> warning log and left in.
+>
+> It stayed invisible because the dialplan only forwarded `700`, which was
+> routed. Widening it to `_7XX` exposed it immediately — every number in the
+> range answered whether configured or not, which made the routing list
+> decorative. **Writing the danger down is not the same as not shipping it.**
 
 That last one needed care. Simply returning leaves the caller ringing for the
 full 25 s Dial timeout, because livekit-sip does not answer until an agent
