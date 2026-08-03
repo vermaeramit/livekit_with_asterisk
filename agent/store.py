@@ -69,20 +69,27 @@ async def load_config(name: str = "default") -> AgentConfig:
 
 
 async def start_call(room_name, caller, callee, config_name, language,
-                     campaign_id: Optional[int] = None) -> int:
+                     campaign_id: Optional[int] = None,
+                     sip_call_id: Optional[str] = None) -> int:
     """Record the start of a call.
 
     tenant_id is derived from the campaign in the same statement rather than
     passed in, so the two can never disagree. It is denormalised on purpose -
     every list and chart in the admin panel filters by tenant.
+
+    sip_call_id is the Call-ID of the Asterisk -> LiveKit leg. Asterisk names the
+    recording after the same value, so this column is what joins a call row to
+    its audio. The filename is derived from it rather than stored, so a change of
+    mount point cannot leave stale paths behind.
     """
     return await (await pool()).fetchval(
         """INSERT INTO calls (room_name, caller, callee, config_name, language,
-                              campaign_id, tenant_id)
+                              campaign_id, tenant_id, sip_call_id)
            VALUES ($1,$2,$3,$4,$5,$6,
-                   (SELECT tenant_id FROM campaigns WHERE id = $6))
+                   (SELECT tenant_id FROM campaigns WHERE id = $6), $7)
            RETURNING id""",
         room_name, caller, callee, config_name, language, campaign_id,
+        sip_call_id,
     )
 
 

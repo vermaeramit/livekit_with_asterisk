@@ -227,13 +227,17 @@ async def entrypoint(ctx: JobContext):
 
     await ctx.connect()
 
-    caller = callee = None
+    caller = callee = sip_call_id = None
     for p in ctx.room.remote_participants.values():
         caller = caller or _sip_attr(p, "sip.phoneNumber", "sip.from_user")
         callee = callee or _sip_attr(p, "sip.trunkPhoneNumber", "sip.to_user")
+        # Asterisk names the recording after this same Call-ID (see the
+        # [recsetup] pre-dial handler), so storing it is what lets the console
+        # find a call's audio.
+        sip_call_id = sip_call_id or _sip_attr(p, "sip.callID")
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
-                                     cfg.language, cfg.campaign_id)
+                                     cfg.language, cfg.campaign_id, sip_call_id)
     logger.info("call_id=%s caller=%s callee=%s", call_id, caller, callee)
 
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room)
