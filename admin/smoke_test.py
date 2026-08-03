@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""End-to-end check of the admin API. Standard library only - no pip, no jq.
+
+    python3 admin/smoke_test.py --email you@example.com
+
+Covers the paths that are easy to get subtly wrong and hard to notice: refresh
+rotation, tenant scoping, and unauthenticated access. Tokens are never printed.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import sys
+import urllib.error
+import urllib.request
+
+PASS, FAIL = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m"
+failures = 0
+
+
+def call(base: str, path: str, *, method: str = "GET",
+         body: dict | None = None, token: str | None = None
+         ) -> tuple[int, dict | None]:
+    req = urllib.request.Request(base + path, method=method)
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+        req.data = json.dumps(body).encode()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            return e.code, {"detail": raw.decode()[:200]}
+    except urllib.error.URLError as e:
+        print(f"  cannot reach {base}: {e.reason}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def check(label: str, ok: bool, note: str = "") -> None:
+    global failures
+    if not ok:
+        failures += 1
+    print(f"  [{PASS if ok else FAIL}] {label}{'  ' + note if note else ''}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", default="http://127.0.0.1:8090/api")
+    ap.add_argument("--email", required=True)
+    args = ap.parse_args()
+    pw = getpass.getpass("Password: ")
+
+    print("\nhealth")
+    st, body = call(args.base, "/health")
+    check("GET /health -> 200 ok", st == 200 and body == {"status": "ok"},
+          f"got {st}")
+
+    print("\nauth")
+    st, body = call(args.base, "/auth/login", method="POST",
+                    body={"email": args.email, "password": pw})
+    check("login -> 200", st == 200, f"got {st} {body}")
+    if st != 200:
+        return 1
+    access, refresh = body["access_token"], body["refresh_token"]
+    check("returns access + refresh", bool(access and refresh))
+
+    st, body = call(args.base, "/auth/login", method="POST",
+                    body={"email": args.email, "password": pw + "x"})
+    check("wrong password -> 401", st == 401, f"got {st}")
+
+    st, _ = call(args.base, "/auth/login", method="POST",
+                 body={"email": "nobody@example.invalid", "password": "whatever12345"})
+    check("unknown email -> 401 (same as wrong password)", st == 401, f"got {st}")
+
+    st, body = call(args.base, "/auth/me", token=access)
+    check("me -> 200", st == 200, f"got {st}")
+    if st == 200:
+        check("role is superadmin", body["role"] == "superadmin", body.get("role", ""))
+        check("superadmin has no tenant", body["tenant_id"] is None)
+
+    st, _ = call(args.base, "/auth/me")
+    check("me without token -> 401", st == 401, f"got {st}")
+
+    st, _ = call(args.base, "/auth/me", token=access + "tampered")
+    check("me with tampered token -> 401", st == 401, f"got {st}")
+
+    print("\nrefresh rotation")
+    st, body = call(args.base, "/auth/refresh", method="POST",
+                    body={"refresh_token": refresh})
+    check("refresh -> 200", st == 200, f"got {st}")
+    new_refresh = body["refresh_token"] if st == 200 else None
+    if new_refresh:
+        check("issues a different refresh token", new_refresh != refresh)
+    st, _ = call(args.base, "/auth/refresh", method="POST",
+                 body={"refresh_token": refresh})
+    check("old refresh token is dead -> 401", st == 401, f"got {st}")
+
+    print("\ncalls")
+    st, body = call(args.base, "/calls?page_size=3", token=access)
+    check("list -> 200", st == 200, f"got {st}")
+    if st != 200:
+        return 1
+    total, items = body["total"], body["items"]
+    check("total is populated", total > 0, f"total={total}")
+    check("page_size honoured", len(items) <= 3, f"got {len(items)}")
+    check("campaign is joined", all(i["campaign_id"] for i in items),
+          "every call should be linked by migration 001")
+
+    st, body2 = call(args.base, "/calls?page_size=3&transferred=true", token=access)
+    check("filter transferred=true -> 200", st == 200, f"got {st}")
+    if st == 200:
+        check("filter narrows the result", body2["total"] <= total,
+              f"{body2['total']} of {total}")
+
+    st, _ = call(args.base, "/calls", token=None)
+    check("list without token -> 401", st == 401, f"got {st}")
+
+    if items:
+        cid = items[0]["id"]
+        st, detail = call(args.base, f"/calls/{cid}", token=access)
+        check(f"detail /calls/{cid} -> 200", st == 200, f"got {st}")
+        if st == 200:
+            check("has usage block", "usage" in detail)
+            check("has turns", isinstance(detail["turns"], list),
+                  f"{len(detail.get('turns', []))} turns")
+            latency = [t for t in detail["turns"] if t.get("total_ms")]
+            check("turns carry latency", bool(latency) or not detail["turns"],
+                  f"{len(latency)} timed turns")
+        st, _ = call(args.base, f"/calls/{cid}/kb-chunks", token=access)
+        check("kb-chunks -> 200", st == 200, f"got {st}")
+
+    st, _ = call(args.base, "/calls/99999999", token=access)
+    check("missing call -> 404", st == 404, f"got {st}")
+
+    print("\nlogout")
+    if new_refresh:
+        st, _ = call(args.base, "/auth/logout", method="POST",
+                     body={"refresh_token": new_refresh}, token=access)
+        check("logout -> 204", st == 204, f"got {st}")
+        st, _ = call(args.base, "/auth/refresh", method="POST",
+                     body={"refresh_token": new_refresh})
+        check("refresh after logout -> 401", st == 401, f"got {st}")
+
+    print(f"\n{'all checks passed' if not failures else f'{failures} check(s) FAILED'}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
