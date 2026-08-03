@@ -219,11 +219,19 @@ def main() -> int:
             check("has usage block", "usage" in detail)
             check("has turns", isinstance(detail["turns"], list),
                   f"{len(detail.get('turns', []))} turns")
-            latency = [t for t in detail["turns"] if t.get("total_ms")]
-            check("turns carry latency", bool(latency) or not detail["turns"],
-                  f"{len(latency)} timed turns")
         st, _ = call(args.base, f"/calls/{cid}/kb-chunks", token=access)
         check("kb-chunks -> 200", st == 200, f"got {st}")
+
+        # Asserted across the page, not on the newest call. A caller who hangs
+        # up during the greeting leaves real turns and no completed response
+        # cycle, so demanding latency from whichever call happens to be last
+        # fails on a perfectly normal call.
+        timed = 0
+        for it in items:
+            _, d = call(args.base, f"/calls/{it['id']}", token=access)
+            timed += sum(1 for t in (d or {}).get("turns", []) if t.get("total_ms"))
+        check("latency is recorded somewhere in the recent set", timed > 0,
+              f"{timed} timed turns across {len(items)} calls")
 
     st, _ = call(args.base, "/calls/99999999", token=access)
     check("missing call -> 404", st == 404, f"got {st}")
