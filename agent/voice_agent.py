@@ -232,7 +232,8 @@ async def entrypoint(ctx: JobContext):
         caller = caller or _sip_attr(p, "sip.phoneNumber", "sip.from_user")
         callee = callee or _sip_attr(p, "sip.trunkPhoneNumber", "sip.to_user")
 
-    call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name, cfg.language)
+    call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
+                                     cfg.language, cfg.campaign_id)
     logger.info("call_id=%s caller=%s callee=%s", call_id, caller, callee)
 
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room)

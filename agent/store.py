@@ -37,6 +37,10 @@ class AgentConfig:
     transfer_enabled: bool
     transfer_to: str
     transfer_message: Optional[str]
+    # Added by migration 001 and backfilled. Carried here so start_call() can
+    # stamp every call with its tenant - without it a call is invisible to the
+    # client it belongs to, and only a superadmin ever sees it.
+    campaign_id: Optional[int]
 
 
 async def pool() -> asyncpg.Pool:
@@ -64,11 +68,21 @@ async def load_config(name: str = "default") -> AgentConfig:
     return AgentConfig(**{f.name: row[f.name] for f in fields(AgentConfig)})
 
 
-async def start_call(room_name, caller, callee, config_name, language) -> int:
+async def start_call(room_name, caller, callee, config_name, language,
+                     campaign_id: Optional[int] = None) -> int:
+    """Record the start of a call.
+
+    tenant_id is derived from the campaign in the same statement rather than
+    passed in, so the two can never disagree. It is denormalised on purpose -
+    every list and chart in the admin panel filters by tenant.
+    """
     return await (await pool()).fetchval(
-        """INSERT INTO calls (room_name, caller, callee, config_name, language)
-           VALUES ($1,$2,$3,$4,$5) RETURNING id""",
-        room_name, caller, callee, config_name, language,
+        """INSERT INTO calls (room_name, caller, callee, config_name, language,
+                              campaign_id, tenant_id)
+           VALUES ($1,$2,$3,$4,$5,$6,
+                   (SELECT tenant_id FROM campaigns WHERE id = $6))
+           RETURNING id""",
+        room_name, caller, callee, config_name, language, campaign_id,
     )
 
 

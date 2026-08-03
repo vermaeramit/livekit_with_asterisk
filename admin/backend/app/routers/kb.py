@@ -98,16 +98,23 @@ async def upload_document(campaign_id: int,
 
     filename = safe_filename(file.filename or "")
     dest_dir = STORE_DIR / str(campaign_id)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / filename
+    staging_root = dest_dir / ".staging"
+    staging_root.mkdir(parents=True, exist_ok=True)
 
-    # Stream to a temp file in the destination directory, size-checked as it
-    # arrives. Reading it all into memory first would let one upload decide how
-    # much RAM this container needs.
-    tmp = Path(tempfile.mkstemp(dir=dest_dir, suffix=".part")[1])
+    # Ingest from a staging copy and only publish it once that succeeds. Writing
+    # straight to the final path would destroy the previous good file whenever a
+    # replacement turns out to be unreadable - and leave a file behind for an
+    # upload that never produced a document.
+    #
+    # The staging directory is per-request, and the file inside keeps its real
+    # name because ingest_file() takes the document name from the path.
+    staging_dir = Path(tempfile.mkdtemp(dir=staging_root))
+    staged = staging_dir / filename
     written = 0
     try:
-        with tmp.open("wb") as out:
+        # Size is checked as the bytes arrive. Buffering the whole upload first
+        # would let one request decide how much RAM this container needs.
+        with staged.open("wb") as out:
             while chunk := await file.read(CHUNK_READ):
                 written += len(chunk)
                 if written > MAX_BYTES:
@@ -118,27 +125,31 @@ async def upload_document(campaign_id: int,
 
         if written == 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "the file is empty")
-        with tmp.open("rb") as fh:
+        # Trust the bytes, not the extension
+        with staged.open("rb") as fh:
             if fh.read(5) != b"%PDF-":
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                     "this does not look like a PDF")
 
-        # Only replace the stored copy once the upload is known to be complete
-        shutil.move(str(tmp), str(dest))
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+        try:
+            result = await kblib.kb().ingest_file(
+                str(staged), config_name=cfg["name"], force=force,
+                campaign_id=campaign_id)
+        except KeyError as e:
+            # kb.py reads OPENAI_API_KEY lazily, on the first embedding call
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                f"ingestion is not configured: {e} is not set")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                f"ingestion failed: {type(e).__name__}: {e}")
 
-    try:
-        result = await kblib.kb().ingest_file(
-            str(dest), config_name=cfg["name"], force=force, campaign_id=campaign_id)
-    except KeyError as e:
-        # kb.py reads OPENAI_API_KEY lazily, on the first embedding call
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            f"ingestion is not configured: {e} is not set")
-    except Exception as e:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
-                            f"ingestion failed: {type(e).__name__}: {e}")
+        if result.get("status") != "empty":
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staged), str(dest_dir / filename))
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
     await audit.record(actor, entity="kb_document", entity_id=filename,
                        action=result.get("status", "ingest"),
