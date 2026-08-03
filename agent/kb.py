@@ -224,12 +224,19 @@ def _openai() -> AsyncOpenAI:
     return _client
 
 
-async def embed(texts: list[str]) -> list[list[float]]:
+async def embed(texts: list[str], on_batch=None) -> list[list[float]]:
+    """on_batch(done, total) is awaited after each batch, if given.
+
+    Embedding is the long pole of an ingest and the only stage with a real
+    denominator, which makes it the one worth reporting.
+    """
     out: list[list[float]] = []
     for i in range(0, len(texts), EMBED_BATCH):
         r = await _openai().embeddings.create(
             model=EMBED_MODEL, input=texts[i:i + EMBED_BATCH])
         out.extend(d.embedding for d in sorted(r.data, key=lambda d: d.index))
+        if on_batch:
+            await on_batch(len(out), len(texts))
     return out
 
 
@@ -241,8 +248,19 @@ def _vec(v: list[float]) -> str:
 # ────────────────────────────── ingest ──────────────────────────────
 
 async def ingest_file(path: str, config_name: str = "default",
-                      force: bool = False, campaign_id: int | None = None) -> dict:
+                      force: bool = False, campaign_id: int | None = None,
+                      on_progress=None) -> dict:
+    """on_progress(event: dict) is awaited at each stage, if given.
+
+    Stages: hashing, extracting, chunking, embedding (with done/total), saving.
+    The CLI passes nothing and behaves exactly as before.
+    """
+    async def emit(**event):
+        if on_progress:
+            await on_progress(event)
+
     p = Path(path)
+    await emit(stage="hashing")
     digest = hashlib.sha256(p.read_bytes()).hexdigest()
     pool = await store.pool()
 
@@ -255,17 +273,24 @@ async def ingest_file(path: str, config_name: str = "default",
     # pymupdf4llm and the chunker are CPU-bound and hold the GIL for seconds on a
     # 50-page document. On the CLI that only makes the prompt wait; inside the
     # admin API it would freeze every other request for the length of an upload.
+    await emit(stage="extracting")
     pages, n_pages = await asyncio.to_thread(extract_pdf, str(p))
     if not pages:
         return {"file": p.name, "status": "empty",
                 "error": "no extractable text - scanned PDF? OCR would be needed"}
 
+    await emit(stage="chunking", pages=n_pages)
     title = p.stem.replace("_", " ").replace("-", " ")
     chunks = await asyncio.to_thread(chunk_markdown, pages, title)
     if not chunks:
         return {"file": p.name, "status": "empty", "error": "no chunks produced"}
 
-    vectors = await embed([c.embed_text for c in chunks])
+    await emit(stage="embedding", done=0, total=len(chunks))
+    vectors = await embed(
+        [c.embed_text for c in chunks],
+        on_batch=lambda done, total: emit(stage="embedding", done=done, total=total),
+    )
+    await emit(stage="saving", chunks=len(chunks))
 
     # one transaction: a failed ingest leaves the previous version intact
     # rather than a half-updated KB

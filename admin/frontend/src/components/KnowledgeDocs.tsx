@@ -13,9 +13,46 @@ import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge, Card, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
-import { ApiError, api, upload } from '@/lib/api'
+import { ApiError, api, upload, type IngestEvent } from '@/lib/api'
 import { cn, formatNumber, formatRelative } from '@/lib/utils'
 import type { KbChunk2, KbDocument, KbIngestResult } from '@/types'
+
+/**
+ * Turn a server stage event into a bar position and a sentence.
+ *
+ * The upload occupies 0-33%. Extraction and chunking have no measurable
+ * sub-progress, so they get fixed positions. Embedding does — it runs in batches
+ * and reports done/total — and it is also the longest stage, so it gets the
+ * whole 45-95% range rather than a spinner.
+ */
+function describe(e: IngestEvent): { percent: number; label: string } {
+  switch (e.stage) {
+    case 'hashing':
+      return { percent: 35, label: 'Checking for an existing copy' }
+    case 'extracting':
+      return { percent: 40, label: 'Reading the PDF' }
+    case 'chunking':
+      return {
+        percent: 45,
+        label: e.pages ? `Splitting ${e.pages} pages into chunks` : 'Splitting into chunks',
+      }
+    case 'embedding': {
+      const done = e.done ?? 0
+      const total = e.total ?? 0
+      const frac = total > 0 ? done / total : 0
+      return {
+        percent: 45 + frac * 50,
+        label: total ? `Embedding ${done} of ${total} chunks` : 'Embedding',
+      }
+    }
+    case 'saving':
+      return { percent: 97, label: 'Saving to the knowledge base' }
+    case 'done':
+      return { percent: 100, label: 'Finished' }
+    default:
+      return { percent: 45, label: 'Working…' }
+  }
+}
 
 function ChunkViewer({ doc, onClose }: { doc: KbDocument | null; onClose: () => void }) {
   const chunks = useQuery({
@@ -70,7 +107,9 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
   const toast = useToast()
   const fileInput = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
-  const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null)
+  const [progress, setProgress] = useState<
+    { name: string; percent: number; label: string } | null
+  >(null)
   const [viewing, setViewing] = useState<KbDocument | null>(null)
   const [deleting, setDeleting] = useState<KbDocument | null>(null)
 
@@ -85,11 +124,15 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
 
   const send = useMutation({
     mutationFn: (file: File) => {
-      setProgress({ name: file.name, percent: 0 })
-      return upload<KbIngestResult>(`/campaigns/${campaignId}/kb`, file, (percent) =>
-        // 99, not 100: the bar completing while the server is still embedding
-        // reads as a hang. It finishes when the response lands.
-        setProgress({ name: file.name, percent: Math.min(99, percent) }),
+      setProgress({ name: file.name, percent: 0, label: 'Starting…' })
+      return upload<KbIngestResult>(
+        `/campaigns/${campaignId}/kb`,
+        file,
+        // The upload itself is the first third of the bar. Letting it reach 100
+        // while the server is still working reads as a hang.
+        (percent) =>
+          setProgress({ name: file.name, percent: percent / 3, label: 'Uploading' }),
+        (e) => setProgress({ name: file.name, ...describe(e) }),
       )
     },
     onSettled: () => setProgress(null),
@@ -198,14 +241,12 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
             <p className="truncate text-sm font-medium">{progress.name}</p>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-primary transition-[width]"
+                className="h-full rounded-full bg-primary transition-[width] duration-300"
                 style={{ width: `${progress.percent}%` }}
               />
             </div>
-            <p className="mt-2 text-2xs text-muted-foreground">
-              {progress.percent < 99
-                ? `Uploading… ${Math.round(progress.percent)}%`
-                : 'Extracting, chunking and embedding — this can take a while for a long document.'}
+            <p className="mt-2 tnum text-2xs text-muted-foreground">
+              {progress.label} · {Math.round(progress.percent)}%
             </p>
           </div>
         ) : (

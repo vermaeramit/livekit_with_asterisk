@@ -6,6 +6,9 @@ not freeze the console for everyone else.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import os
 import re
 import shutil
@@ -14,10 +17,13 @@ from pathlib import Path
 
 from fastapi import (APIRouter, Depends, File, HTTPException, Query, UploadFile,
                      status)
+from fastapi.responses import StreamingResponse
 
 from .. import audit, db, kblib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
 from ..schemas import KbDocument, KbIngestResult
+
+log = logging.getLogger("admin-api")
 
 router = APIRouter(tags=["knowledge base"])
 
@@ -79,11 +85,21 @@ async def list_documents(campaign_id: int, user: CurrentUser = Depends(active_us
     return [KbDocument(**dict(r)) for r in rows]
 
 
-@router.post("/campaigns/{campaign_id}/kb", response_model=KbIngestResult)
+@router.post("/campaigns/{campaign_id}/kb")
 async def upload_document(campaign_id: int,
                           file: UploadFile = File(...),
                           force: bool = Query(False, description="re-ingest an unchanged file"),
                           actor: CurrentUser = Depends(editor)):
+    """Upload and ingest a PDF, streaming progress as newline-delimited JSON.
+
+    Validation happens before the stream starts, so a bad request is still a
+    normal 400/413/409 with a JSON body. Once ingestion begins the status is
+    already 200 and there is no way back, so failures after that point arrive as
+    a {"stage": "error"} line.
+
+    The alternative was a plain JSON response, which left the console on an
+    opaque spinner for the whole embed - long enough to read as a hang.
+    """
     if not kblib.available():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             f"ingestion is not configured: {kblib.why_unavailable()}")
@@ -130,33 +146,66 @@ async def upload_document(campaign_id: int,
             if fh.read(5) != b"%PDF-":
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                     "this does not look like a PDF")
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
 
+    async def stream():
+        result: dict | None = None
         try:
-            result = await kblib.kb().ingest_file(
+            queue: asyncio.Queue[dict] = asyncio.Queue()
+
+            async def on_progress(event: dict) -> None:
+                await queue.put(event)
+
+            task = asyncio.create_task(kblib.kb().ingest_file(
                 str(staged), config_name=cfg["name"], force=force,
-                campaign_id=campaign_id)
+                campaign_id=campaign_id, on_progress=on_progress))
+
+            # Drain progress events until ingestion finishes. Waiting on the
+            # queue with a timeout, rather than on the task alone, keeps a slow
+            # stage from starving the connection - some proxies and browsers
+            # give up on a response that produces nothing for long enough.
+            while not task.done() or not queue.empty():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    event = {"stage": "working"}
+                yield json.dumps(event) + "\n"
+
+            result = await task
+
         except KeyError as e:
             # kb.py reads OPENAI_API_KEY lazily, on the first embedding call
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                                f"ingestion is not configured: {e} is not set")
-        except HTTPException:
-            raise
+            yield json.dumps({"stage": "error",
+                              "message": f"ingestion is not configured: {e} is not set"}) + "\n"
         except Exception as e:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
-                                f"ingestion failed: {type(e).__name__}: {e}")
+            log.exception("ingestion failed for %s", filename)
+            yield json.dumps({"stage": "error",
+                              "message": f"{type(e).__name__}: {e}"}) + "\n"
+        finally:
+            # Publish the file only when it actually produced a document, then
+            # drop the staging copy either way.
+            if result and result.get("status") != "empty" and staged.exists():
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(staged), str(dest_dir / filename))
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
-        if result.get("status") != "empty":
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(staged), str(dest_dir / filename))
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        if result is not None:
+            await audit.record(
+                actor, entity="kb_document", entity_id=filename,
+                action=result.get("status", "ingest"),
+                tenant_id=tenant_id, campaign_id=campaign_id,
+                changes={"chunks": {"from": None, "to": result.get("chunks")}})
+            yield json.dumps({"stage": "done", "filename": filename, **result}) + "\n"
 
-    await audit.record(actor, entity="kb_document", entity_id=filename,
-                       action=result.get("status", "ingest"),
-                       tenant_id=tenant_id, campaign_id=campaign_id,
-                       changes={"chunks": {"from": None, "to": result.get("chunks")}})
-
-    return KbIngestResult(**{"filename": filename, **result})
+    return StreamingResponse(
+        stream(),
+        media_type="application/x-ndjson",
+        # nginx buffers proxied responses by default, which would hold every
+        # progress line back until the end and defeat the whole point.
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+    )
 
 
 @router.post("/kb/documents/{doc_id}/reingest", response_model=KbIngestResult)

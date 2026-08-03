@@ -185,19 +185,32 @@ export async function restoreSession(): Promise<boolean> {
   return refreshAccessToken()
 }
 
+export interface IngestEvent {
+  stage: 'hashing' | 'extracting' | 'chunking' | 'embedding' | 'saving' | 'working' | 'done' | 'error'
+  pages?: number
+  chunks?: number
+  done?: number
+  total?: number
+  message?: string
+  [k: string]: unknown
+}
+
 /**
- * Multipart upload. Separate from api() because the body must not be JSON and
- * the Content-Type header has to be left alone so the browser can add the
- * multipart boundary.
+ * Multipart upload with progress in both directions.
+ *
+ * XHR rather than fetch for two reasons: fetch cannot report *upload* progress
+ * at all, and XHR exposes the partial response body as it arrives, which is how
+ * the server's newline-delimited progress events are read.
  *
  * Refresh-on-401 is deliberately not retried here: the file stream has already
  * been consumed, so a retry would send an empty body. The caller sees the 401
- * and can try again after the interceptor has renewed the token.
+ * and can try again once the interceptor has renewed the token.
  */
 export async function upload<T = unknown>(
   path: string,
   file: File,
   onProgress?: (percent: number) => void,
+  onEvent?: (event: IngestEvent) => void,
 ): Promise<T> {
   const form = new FormData()
   form.append('file', file)
@@ -207,27 +220,65 @@ export async function upload<T = unknown>(
     xhr.open('POST', BASE + path)
     if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`)
 
-    // fetch() cannot report upload progress; a 30 MB PDF over a slow link with
-    // no feedback reads as a hung page.
+    // A 30 MB PDF over a slow link with no feedback reads as a hung page.
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100)
     }
 
-    xhr.onload = () => {
-      let body: any = null
-      try {
-        body = xhr.responseText ? JSON.parse(xhr.responseText) : null
-      } catch {
-        body = xhr.responseText
+    // The response is NDJSON. responseText only grows, so track how much has
+    // already been parsed and take whole lines from the remainder - the tail is
+    // usually a partial line and must wait for the rest.
+    let consumed = 0
+    let last: IngestEvent | null = null
+
+    const drain = () => {
+      const text = xhr.responseText
+      let nl: number
+      while ((nl = text.indexOf('\n', consumed)) !== -1) {
+        const line = text.slice(consumed, nl).trim()
+        consumed = nl + 1
+        if (!line) continue
+        try {
+          last = JSON.parse(line) as IngestEvent
+          onEvent?.(last)
+        } catch {
+          /* a malformed line is not worth failing the upload over */
+        }
       }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T)
-      else reject(new ApiError(xhr.status, messageOf(xhr.status, body)))
     }
+
+    xhr.onprogress = drain
+
+    xhr.onload = () => {
+      drain()
+      if (xhr.status < 200 || xhr.status >= 300) {
+        // Errors are raised before the stream starts, so the body is ordinary JSON
+        let body: any = null
+        try {
+          body = xhr.responseText ? JSON.parse(xhr.responseText) : null
+        } catch {
+          body = xhr.responseText
+        }
+        reject(new ApiError(xhr.status, messageOf(xhr.status, body)))
+        return
+      }
+      // Once the stream is open the status is already 200, so a failure can only
+      // arrive as a line - it must not be mistaken for success.
+      if (last?.stage === 'error') {
+        reject(new ApiError(502, String(last.message ?? 'ingestion failed')))
+        return
+      }
+      if (last?.stage === 'done') {
+        resolve(last as T)
+        return
+      }
+      reject(new ApiError(0, 'the server closed the connection before finishing'))
+    }
+
     xhr.onerror = () => reject(new ApiError(0, 'the upload could not reach the API'))
     xhr.ontimeout = () => reject(new ApiError(0, 'the upload timed out'))
-    // Ingestion is synchronous: extraction, chunking and embedding all happen
-    // before the response. A 50-page PDF takes tens of seconds.
-    xhr.timeout = 300_000
+    // Extraction, chunking and embedding all happen before the final line.
+    xhr.timeout = 600_000
     xhr.send(form)
   })
 }
