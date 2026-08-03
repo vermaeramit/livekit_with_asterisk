@@ -65,6 +65,12 @@ function messageOf(status: number, body: any): string {
   if (Array.isArray(body?.detail)) {
     return body.detail.map((d: any) => d.msg).filter(Boolean).join('; ') || 'invalid request'
   }
+  // Statuses the reverse proxy can produce itself. Those responses are HTML, so
+  // there is no detail to show and the bare code tells the user nothing.
+  if (status === 413) return 'The file is too large for the server to accept.'
+  if (status === 502 || status === 504) {
+    return 'The server took too long to respond. A long document can exceed the limit.'
+  }
   return `request failed (${status})`
 }
 
