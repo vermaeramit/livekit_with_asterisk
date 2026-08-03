@@ -229,6 +229,10 @@ async def entrypoint(ctx: JobContext):
 
     caller = callee = sip_call_id = None
     for p in ctx.room.remote_participants.values():
+        # Which key carries Asterisk's SIP Call-ID is not documented and is not
+        # sip.callID - that is LiveKit's own id (SCL_...). Logged so the answer
+        # comes from the wire rather than from a guess.
+        logger.info("sip participant %s attrs=%s", p.identity, dict(p.attributes or {}))
         caller = caller or _sip_attr(p, "sip.phoneNumber", "sip.from_user")
         callee = callee or _sip_attr(p, "sip.trunkPhoneNumber", "sip.to_user")
         # Asterisk names the recording after this same Call-ID (see the
