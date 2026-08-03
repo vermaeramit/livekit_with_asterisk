@@ -43,6 +43,30 @@ def call(base: str, path: str, *, method: str = "GET",
         raise SystemExit(2)
 
 
+def _last_json(raw: bytes) -> dict | None:
+    """Parse a body that may be one JSON object or a stream of them.
+
+    A successful upload returns newline-delimited progress events; an error
+    before the stream opens returns a single JSON object. The final line is the
+    outcome in both cases.
+    """
+    if not raw:
+        return None
+    text = raw.decode(errors="replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        for line in reversed(text.strip().splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        return {"detail": text[:200]}
+
+
 def post_file(base: str, path: str, *, filename: str, content: bytes,
               token: str) -> tuple[int, dict | None]:
     """Multipart upload, hand-rolled - stdlib has no helper for it."""
@@ -59,14 +83,9 @@ def post_file(base: str, path: str, *, filename: str, content: bytes,
     try:
         # ingestion is synchronous; a long PDF takes a while
         with urllib.request.urlopen(req, timeout=300) as r:
-            raw = r.read()
-            return r.status, (json.loads(raw) if raw else None)
+            return r.status, _last_json(r.read())
     except urllib.error.HTTPError as e:
-        raw = e.read()
-        try:
-            return e.code, json.loads(raw) if raw else None
-        except json.JSONDecodeError:
-            return e.code, {"detail": raw.decode()[:200]}
+        return e.code, _last_json(e.read())
 
 
 def redact(body) -> str:
@@ -295,10 +314,16 @@ def main() -> int:
                              filename="fake.pdf", content=b"not really a pdf")
         check("PDF name but wrong magic bytes -> 400", st == 400, f"got {st}")
 
-        st, _ = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
-                          filename="../../escape.pdf", content=b"%PDF-1.4 x")
-        check("path traversal in the filename is not a 5xx", st in (200, 400, 502),
+        # This one passes the magic-byte check, so the stream opens and the
+        # failure arrives as an event rather than a status code. The point of
+        # the check is that the traversal was neutralised, not that it parsed.
+        st, body = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
+                             filename="../../escape.pdf", content=b"%PDF-1.4 x")
+        check("path traversal in the filename is not a 5xx", st in (200, 400),
               f"got {st}")
+        check("an unreadable PDF is reported, not silently accepted",
+              st == 400 or (body or {}).get("stage") == "error",
+              str((body or {}).get("stage") or (body or {}).get("detail"))[:80])
 
         # Real ingestion is exercised from the console, where the chunk viewer
         # shows whether extraction actually worked - a pass/fail line here would
