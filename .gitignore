@@ -8,8 +8,11 @@
 credentials*
 secrets*
 
-# the real sip config has the API key substituted in - only the template is tracked
+# Configs that carry a secret: only the template is tracked, so a directory
+# copy onto the server cannot overwrite the real one with a placeholder.
+# This is not hypothetical - it clobbered the softphone password once.
 server-configs/sip/config.yaml
+server-configs/asterisk/conf/pjsip.conf
 
 # ---- python ----
 __pycache__/

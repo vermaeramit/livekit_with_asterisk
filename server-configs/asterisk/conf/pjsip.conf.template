@@ -1,3 +1,12 @@
+; TEMPLATE. Copy to pjsip.conf on the server and set the real password there.
+;
+;   cp pjsip.conf.template pjsip.conf   # then edit
+;
+; pjsip.conf itself is gitignored on purpose. It was tracked with a CHANGEME
+; placeholder once, and a `cp -rf server-configs/asterisk/. /opt/aivoice/asterisk/`
+; deploy overwrote the live password with it - every endpoint then failed to
+; register with 401 and nothing said why.
+
 [global]
 type=global
 user_agent=AIVoice-Lab

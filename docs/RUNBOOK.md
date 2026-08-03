@@ -75,6 +75,50 @@ journalctl -u aivoice-cache-warmer -f
 **A restart does not cut live calls.** `KillSignal=SIGINT` plus
 `TimeoutStopSec=180` lets livekit-agents drain in-flight conversations first.
 
+### Deploying Asterisk changes
+
+```bash
+cd /srv/aivoice && git pull
+\cp -rf server-configs/asterisk/. /opt/aivoice/asterisk/
+cd /opt/aivoice && docker compose restart asterisk      # conf only
+cd /opt/aivoice && docker compose up -d --build asterisk # Dockerfile changed
+```
+
+> 🚨 **`pjsip.conf` is gitignored and must never be in that copy.** It was once
+> tracked with a `CHANGEME` placeholder, and this exact command overwrote the
+> live softphone password with it. Every endpoint then failed to register with
+> `401` and nothing in the logs said why — the config looked perfectly valid.
+> Only `pjsip.conf.template` is tracked now, so the copy cannot reach it.
+
+> ⚠️ **Restarting Asterisk drops every registration.** Softphones and the dialer
+> are unauthorised until they re-register, which happens on their own expiry
+> interval — not immediately. Force it from the client, or expect a gap. Ask the
+> dialer team what their registration interval is before restarting in
+> production.
+
+```bash
+docker exec asterisk asterisk -rx "pjsip show endpoints" | grep -A1 "Endpoint:  1001"
+```
+
+`Unavailable` means nothing is registered. Enable a SIP trace to see why:
+
+```bash
+docker exec asterisk asterisk -rx "logger add channel debug.log notice,warning,error,verbose"
+docker exec asterisk asterisk -rx "pjsip set logger on"
+docker exec asterisk grep -A 12 "REGISTER sip:" /var/log/asterisk/debug.log | tail -60
+```
+
+> A first `401` is normal — SIP always challenges before accepting credentials.
+> The question is whether a **second** REGISTER arrives and what it gets.
+>
+> ⚠️ `pjsip show auth <id>` prints the password in plaintext. So does `cat`ting
+> the config. Neither belongs in a shared terminal.
+>
+> ⚠️ The log file is `messages.log`, not `messages`, and it carries no `verbose`
+> level by default — so dialplan `NoOp()` output does not appear in it. Add the
+> `debug.log` channel above, or you will conclude nothing happened when it did.
+> That channel is not persistent; it goes away on restart.
+
 ### Deploying agent changes
 
 ```bash
