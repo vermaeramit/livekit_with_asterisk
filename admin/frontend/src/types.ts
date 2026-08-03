@@ -224,6 +224,30 @@ export interface TimeBucket {
   tts_ttfb_ms: number | null
 }
 
+export interface LiveCall {
+  id: number
+  started_at: string
+  caller: string | null
+  callee: string | null
+  language: string | null
+  campaign_id: number | null
+  campaign_name: string | null
+  tenant_id: number | null
+  elapsed_sec: number
+  max_duration_sec: number
+  turn_count: number
+  last_latency_ms: number | null
+  last_text: string | null
+  stale: boolean
+}
+
+export interface LiveSummary {
+  calls: LiveCall[]
+  active: number
+  stale: number
+  verified_capacity: number
+}
+
 export interface CampaignRoute {
   id: number
   campaign_id: number

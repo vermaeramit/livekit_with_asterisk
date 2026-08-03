@@ -426,6 +426,16 @@ def main() -> int:
     st, _ = call(args.base, "/kb/documents/99999999/chunks", token=access)
     check("chunks for a missing document -> 404", st == 404, f"got {st}")
 
+    st, body = call(args.base, "/live/calls", token=access)
+    check("live calls -> 200", st == 200, f"got {st}")
+    if st == 200:
+        check("active + stale accounts for every row",
+              body["active"] + body["stale"] == len(body["calls"]),
+              f"{body['active']} + {body['stale']} vs {len(body['calls'])}")
+        check("no finished call is listed as live",
+              all(c["elapsed_sec"] >= 0 for c in body["calls"]),
+              f"{len(body['calls'])} in progress")
+
     print("\nrbac")
     st, _ = call(args.base, "/users", method="POST", token=access,
                  body={"email": "weak@example.com", "role": "viewer",

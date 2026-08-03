@@ -7,6 +7,7 @@ import { CallDetail } from '@/pages/CallDetail'
 import { Campaigns } from '@/pages/Campaigns'
 import { CampaignConfig } from '@/pages/CampaignConfig'
 import { ChangePassword } from '@/pages/ChangePassword'
+import { Live } from '@/pages/Live'
 import { Login } from '@/pages/Login'
 import { Tenants } from '@/pages/Tenants'
 import { Users } from '@/pages/Users'
@@ -67,6 +68,7 @@ export function App() {
             </Suspense>
           }
         />
+        <Route path="/live" element={<Live />} />
         <Route path="/calls" element={<Calls />} />
         <Route path="/calls/:id" element={<CallDetail />} />
         <Route path="/change-password" element={<ChangePassword />} />

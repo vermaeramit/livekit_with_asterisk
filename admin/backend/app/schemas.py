@@ -253,6 +253,34 @@ class KbIngestResult(BaseModel):
     error: str | None = None
 
 
+# ───────────────────────────── live ─────────────────────────────
+
+class LiveCall(BaseModel):
+    id: int
+    started_at: datetime
+    caller: str | None
+    callee: str | None
+    language: str | None
+    campaign_id: int | None
+    campaign_name: str | None
+    tenant_id: int | None
+    elapsed_sec: int
+    max_duration_sec: int
+    turn_count: int
+    last_latency_ms: int | None
+    last_text: str | None
+    # Almost certainly a worker that died mid-call: the row is open but the
+    # elapsed time is past the call's own duration guardrail.
+    stale: bool
+
+
+class LiveSummary(BaseModel):
+    calls: list[LiveCall]
+    active: int
+    stale: int
+    verified_capacity: int
+
+
 # ───────────────────────────── analytics ─────────────────────────────
 
 class Percentiles(BaseModel):

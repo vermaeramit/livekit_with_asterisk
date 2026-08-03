@@ -198,6 +198,10 @@ export function CallDetail() {
   const call = useQuery({
     queryKey: ['call', id],
     queryFn: () => api<CallDetailType>(`/calls/${id}`),
+    // A call with no ended_at is still in progress. Poll so the transcript grows
+    // while you watch it, and stop the moment it ends rather than polling every
+    // finished call in the archive forever.
+    refetchInterval: (q) => (q.state.data?.ended_at ? false : 3000),
   })
 
   const chunks = useQuery({
@@ -272,6 +276,15 @@ export function CallDetail() {
             <span className="tnum">{c.callee ?? 'unknown'}</span>
             <EndReasonBadge call={c} />
           </h1>
+          {!c.ended_at && (
+            <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-2xs font-medium text-success ring-1 ring-inset ring-success/25">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+              </span>
+              in progress
+            </span>
+          )}
           <p className="mt-0.5 text-xs text-muted-foreground">
             {formatDateTime(c.started_at)}
             {c.campaign_name ? ` · ${c.campaign_name}` : ''}

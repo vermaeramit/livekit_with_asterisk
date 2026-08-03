@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import db
 from .config import settings
 from .routers import (agent_config, analytics, auth, calls, campaigns, kb,
-                      tenants, users)
+                      live, tenants, users)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +46,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(calls.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
+app.include_router(live.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")
