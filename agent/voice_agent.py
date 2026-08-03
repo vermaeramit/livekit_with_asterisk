@@ -253,20 +253,27 @@ async def entrypoint(ctx: JobContext):
 
     cfg = None
     if callee:
+        # A dialled number that is not routed is REFUSED, not served by a default
+        # agent. Falling back would mean one client's caller reaching another
+        # client's agent, and it would make the routing list decorative - every
+        # number the PBX forwards would answer whether configured or not.
         try:
             cfg = await store.load_config_for_did(callee)
         except store.CampaignUnavailable as e:
             logger.warning("DECLINED call to %s: %s", callee, e)
             await _end_room(ctx.room.name)
             return
-
-    if cfg is None:
-        # Unmapped number. Falls back to the env config so a lab extension keeps
-        # working, but says so - in production every DID should be routed, and a
-        # silent fallback would serve one client's agent to another's caller.
+        if cfg is None:
+            logger.warning("DECLINED call to %s: no campaign routes this number",
+                           callee)
+            await _end_room(ctx.room.name)
+            return
+    else:
+        # No dialled number at all - a manual `dev` run or a non-SIP job. There
+        # is nothing to route on, so the env config is the only sensible answer.
         cfg = await store.load_config(CONFIG_NAME)
-        logger.warning("no campaign route for dialled number %r - "
-                       "falling back to AGENT_CONFIG=%s", callee, CONFIG_NAME)
+        logger.info("no dialled number on this job - using AGENT_CONFIG=%s",
+                    CONFIG_NAME)
 
     stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
 
