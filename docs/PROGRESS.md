@@ -1715,6 +1715,37 @@ The chunk viewer is the point of the screen: a PDF that extracted badly reads as
 nonsense there, which is far easier to catch than diagnosing it from one wrong
 answer on a live call.
 
+### 🔥 The deploy gap — agent changes were never reaching production
+
+Worth writing down in full, because everything about it looked fine.
+
+The git workflow was introduced for the admin panel: write locally, push, `git
+pull` on the server into `/srv/aivoice`. The systemd units, written earlier, ran
+`/opt/aivoice/agent/voice_agent.py`. So `git pull` updated a copy nothing
+executed, and `systemctl restart` relaunched the old code — registering cleanly,
+logging normally, entirely healthy. **The tenant-stamping fix appeared to deploy
+and did nothing.**
+
+It only surfaced because the smoke test asserted every call has a campaign, a
+real call arrived between two runs, and the count went 60 → 61.
+
+Fixed by pointing the units at the checkout. The venv stays in `/opt` — it is not
+in git and expensive to rebuild — as do `.env` and `gcp/sa.json`, which must never
+live in a checkout.
+
+**Four traps in one hour, all now in the runbook:**
+
+| What happened | Why it fooled us |
+|---|---|
+| `cp` of the unit file silently did nothing | root's `cp` is aliased to `cp -i` on Rocky; in a pasted block the next line answers the prompt |
+| Moved `/opt/.../*.py` aside before verifying the unit had changed | Left the workers with no code at all. **A destructive step must come after verification, never in the same block** |
+| `registered=0` twice, and an empty `ss` | A worker takes **~11 s** to register. Both checks ran immediately after the restart |
+| `errors=0` while nothing could start | Python prints `can't open file`, which matches neither `ERROR` nor `Traceback` |
+
+The empty `ss` also produced a wrong conclusion that got written into the runbook
+— that `start` mode never binds `AGENT_HTTP_PORT`. It does; the check was simply
+early. Corrected, and the port check reinstated.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
