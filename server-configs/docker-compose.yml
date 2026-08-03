@@ -8,6 +8,10 @@ services:
       - ./asterisk/conf:/conf-override:ro,Z
       - asterisk-spool:/var/spool/asterisk
       - asterisk-log:/var/log/asterisk
+      # Recordings live in their own named volume rather than inside the spool,
+      # so the admin panel can mount them read-only from its separate compose
+      # project without being handed everything else Asterisk writes.
+      - recordings:/var/spool/asterisk/recordings
     cap_add: [ SYS_NICE ]
     ulimits:
       nofile: 65535
@@ -85,6 +89,10 @@ services:
 # tenant-scoped - which Grafana never was.
 
 volumes:
+  # named explicitly so the admin panel's separate compose project can
+  # reference it as an external volume
+  recordings:
+    name: aivoice_recordings
   pgdata:
   asterisk-spool:
   asterisk-log:
