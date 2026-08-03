@@ -226,8 +226,8 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 11.1 | Admin panel — auth, RBAC, tenant isolation, call review | ✅ |
 | 11.2 | Clients, users, campaigns, agent config editor, KB upload | ✅ |
 | 11.3 | Analytics in-panel, Grafana retired | ✅ |
-| 11.4 | Call recordings — storage, retention, playback | ⏭️ **Next** |
-| 11.5 | Live call monitoring + alerting | ⏭️ |
+| 11.4 | Call recordings — Opus, 90-day retention, in-panel playback | ✅ |
+| 11.5 | Live call monitoring + alerting | ⏭️ **Next** |
 
 ### Provider fallback — decided, pending implementation
 

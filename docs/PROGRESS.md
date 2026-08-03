@@ -1746,6 +1746,63 @@ The empty `ss` also produced a wrong conclusion that got written into the runboo
 — that `start` mode never binds `AGENT_HTTP_PORT`. It does; the check was simply
 early. Corrected, and the port check reinstated.
 
+### ✅ Phase 4 — call recordings
+
+90-day retention, converted to Opus. Disclosure goes in the campaign greeting.
+
+#### Correlating a recording to a call took three attempts
+
+Asterisk **dials** LiveKit, so there are two SIP legs with two different Call-IDs.
+Getting this wrong is silent: you end up with recordings and call rows that never
+join, and a column that looks populated.
+
+| Attempt | Result |
+|---|---|
+| Record on the caller's channel | Its Call-ID is not the one LiveKit sees |
+| Record in a `Dial()` `b()` pre-dial handler, name by `${CHANNEL(pjsip,call-id)}` | ✅ runs on the outbound leg; Call-ID **is** allocated by then — verified, not assumed |
+| Agent stores `sip.callID` | ✗ that is LiveKit's own id, `SCL_7c3USwsGRuui` |
+| Agent stores **`sip.callIDFull`** | ✅ exactly the filename |
+
+The answer came from dumping the participant's attributes on a live call rather
+than from guessing a fourth key. There is deliberately **no fallback** from
+`callIDFull` to `callID`: storing the wrong one leaves a column that looks fine
+and never matches a file.
+
+Recording on the outbound leg has a second benefit — once bridged, its rx is the
+caller and its tx is the agent, so one `MixMonitor` captures both sides including
+everything after a transfer to a human.
+
+Sizes came in better than estimated: a 32-second call is **82 KB** at ~20 kbps.
+90 days at 20 calls/day is under a gigabyte.
+
+#### What the endpoint has to get right
+
+**HTTP Range, written out rather than assumed.** Without it a browser's audio
+element cannot seek — the scrubber moves and the audio does not. The smoke test
+asserts 206, the exact byte count, `Content-Range`, 416 past the end, and the
+suffix form `bytes=-64`, which means the **last** 64 bytes and is the easiest
+part of the spec to implement backwards.
+
+**Availability is read from disk, never stored.** Retention deletes files without
+touching the database, so a column would go stale and offer a player for audio
+that no longer exists.
+
+**`sip_call_id` is regex-checked before touching the filesystem** — it arrives in
+a SIP header.
+
+**The player fetches through the token into a blob.** `<audio src>` cannot carry
+an `Authorization` header and this endpoint is not public.
+
+#### Traps
+
+| What happened | Why |
+|---|---|
+| `[recsetup]` swallowed 702 and 1001 | A context header claims every extension after it. **Second time** in this project. Now last in the file, and verified by parsing rather than reading |
+| Every endpoint failed to register with `401` | The documented deploy copied `pjsip.conf` from git — which held `password=CHANGEME`. Only the template is tracked now |
+| `docker compose logs asterisk` was empty | Asterisk logs to a file. And it is `messages.log`, not `messages`, with no `verbose` level — so dialplan `NoOp` output needs an added channel |
+| Smoke test crashed on the recording | It parsed every body as JSON. This one is audio |
+| Four header checks "failed" | Looked up `Content-Range`; Starlette emits lowercase. The mechanics had been passing all along |
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
