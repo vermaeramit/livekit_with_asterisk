@@ -489,6 +489,14 @@ export function CampaignConfig() {
               disabled campaign is dropped immediately and falls through to your human
               extension, rather than being answered by the wrong agent.
             </Note>
+            <Note tone="warn">
+              This list decides <em>which campaign</em> serves a call — it does not make
+              the number reachable. The number must also be pointed at the platform by
+              your telephony side. On the lab PBX anything in <code>700–799</code> is
+              already forwarded (except <code>702</code>, the latency test); anything
+              outside that range answers <code>404 Not Found</code> before it ever gets
+              here.
+            </Note>
             <CampaignRoutes campaignId={campaignId} />
           </CardBody>
         </Card>
