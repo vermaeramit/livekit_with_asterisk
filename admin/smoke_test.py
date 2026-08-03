@@ -426,6 +426,35 @@ def main() -> int:
     st, _ = call(args.base, "/kb/documents/99999999/chunks", token=access)
     check("chunks for a missing document -> 404", st == 404, f"got {st}")
 
+    st, rules = call(args.base, "/alert-rules", token=access)
+    check("alert rules -> 200", st == 200, f"got {st}")
+    check("default rules were seeded", bool(rules), f"{len(rules or [])} rules")
+
+    st, body = call(args.base, "/alerts?unacknowledged=true", token=access)
+    check("alerts -> 200", st == 200, f"got {st}")
+
+    st, body = call(args.base, "/alerts/unread-count", token=access)
+    check("unread count -> 200", st == 200, f"got {st}")
+
+    st, body = call(args.base, "/alert-webhook", token=access)
+    # The URL is a credential: anyone holding it can post into the channel.
+    check("webhook is never returned in full",
+          st == 200 and "webhook_url" not in (body or {}),
+          str(sorted((body or {}).keys())))
+
+    st, _ = call(args.base, "/alert-webhook", method="PUT", token=access,
+                 body={"webhook_url": "not-a-url"})
+    check("non-http webhook -> 422", st == 422, f"got {st}")
+
+    if rules:
+        rid = rules[0]["id"]
+        st, _ = call(args.base, f"/alert-rules/{rid}", method="PATCH",
+                     token=access, body={"window_minutes": 2})
+        check("window below the floor -> 422", st == 422, f"got {st}")
+
+    st, body = call(args.base, "/alert-rules/evaluate", method="POST", token=access)
+    check("manual evaluation -> 200", st == 200, f"got {st}")
+
     st, body = call(args.base, "/live/calls", token=access)
     check("live calls -> 200", st == 200, f"got {st}")
     if st == 200:

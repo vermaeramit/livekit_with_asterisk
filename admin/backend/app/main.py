@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import db
+from . import alerting, db
 from .config import settings
-from .routers import (agent_config, analytics, auth, calls, campaigns, kb,
-                      live, tenants, users)
+from .routers import (agent_config, alerts, analytics, auth, calls, campaigns,
+                      kb, live, tenants, users)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,8 +23,19 @@ log = logging.getLogger("admin-api")
 async def lifespan(app: FastAPI):
     await db.connect()
     log.info("db pool ready")
-    yield
-    await db.disconnect()
+
+    # In-process rather than a separate service: it needs this pool and nothing
+    # else, and another process would be one more thing to notice had died.
+    # NOTE: assumes a single API instance. Two replicas would evaluate the same
+    # rules twice and double-fire every webhook.
+    evaluator = asyncio.create_task(alerting.run_forever())
+    try:
+        yield
+    finally:
+        evaluator.cancel()
+        with suppress(asyncio.CancelledError):
+            await evaluator
+        await db.disconnect()
 
 
 app = FastAPI(
@@ -47,6 +59,7 @@ app.include_router(calls.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(live.router, prefix="/api")
+app.include_router(alerts.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")

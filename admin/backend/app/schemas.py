@@ -253,6 +253,82 @@ class KbIngestResult(BaseModel):
     error: str | None = None
 
 
+# ───────────────────────────── alerting ─────────────────────────────
+
+AlertKind = Literal["latency_p95", "error_rate", "transfer_rate", "limit_hits",
+                    "no_calls", "stale_calls"]
+
+
+class AlertRuleOut(BaseModel):
+    id: int
+    tenant_id: int
+    tenant_name: str | None = None
+    campaign_id: int | None
+    campaign_name: str | None = None
+    kind: str
+    threshold: float
+    window_minutes: int
+    min_calls: int
+    severity: str
+    enabled: bool
+    firing: bool
+    last_fired_at: datetime | None
+    last_checked_at: datetime | None
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _round_real(cls, v):
+        return round(float(v), 2) if v is not None else v
+
+
+class AlertRuleUpdate(BaseModel):
+    threshold: float | None = Field(default=None, ge=0)
+    window_minutes: int | None = Field(default=None, ge=5, le=1440)
+    min_calls: int | None = Field(default=None, ge=0, le=1000)
+    severity: Literal["warning", "critical"] | None = None
+    enabled: bool | None = None
+
+
+class AlertOut(BaseModel):
+    id: int
+    tenant_id: int
+    tenant_name: str | None = None
+    campaign_id: int | None
+    campaign_name: str | None = None
+    kind: str
+    severity: str
+    message: str
+    value: float | None
+    threshold: float | None
+    # pending | sent | failed | skipped
+    delivery: str
+    delivery_error: str | None
+    created_at: datetime
+    acknowledged_at: datetime | None
+    acknowledged_by_email: str | None = None
+
+    @field_validator("value", "threshold", mode="before")
+    @classmethod
+    def _round_real(cls, v):
+        return round(float(v), 2) if v is not None else v
+
+
+class WebhookUpdate(BaseModel):
+    # None clears it. http:// is allowed because an internal collector on the
+    # LAN is a legitimate target.
+    webhook_url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("webhook_url")
+    @classmethod
+    def _check_url(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("must be an http:// or https:// URL")
+        return v
+
+
 # ───────────────────────────── live ─────────────────────────────
 
 class LiveCall(BaseModel):

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/lib/api'
 import {
+  Bell,
   Building2,
   ChevronDown,
   KeyRound,
@@ -27,6 +30,8 @@ type NavLinkItem = {
   icon: React.ComponentType<{ className?: string }>
   roles?: Role[]
   soon?: boolean
+  /** which live counter to show alongside the label */
+  badge?: 'alerts'
 }
 type NavItem = NavSection | NavLinkItem
 
@@ -34,6 +39,7 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall },
   { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio },
+  { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts' },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'] },
   { kind: 'link', to: '/users', label: 'Users', icon: Users2, roles: ['tenant_admin'] },
@@ -74,6 +80,14 @@ function Wordmark() {
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const { user } = useAuth()
+
+  // Polled in the shell rather than on the Alerts page, so something arriving
+  // while you are looking at a call still shows up.
+  const unread = useQuery({
+    queryKey: ['alerts-unread'],
+    queryFn: () => api<{ count: number }>('/alerts/unread-count'),
+    refetchInterval: 60_000,
+  })
 
   const visible = NAV.filter((item) => {
     if (item.kind !== 'link' || !item.roles) return true
@@ -139,6 +153,11 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
                 )}
                 <Icon className="h-4 w-4" />
                 {label}
+                {item.badge === 'alerts' && (unread.data?.count ?? 0) > 0 && (
+                  <span className="ml-auto tnum rounded-full bg-danger px-1.5 py-px text-2xs font-semibold text-danger-foreground">
+                    {unread.data!.count}
+                  </span>
+                )}
               </>
             )}
           </NavLink>

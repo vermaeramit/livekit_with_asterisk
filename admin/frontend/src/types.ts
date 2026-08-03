@@ -224,6 +224,41 @@ export interface TimeBucket {
   tts_ttfb_ms: number | null
 }
 
+export interface AlertRule {
+  id: number
+  tenant_id: number
+  tenant_name: string | null
+  campaign_id: number | null
+  campaign_name: string | null
+  kind: string
+  threshold: number
+  window_minutes: number
+  min_calls: number
+  severity: 'warning' | 'critical'
+  enabled: boolean
+  firing: boolean
+  last_fired_at: string | null
+  last_checked_at: string | null
+}
+
+export interface Alert {
+  id: number
+  tenant_id: number
+  tenant_name: string | null
+  campaign_id: number | null
+  campaign_name: string | null
+  kind: string
+  severity: 'warning' | 'critical'
+  message: string
+  value: number | null
+  threshold: number | null
+  delivery: 'pending' | 'sent' | 'failed' | 'skipped'
+  delivery_error: string | null
+  created_at: string
+  acknowledged_at: string | null
+  acknowledged_by_email: string | null
+}
+
 export interface LiveCall {
   id: number
   started_at: string

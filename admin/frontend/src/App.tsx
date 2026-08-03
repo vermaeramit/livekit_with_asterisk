@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { Layout } from '@/components/Layout'
+import { Alerts } from '@/pages/Alerts'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
 import { Campaigns } from '@/pages/Campaigns'
@@ -69,6 +70,7 @@ export function App() {
           }
         />
         <Route path="/live" element={<Live />} />
+        <Route path="/alerts" element={<Alerts />} />
         <Route path="/calls" element={<Calls />} />
         <Route path="/calls/:id" element={<CallDetail />} />
         <Route path="/change-password" element={<ChangePassword />} />
