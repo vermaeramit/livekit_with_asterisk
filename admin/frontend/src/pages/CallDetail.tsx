@@ -13,6 +13,7 @@ import {
   TriangleAlert,
   User,
 } from 'lucide-react'
+import { RecordingPlayer } from '@/components/RecordingPlayer'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
@@ -340,6 +341,10 @@ export function CallDetail() {
           }
         />
       </div>
+
+      {c.recording_available && (
+        <RecordingPlayer callId={c.id} sizeBytes={c.recording_bytes} />
+      )}
 
       <Card>
         <CardHeader className="flex items-center justify-between">

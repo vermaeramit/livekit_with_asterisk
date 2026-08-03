@@ -20,6 +20,9 @@ services:
       # Uploaded PDFs, kept so a document can be re-ingested without asking the
       # client for the file again.
       - kb-files:/data/kb
+      # Call recordings, written by Asterisk in the other compose project.
+      # Read-only: the panel serves them, it has no business changing them.
+      - recordings:/data/recordings:ro
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.
@@ -50,6 +53,11 @@ services:
 
 volumes:
   kb-files:
+  # Created by the media stack in /opt/aivoice. Declared external so this
+  # project attaches to it rather than making a second, empty one.
+  recordings:
+    name: aivoice_recordings
+    external: true
 
 networks:
   default:

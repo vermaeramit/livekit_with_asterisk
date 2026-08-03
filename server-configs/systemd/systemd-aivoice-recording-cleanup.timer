@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily call-recording retention sweep
+
+[Timer]
+# 03:30, when no one is calling. RandomizedDelaySec keeps it from lining up with
+# every other daily job on the box.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=900
+
+# If the server was off at 03:30, run on the next boot rather than skipping a
+# day. A missed sweep means recordings outlive the retention promise.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

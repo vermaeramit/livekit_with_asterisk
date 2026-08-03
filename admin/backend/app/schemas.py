@@ -377,5 +377,9 @@ class CallDetail(CallListItem):
     outcome: str | None
     transfer_reason: str | None
     recording_path: str | None
+    # Resolved from the filesystem on every read. Retention deletes files
+    # without touching the database, so a stored flag would go stale.
+    recording_available: bool = False
+    recording_bytes: int | None = None
     usage: CallUsage
     turns: list[TurnOut]

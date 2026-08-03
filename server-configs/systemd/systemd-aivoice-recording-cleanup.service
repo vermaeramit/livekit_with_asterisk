@@ -1,0 +1,34 @@
+[Unit]
+Description=Delete call recordings past the retention window
+Documentation=https://github.com/vermaeramit/livekit_with_asterisk
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+
+# 90 days. Recordings carry a customer's voice, so keeping them longer than the
+# business needs is a liability, not a feature. Change RETENTION_DAYS here and
+# say so in the client-facing notice - the two must agree.
+Environment=RETENTION_DAYS=90
+
+# Run through the container rather than poking at
+# /var/lib/docker/volumes/.../\_data on the host: the mount point is Docker's
+# private layout and is not a stable interface.
+#
+# -mtime is the *modification* time, which for a recording is when the call
+# ended - exactly the clock the retention promise is about.
+ExecStart=/usr/bin/docker exec asterisk find /var/spool/asterisk/recordings \
+    -type f -name '*.opus' -mtime +${RETENTION_DAYS} -delete
+
+# Orphaned WAVs mean an ffmpeg conversion failed. They are kept far longer than
+# the Opus files so the failure is noticeable, but not forever.
+ExecStart=/usr/bin/docker exec asterisk find /var/spool/asterisk/recordings \
+    -type f -name '*.wav' -mtime +${RETENTION_DAYS} -delete
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aivoice-rec-cleanup
+
+[Install]
+WantedBy=multi-user.target

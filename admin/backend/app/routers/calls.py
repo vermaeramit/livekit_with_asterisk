@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .. import db
 from ..deps import CurrentUser, active_user, tenant_scope
@@ -10,6 +14,24 @@ from ..schemas import (CallDetail, CallListItem, CallListResponse, CallUsage,
                        TurnOut)
 
 router = APIRouter(prefix="/calls", tags=["calls"])
+
+# Written by Asterisk, mounted read-only. The filename is derived from
+# calls.sip_call_id rather than stored, so a change of mount point cannot leave
+# stale paths in the database.
+RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", "/data/recordings"))
+
+# sip_call_id comes from a SIP header, so it is attacker-influenced in principle.
+# Anything outside this shape never reaches the filesystem.
+_CALL_ID_OK = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+CHUNK = 256 * 1024
+
+
+def recording_file(sip_call_id: str | None) -> Path | None:
+    if not sip_call_id or not _CALL_ID_OK.match(sip_call_id):
+        return None
+    path = RECORDINGS_DIR / f"{sip_call_id}.opus"
+    return path if path.is_file() else None
 
 LIST_COLUMNS = """
     c.id, c.started_at, c.ended_at, c.duration_ms, c.caller, c.callee,
@@ -113,8 +135,85 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
         "llm_prompt_tokens", "llm_prompt_cached_tokens", "llm_completion_tokens",
         "tts_characters", "tts_audio_seconds", "stt_audio_seconds")})
 
+    # Checked here rather than trusted from a column: retention deletes files
+    # without touching the database, so a stored flag would go stale.
+    audio = recording_file(d["sip_call_id"])
+
     return CallDetail(**d, usage=usage,
+                      recording_available=audio is not None,
+                      recording_bytes=audio.stat().st_size if audio else None,
                       turns=[TurnOut(**dict(t)) for t in turns])
+
+
+@router.get("/{call_id}/recording")
+async def get_recording(call_id: int, request: Request,
+                        user: CurrentUser = Depends(active_user)):
+    """Stream a call recording, with HTTP Range support.
+
+    Range is not optional: without it a browser's audio element cannot seek, and
+    on a long call the scrubber simply does nothing.
+    """
+    row = await db.pool().fetchrow(
+        "SELECT tenant_id, sip_call_id, started_at FROM calls WHERE id = $1", call_id)
+    if row is None or (not user.is_superadmin
+                       and row["tenant_id"] != user.tenant_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "call not found")
+
+    path = recording_file(row["sip_call_id"])
+    if path is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "no recording for this call - it may have passed the retention "
+            "window, or the call carried no audio")
+
+    size = path.stat().st_size
+    media = "audio/ogg"
+    filename = f"call-{call_id}-{row['started_at']:%Y%m%d-%H%M}.opus"
+    common = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "private, max-age=3600",
+    }
+
+    range_header = request.headers.get("range")
+    if not range_header:
+        return FileResponse(path, media_type=media, headers=common)
+
+    m = re.match(r"bytes=(\d*)-(\d*)$", range_header.strip())
+    if not m or (not m.group(1) and not m.group(2)):
+        return Response(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                        headers={"Content-Range": f"bytes */{size}"})
+
+    if m.group(1):
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else size - 1
+    else:
+        # "bytes=-500" means the LAST 500 bytes, not "from 0 to 500"
+        start = max(0, size - int(m.group(2)))
+        end = size - 1
+
+    if start >= size or end < start:
+        return Response(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                        headers={"Content-Range": f"bytes */{size}"})
+    end = min(end, size - 1)
+
+    def chunks():
+        with path.open("rb") as fh:
+            fh.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                data = fh.read(min(CHUNK, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    return StreamingResponse(
+        chunks(), status_code=status.HTTP_206_PARTIAL_CONTENT, media_type=media,
+        headers={**common,
+                 "Content-Range": f"bytes {start}-{end}/{size}",
+                 "Content-Length": str(end - start + 1)},
+    )
 
 
 @router.get("/{call_id}/kb-chunks")

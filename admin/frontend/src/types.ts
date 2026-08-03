@@ -98,6 +98,8 @@ export interface CallDetail extends CallListItem {
   outcome: string | null
   transfer_reason: string | null
   recording_path: string | null
+  recording_available: boolean
+  recording_bytes: number | null
   usage: CallUsage
   turns: Turn[]
 }

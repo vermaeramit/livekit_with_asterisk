@@ -198,6 +198,24 @@ def main() -> int:
     st, _ = call(args.base, "/calls/99999999", token=access)
     check("missing call -> 404", st == 404, f"got {st}")
 
+    print("\nrecordings")
+    if items:
+        newest = items[0]["id"]
+        _, detail = call(args.base, f"/calls/{newest}", token=access)
+        available = bool((detail or {}).get("recording_available"))
+        print(f"  call {newest}: recording "
+              f"{'present' if available else 'absent (not recorded, or expired)'}")
+        st, _ = call(args.base, f"/calls/{newest}/recording", token=access)
+        # The flag is resolved from disk, so it must agree with the endpoint.
+        # A mismatch means the console offers a player for audio that is gone.
+        check("endpoint agrees with recording_available",
+              (st == 200) == available, f"got {st}, flag={available}")
+        st, _ = call(args.base, f"/calls/{newest}/recording", token=None)
+        check("recording without a token -> 401", st == 401, f"got {st}")
+
+    st, _ = call(args.base, "/calls/99999999/recording", token=access)
+    check("recording for a missing call -> 404", st == 404, f"got {st}")
+
     print("\ntenants / campaigns")
     st, tenants = call(args.base, "/tenants", token=access)
     check("tenants -> 200", st == 200, f"got {st}")

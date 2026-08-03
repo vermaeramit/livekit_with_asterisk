@@ -283,6 +283,28 @@ export async function upload<T = unknown>(
   })
 }
 
+/**
+ * Fetch a protected binary resource and hand back an object URL.
+ *
+ * <audio src> cannot send an Authorization header, and the recording endpoint is
+ * not public. Downloading it once with the token and playing from a blob is the
+ * only way to have both. The caller must revokeObjectURL when it is done.
+ */
+export async function authedBlobUrl(path: string): Promise<string> {
+  const headers: Record<string, string> = {}
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+
+  let res = await fetch(BASE + path, { headers })
+  if (res.status === 401 && hasSession() && (await refreshAccessToken())) {
+    // safe to retry: nothing was consumed on the first attempt
+    res = await fetch(BASE + path, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    })
+  }
+  if (!res.ok) throw new ApiError(res.status, messageOf(res.status, await parse(res)))
+  return URL.createObjectURL(await res.blob())
+}
+
 export function buildQuery(params: Record<string, unknown>): string {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
