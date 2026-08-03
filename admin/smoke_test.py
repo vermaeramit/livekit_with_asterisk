@@ -436,15 +436,22 @@ def main() -> int:
     st, body = call(args.base, "/alerts/unread-count", token=access)
     check("unread count -> 200", st == 200, f"got {st}")
 
-    st, body = call(args.base, "/alert-webhook", token=access)
-    # The URL is a credential: anyone holding it can post into the channel.
-    check("webhook is never returned in full",
-          st == 200 and "webhook_url" not in (body or {}),
-          str(sorted((body or {}).keys())))
+    # The webhook belongs to a client, and a superadmin is in none of them, so
+    # an unscoped request is genuinely ambiguous and must be refused.
+    st, _ = call(args.base, "/alert-webhook", token=access)
+    check("webhook without a client -> 400 for a superadmin", st == 400, f"got {st}")
 
-    st, _ = call(args.base, "/alert-webhook", method="PUT", token=access,
-                 body={"webhook_url": "not-a-url"})
-    check("non-http webhook -> 422", st == 422, f"got {st}")
+    t_id = (tenants or [{}])[0].get("id")
+    if t_id:
+        st, body = call(args.base, f"/alert-webhook?tenant_id={t_id}", token=access)
+        # The URL is a credential: anyone holding it can post into the channel.
+        check("webhook is never returned in full",
+              st == 200 and "webhook_url" not in (body or {}),
+              str(sorted((body or {}).keys())))
+
+        st, _ = call(args.base, f"/alert-webhook?tenant_id={t_id}", method="PUT",
+                     token=access, body={"webhook_url": "not-a-url"})
+        check("non-http webhook -> 422", st == 422, f"got {st}")
 
     if rules:
         rid = rules[0]["id"]

@@ -12,11 +12,12 @@ import { PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { NumberField, Toggle } from '@/components/ui/field'
-import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
+import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { cn, formatDateTime, formatRelative } from '@/lib/utils'
-import type { Alert, AlertRule } from '@/types'
+import type { Alert, AlertRule, Tenant } from '@/types'
 
 const KIND_LABEL: Record<string, string> = {
   latency_p95: 'Response latency',
@@ -63,18 +64,33 @@ function DeliveryBadge({ alert }: { alert: Alert }) {
 function WebhookDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const toast = useToast()
+  const { user } = useAuth()
+  const isSuper = user?.role === 'superadmin'
+
   const [url, setUrl] = useState('')
+  const [tenantId, setTenantId] = useState('')
   const [error, setError] = useState<string | null>(null)
 
+  // The webhook belongs to a client, and a superadmin is not in one - so it has
+  // to say which. The API refuses an ambiguous request rather than guessing.
+  const tenants = useQuery({
+    queryKey: ['tenants'],
+    queryFn: () => api<Tenant[]>('/tenants'),
+    enabled: isSuper && open,
+  })
+
+  const scope = isSuper && tenantId ? `?tenant_id=${tenantId}` : ''
+  const ready = !isSuper || Boolean(tenantId)
+
   const current = useQuery({
-    queryKey: ['alert-webhook'],
-    queryFn: () => api<{ configured: boolean; hint: string | null }>('/alert-webhook'),
-    enabled: open,
+    queryKey: ['alert-webhook', tenantId],
+    queryFn: () => api<{ configured: boolean; hint: string | null }>(`/alert-webhook${scope}`),
+    enabled: open && ready,
   })
 
   const save = useMutation({
     mutationFn: () =>
-      api<{ configured: boolean }>('/alert-webhook', {
+      api<{ configured: boolean }>(`/alert-webhook${scope}`, {
         method: 'PUT',
         body: { webhook_url: url.trim() || null },
       }),
@@ -99,13 +115,34 @@ function WebhookDialog({ open, onClose }: { open: boolean; onClose: () => void }
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => save.mutate()} loading={save.isPending}>
+          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!ready}>
             Save
           </Button>
         </>
       }
     >
       <div className="space-y-4">
+        {isSuper && (
+          <div className="space-y-1.5">
+            <Label htmlFor="wh-tenant">Client</Label>
+            <Select
+              id="wh-tenant"
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+            >
+              <option value="">Select a client…</option>
+              {tenants.data?.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-2xs text-muted-foreground">
+              Each client's alerts go to their own channel.
+            </p>
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <Label htmlFor="wh">Webhook URL</Label>
           <Input
