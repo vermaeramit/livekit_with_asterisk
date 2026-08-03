@@ -144,6 +144,39 @@ export interface AgentConfig {
   updated_at: string
 }
 
+export interface KbDocument {
+  id: number
+  campaign_id: number | null
+  config_name: string
+  filename: string
+  title: string | null
+  page_count: number | null
+  chunk_count: number | null
+  token_count: number
+  language: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface KbIngestResult {
+  filename: string
+  status: 'created' | 'updated' | 'unchanged' | 'empty'
+  pages: number | null
+  chunks: number | null
+  tokens: number | null
+  error: string | null
+}
+
+export interface KbChunk2 {
+  id: number
+  seq: number
+  page: number | null
+  heading: string | null
+  content: string
+  n_tokens: number | null
+}
+
 export interface AuditEntry {
   id: number
   entity: string

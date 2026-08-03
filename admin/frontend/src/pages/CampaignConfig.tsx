@@ -13,6 +13,7 @@ import {
   Undo2,
   Waves,
 } from 'lucide-react'
+import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
@@ -403,11 +404,21 @@ export function CampaignConfig() {
       )}
 
       {tab === 'knowledge' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Knowledge base</CardTitle>
-          </CardHeader>
-          <CardBody className="space-y-5">
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>Documents</CardTitle>
+            </CardHeader>
+            <CardBody>
+              <KnowledgeDocs campaignId={campaignId} />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Retrieval tuning</CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-5">
             <Note>
               Two layers. A small knowledge base is injected into the prompt whole and costs nothing
               per turn; a large one contributes only its headings, and the agent calls a search tool
@@ -458,8 +469,9 @@ export function CampaignConfig() {
               rows={4}
               hint="Optional one-paragraph description of what the documents cover. Helps the agent decide when to search."
             />
-          </CardBody>
-        </Card>
+            </CardBody>
+          </Card>
+        </div>
       )}
 
       {tab === 'limits' && (

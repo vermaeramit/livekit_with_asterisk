@@ -43,6 +43,32 @@ def call(base: str, path: str, *, method: str = "GET",
         raise SystemExit(2)
 
 
+def post_file(base: str, path: str, *, filename: str, content: bytes,
+              token: str) -> tuple[int, dict | None]:
+    """Multipart upload, hand-rolled - stdlib has no helper for it."""
+    boundary = "----aivoice-smoke-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+
+    req = urllib.request.Request(base + path, method="POST", data=body)
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        # ingestion is synchronous; a long PDF takes a while
+        with urllib.request.urlopen(req, timeout=300) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            return e.code, {"detail": raw.decode()[:200]}
+
+
 def redact(body) -> str:
     """Response bodies get printed on failure - strip anything token-shaped first."""
     if isinstance(body, dict):
@@ -62,6 +88,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8090/api")
     ap.add_argument("--email", required=True)
+    ap.add_argument("--pdf", help="a real PDF to exercise ingestion end to end")
     args = ap.parse_args()
     pw = getpass.getpass("Password: ")
 
@@ -216,6 +243,45 @@ def main() -> int:
 
     st, _ = call(args.base, "/campaigns/99999999/config", token=access)
     check("config for a missing campaign -> 404", st == 404, f"got {st}")
+
+    print("\nknowledge base")
+    if default_campaign:
+        cmp_id = default_campaign["id"]
+        st, docs = call(args.base, f"/campaigns/{cmp_id}/kb", token=access)
+        check("documents -> 200", st == 200, f"got {st}")
+
+        st, body = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
+                             filename="notes.txt", content=b"hello")
+        check("non-PDF filename -> 400", st == 400, f"got {st}")
+
+        # A .pdf name with the wrong magic bytes is the case a filename check
+        # alone would wave through.
+        st, body = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
+                             filename="fake.pdf", content=b"not really a pdf")
+        check("PDF name but wrong magic bytes -> 400", st == 400, f"got {st}")
+
+        st, _ = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
+                          filename="../../escape.pdf", content=b"%PDF-1.4 x")
+        check("path traversal in the filename is not a 5xx", st in (200, 400, 502),
+              f"got {st}")
+
+        if args.pdf:
+            st, body = post_file(args.base, f"/campaigns/{cmp_id}/kb", token=access,
+                                 filename=args.pdf.split("/")[-1],
+                                 content=open(args.pdf, "rb").read())
+            check("real PDF upload -> 200", st == 200,
+                  f"got {st} {redact(body)}")
+            if st == 200:
+                check("ingest reported a status", bool(body.get("status")),
+                      f"{body.get('status')} pages={body.get('pages')} "
+                      f"chunks={body.get('chunks')}")
+                check("chunks were produced", (body.get("chunks") or 0) > 0,
+                      body.get("error") or "")
+        else:
+            print("  (skipped real upload - pass --pdf FILE to exercise ingestion)")
+
+    st, _ = call(args.base, "/kb/documents/99999999/chunks", token=access)
+    check("chunks for a missing document -> 404", st == 404, f"got {st}")
 
     print("\nrbac")
     st, _ = call(args.base, "/users", method="POST", token=access,

@@ -8,3 +8,12 @@ email-validator==2.2.0
 PyJWT==2.10.1
 argon2-cffi==23.1.0
 python-multipart==0.0.20
+
+# Knowledge-base ingestion. Pinned to the same versions as agent/requirements.txt:
+# agent/kb.py is mounted into this image and runs against whichever of the two is
+# installed here, so a drift would mean the panel chunks differently from the CLI.
+pymupdf==1.28.0
+pymupdf-layout==1.28.0
+pymupdf4llm==1.28.0
+tiktoken==0.13.0
+openai==2.51.0

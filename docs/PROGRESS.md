@@ -1651,11 +1651,74 @@ superadmin cannot be removed.
 variant declares `to?: never` — the nav needed a real `kind` discriminant. Six
 type errors, all pointing at the wrong line.
 
+### ✅ Phase 2b — agent config editor + knowledge base
+
+Per-campaign editing of prompt, greeting, voice, model, retrieval tuning, cost
+guardrails and handoff, plus PDF upload with a chunk preview and a change history.
+
+Saves apply from the **next call**. `store.load_config()` runs inside the job
+entrypoint, so nothing in progress is disturbed and no worker restart is needed.
+
+**Three things are deliberately not in the editor**, and the reasoning matters
+more than the omission:
+
+- `stt_provider` / `llm_provider` / `tts_provider` — [voice_agent.py:241](../agent/voice_agent.py#L241)
+  builds `sarvam.STT`, `openai.LLM` and `sarvam.TTS` unconditionally and never
+  reads those columns. A dropdown would have been a lie. They return with the
+  fallback chain.
+- `agent_config.enabled` — `load_config()` selects `WHERE name = $1 AND enabled`
+  and raises when it misses, which makes calls **ring forever with no visible
+  error**. That is failure mode #8 from this log, twice. Not a switch to expose.
+- Campaign enable/disable is labelled in the UI as not yet affecting calls,
+  because it does not: the workers still choose their config from `AGENT_CONFIG`.
+  A control that quietly does nothing is worse than an absent one.
+
+The UI also warns that `SARVAM_STT_MODEL` and `SARVAM_TTS_VOICE` in the server
+`.env` override two of the fields, with the command to check.
+
+#### Knowledge base ingestion runs inside admin-api
+
+`agent/kb.py` is **mounted read-only**, not copied:
+
+```yaml
+volumes:
+  - ../agent:/app/kblib:ro
+  - kb-files:/data/kb
+```
+
+Two copies of the chunking logic would drift, and retrieval quality would then
+differ by which route ingested a document with nothing to say so. `app/kblib.py`
+is the shim that puts it on `sys.path` and reports clearly when the mount is
+missing instead of failing at upload time.
+
+Cost of this choice, accepted knowingly: `OPENAI_API_KEY` now lives in
+`admin/.env` too, and the image carries pymupdf. The panel is behind a
+source-restricted firewall and already holds the database credentials — which is
+to say, every transcript.
+
+**`ingest_file()` now offloads extraction and chunking to a thread.** pymupdf4llm
+holds the GIL for seconds on a 50-page document; on the CLI that only makes the
+prompt wait, but inside the API it froze every other request for the length of an
+upload. It also takes an optional `campaign_id` so panel uploads are tenant-scoped,
+with `COALESCE` on update so a CLI re-ingest cannot orphan a scoped document.
+
+**Upload handling:** streamed to disk with the size checked as it arrives (reading
+it into memory first would let one upload decide the container's RAM), magic-byte
+checked rather than trusting the extension, and filename-sanitised — `Path().name`
+plus a character filter, with a check that what remains is not empty or `..`.
+
+Files are kept in a volume so re-ingest after a chunking change does not mean
+asking the client for the PDF again. Documents from before the panel existed live
+in `/opt/aivoice/kb/inbox` and report that plainly instead of failing obscurely.
+
+The chunk viewer is the point of the screen: a PDF that extracted badly reads as
+nonsense there, which is far easier to catch than diagnosing it from one wrong
+answer on a live call.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
 |---|---|
-| 2b | Agent-config editor + KB upload/management from the panel |
 | 3 | Analytics in-panel (replaces Grafana), then retire it |
 | 4 | Call recordings — storage, retention, auth'd playback |
 | 5 | Live call monitoring + alerting |

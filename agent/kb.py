@@ -12,6 +12,7 @@ Step 11 admin UI later.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -240,7 +241,7 @@ def _vec(v: list[float]) -> str:
 # ────────────────────────────── ingest ──────────────────────────────
 
 async def ingest_file(path: str, config_name: str = "default",
-                      force: bool = False) -> dict:
+                      force: bool = False, campaign_id: int | None = None) -> dict:
     p = Path(path)
     digest = hashlib.sha256(p.read_bytes()).hexdigest()
     pool = await store.pool()
@@ -251,13 +252,16 @@ async def ingest_file(path: str, config_name: str = "default",
     if existing and existing["content_hash"] == digest and not force:
         return {"file": p.name, "status": "unchanged", "chunks": existing["chunk_count"]}
 
-    pages, n_pages = extract_pdf(str(p))
+    # pymupdf4llm and the chunker are CPU-bound and hold the GIL for seconds on a
+    # 50-page document. On the CLI that only makes the prompt wait; inside the
+    # admin API it would freeze every other request for the length of an upload.
+    pages, n_pages = await asyncio.to_thread(extract_pdf, str(p))
     if not pages:
         return {"file": p.name, "status": "empty",
                 "error": "no extractable text - scanned PDF? OCR would be needed"}
 
     title = p.stem.replace("_", " ").replace("-", " ")
-    chunks = chunk_markdown(pages, title)
+    chunks = await asyncio.to_thread(chunk_markdown, pages, title)
     if not chunks:
         return {"file": p.name, "status": "empty", "error": "no chunks produced"}
 
@@ -270,21 +274,26 @@ async def ingest_file(path: str, config_name: str = "default",
             if existing:
                 doc_id = existing["id"]
                 await conn.execute("DELETE FROM kb_chunks WHERE doc_id=$1", doc_id)
+                # COALESCE so a CLI re-ingest (which passes no campaign_id) does
+                # not orphan a document the panel had already scoped to a tenant
                 await conn.execute(
                     "UPDATE kb_documents SET content_hash=$2, page_count=$3, "
-                    "chunk_count=$4, title=$5, updated_at=now() WHERE id=$1",
-                    doc_id, digest, n_pages, len(chunks), title)
+                    "chunk_count=$4, title=$5, campaign_id=COALESCE($6, campaign_id), "
+                    "updated_at=now() WHERE id=$1",
+                    doc_id, digest, n_pages, len(chunks), title, campaign_id)
             else:
                 doc_id = await conn.fetchval(
                     "INSERT INTO kb_documents (config_name, filename, title, "
-                    "content_hash, page_count, chunk_count) "
-                    "VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
-                    config_name, p.name, title, digest, n_pages, len(chunks))
+                    "content_hash, page_count, chunk_count, campaign_id) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                    config_name, p.name, title, digest, n_pages, len(chunks),
+                    campaign_id)
             await conn.executemany(
-                "INSERT INTO kb_chunks (doc_id, config_name, seq, page, heading, "
-                "content, n_tokens, embedding) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector)",
-                [(doc_id, config_name, c.seq, c.page, c.heading, c.content,
-                  c.n_tokens, _vec(v)) for c, v in zip(chunks, vectors)])
+                "INSERT INTO kb_chunks (doc_id, config_name, campaign_id, seq, page, "
+                "heading, content, n_tokens, embedding) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector)",
+                [(doc_id, config_name, campaign_id, c.seq, c.page, c.heading,
+                  c.content, c.n_tokens, _vec(v)) for c, v in zip(chunks, vectors)])
 
     return {"file": p.name, "status": "updated" if existing else "created",
             "pages": n_pages, "chunks": len(chunks),

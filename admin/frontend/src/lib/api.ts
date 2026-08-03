@@ -179,6 +179,53 @@ export async function restoreSession(): Promise<boolean> {
   return refreshAccessToken()
 }
 
+/**
+ * Multipart upload. Separate from api() because the body must not be JSON and
+ * the Content-Type header has to be left alone so the browser can add the
+ * multipart boundary.
+ *
+ * Refresh-on-401 is deliberately not retried here: the file stream has already
+ * been consumed, so a retry would send an empty body. The caller sees the 401
+ * and can try again after the interceptor has renewed the token.
+ */
+export async function upload<T = unknown>(
+  path: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  const form = new FormData()
+  form.append('file', file)
+
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', BASE + path)
+    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`)
+
+    // fetch() cannot report upload progress; a 30 MB PDF over a slow link with
+    // no feedback reads as a hung page.
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100)
+    }
+
+    xhr.onload = () => {
+      let body: any = null
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null
+      } catch {
+        body = xhr.responseText
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T)
+      else reject(new ApiError(xhr.status, messageOf(xhr.status, body)))
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'the upload could not reach the API'))
+    xhr.ontimeout = () => reject(new ApiError(0, 'the upload timed out'))
+    // Ingestion is synchronous: extraction, chunking and embedding all happen
+    // before the response. A 50-page PDF takes tens of seconds.
+    xhr.timeout = 300_000
+    xhr.send(form)
+  })
+}
+
 export function buildQuery(params: Record<string, unknown>): string {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {

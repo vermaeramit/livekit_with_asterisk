@@ -12,6 +12,14 @@ services:
     container_name: admin-api
     restart: unless-stopped
     env_file: .env
+    volumes:
+      # The agent's kb.py is mounted, not copied. One implementation of
+      # extraction and chunking - two would drift and retrieval quality would
+      # differ by which route ingested a document, with nothing to say so.
+      - ../agent:/app/kblib:ro
+      # Uploaded PDFs, kept so a document can be re-ingested without asking the
+      # client for the file again.
+      - kb-files:/data/kb
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.
@@ -39,6 +47,9 @@ services:
     deploy:
       resources:
         limits: { cpus: '0.5', memory: 256M }
+
+volumes:
+  kb-files:
 
 networks:
   default:

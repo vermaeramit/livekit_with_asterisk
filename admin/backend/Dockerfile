@@ -10,8 +10,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# non-root: the container only needs to read its own code and talk to postgres
-RUN useradd -r -u 10001 appuser && chown -R appuser /app
+# non-root. /data/kb must exist and be owned here: Docker seeds an empty named
+# volume from the image path, so creating it after USER would leave it root-owned
+# and every upload would fail with EACCES.
+RUN useradd -r -u 10001 appuser \
+ && mkdir -p /data/kb \
+ && chown -R appuser /app /data/kb
 USER appuser
 
 EXPOSE 8000

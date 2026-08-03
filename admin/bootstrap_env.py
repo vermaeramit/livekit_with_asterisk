@@ -61,22 +61,33 @@ def main() -> int:
            f"{quote(src['POSTGRES_PASSWORD'], safe='')}"
            f"@postgres:5432/{src['POSTGRES_DB']}")
 
+    lines = [
+        f"DATABASE_URL={dsn}",
+        f"JWT_SECRET={secret}",
+        "ACCESS_TOKEN_MINUTES=15",
+        "REFRESH_TOKEN_DAYS=7",
+        f"CORS_ORIGINS={args.cors}",
+    ]
+
+    # Knowledge-base ingestion embeds through OpenAI, so the panel needs the same
+    # key the agent uses. Copied rather than asked for, so it never has to be
+    # typed or pasted anywhere.
+    if src.get("OPENAI_API_KEY"):
+        lines.append(f"OPENAI_API_KEY={src['OPENAI_API_KEY']}")
+    else:
+        print("note: OPENAI_API_KEY not found in the source env - "
+              "PDF upload will report that ingestion is not configured")
+
     # trailing newline is not cosmetic - without it a later `echo >> .env` glues
     # itself onto the last value (we have been bitten by exactly this before)
-    TARGET.write_text(
-        f"DATABASE_URL={dsn}\n"
-        f"JWT_SECRET={secret}\n"
-        f"ACCESS_TOKEN_MINUTES=15\n"
-        f"REFRESH_TOKEN_DAYS=7\n"
-        f"CORS_ORIGINS={args.cors}\n"
-    )
+    TARGET.write_text("\n".join(lines) + "\n")
     TARGET.chmod(0o600)
 
+    SECRETS = ("DATABASE_URL", "JWT_SECRET", "OPENAI_API_KEY")
     print(f"wrote {TARGET} (mode 600)")
     for line in TARGET.read_text().splitlines():
         k, _, v = line.partition("=")
-        print(f"  {k}={v[:6]}***" if k in ("DATABASE_URL", "JWT_SECRET")
-              else f"  {line}")
+        print(f"  {k}={v[:6]}***" if k in SECRETS else f"  {line}")
     return 0
 
 

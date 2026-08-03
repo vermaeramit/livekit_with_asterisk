@@ -209,6 +209,33 @@ class AgentConfigUpdate(BaseModel):
         return v
 
 
+# ───────────────────────────── knowledge base ─────────────────────────────
+
+class KbDocument(BaseModel):
+    id: int
+    campaign_id: int | None
+    config_name: str
+    filename: str
+    title: str | None
+    page_count: int | None
+    chunk_count: int | None
+    token_count: int = 0
+    language: str | None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class KbIngestResult(BaseModel):
+    filename: str
+    # created | updated | unchanged | empty
+    status: str
+    pages: int | None = None
+    chunks: int | None = None
+    tokens: int | None = None
+    error: str | None = None
+
+
 class AuditEntry(BaseModel):
     id: int
     entity: str
