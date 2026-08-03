@@ -222,8 +222,12 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 9b | Human transfer (SIP REFER) | ✅ verified end to end |
 | 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
 | 10b | Provider fallbacks — benchmarked, chain decided, **not yet wired** | 🔬 |
-| 10c | Cost guardrails + Grafana monitoring | ✅ |
-| 11 | Admin panel — agent config, live monitoring, call review | ⏭️ **Next** |
+| 10c | Cost guardrails + monitoring | ✅ |
+| 11.1 | Admin panel — auth, RBAC, tenant isolation, call review | ✅ |
+| 11.2 | Clients, users, campaigns, agent config editor, KB upload | ✅ |
+| 11.3 | Analytics in-panel, Grafana retired | ✅ |
+| 11.4 | Call recordings — storage, retention, playback | ⏭️ **Next** |
+| 11.5 | Live call monitoring + alerting | ⏭️ |
 
 ### Provider fallback — decided, pending implementation
 
@@ -256,9 +260,13 @@ agent speak a closing line and wait for playout before ending the call:
 The token cap is what actually bounds spend — one observed call used **32,816 prompt
 tokens**, because the knowledge base rides along on every request.
 
-Monitoring is **Grafana straight onto Postgres** — every call metric already lives in
+Monitoring reads **Postgres directly** — every call metric already lives in
 `calls`/`turns`, so no Prometheus or exporter is involved. The worker's HTTP port was
 checked first: it answers `/` but exposes no `/metrics`.
+
+This started as Grafana and moved into the admin panel, for two reasons: two places
+to maintain the same charts, and Grafana had no notion of tenants — every client
+would have seen everyone's calls.
 
 The most useful panel is **"Where the time goes"** — `eou` vs `llm_ttft` vs `tts_ttfb`
 stacked. A rising `eou` is our machine (VAD and turn detection run locally); rising

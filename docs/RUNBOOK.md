@@ -514,14 +514,12 @@ Three workers, jobs distributed 0/4/3. Above 10 is untested.
 
 ### Dashboard
 
-**`http://10.130.9.243:3000/d/aivoice-ops`** — login `admin`, password in `/opt/aivoice/.env`
-(`GRAFANA_PASSWORD`). Firewalled to the workstation only.
+**`http://10.130.9.243:8080/dashboard`** — the admin panel, signed in with your own account.
+Filter by campaign and window; a client sees only their own tenant's numbers.
 
-> The admin password is read from the env **only on first boot**. Changing `.env` afterwards
-> does nothing — Grafana keeps it in its own database:
-> ```bash
-> docker exec -it grafana grafana cli admin reset-admin-password "$GRAFANA_PASSWORD"
-> ```
+> Grafana used to live on port 3000 and was retired once this existed. Two places
+> to maintain the same charts was one too many, and Grafana had no notion of
+> tenants — every client would have seen everyone's calls.
 
 Reading it:
 

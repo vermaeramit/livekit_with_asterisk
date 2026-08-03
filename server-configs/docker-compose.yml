@@ -80,29 +80,11 @@ services:
       resources:
         limits: { cpus: '0.5', memory: 512M }
 
-
-  grafana:
-    image: grafana/grafana:11.6.0
-    container_name: grafana
-    restart: unless-stopped
-    depends_on: [ postgres ]
-    ports:
-      - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD}"
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana-data:/var/lib/grafana
-    deploy:
-      resources:
-        limits: { cpus: '0.5', memory: 512M }
-
+# Grafana lived here until the admin panel grew its own dashboard. Two places to
+# maintain the same charts was one too many, and the panel's version is
+# tenant-scoped - which Grafana never was.
 
 volumes:
-  grafana-data:
   pgdata:
   asterisk-spool:
   asterisk-log:
