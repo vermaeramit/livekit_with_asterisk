@@ -229,16 +229,14 @@ async def entrypoint(ctx: JobContext):
 
     caller = callee = sip_call_id = None
     for p in ctx.room.remote_participants.values():
-        # Which key carries Asterisk's SIP Call-ID is not documented and is not
-        # sip.callID - that is LiveKit's own id (SCL_...). Logged so the answer
-        # comes from the wire rather than from a guess.
-        logger.info("sip participant %s attrs=%s", p.identity, dict(p.attributes or {}))
         caller = caller or _sip_attr(p, "sip.phoneNumber", "sip.from_user")
         callee = callee or _sip_attr(p, "sip.trunkPhoneNumber", "sip.to_user")
-        # Asterisk names the recording after this same Call-ID (see the
-        # [recsetup] pre-dial handler), so storing it is what lets the console
-        # find a call's audio.
-        sip_call_id = sip_call_id or _sip_attr(p, "sip.callID")
+        # sip.callIDFull, NOT sip.callID. The latter is LiveKit's own identifier
+        # (SCL_7c3USwsGRuui); only callIDFull carries the SIP Call-ID header that
+        # Asterisk names the recording after. No fallback between them on
+        # purpose - storing the wrong one would silently produce a column that
+        # never matches a file while looking perfectly populated.
+        sip_call_id = sip_call_id or _sip_attr(p, "sip.callIDFull")
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
                                      cfg.language, cfg.campaign_id, sip_call_id)
