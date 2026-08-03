@@ -1462,12 +1462,126 @@ docker compose rm -sf grafana && docker volume rm aivoice_grafana-data && docker
 
 ---
 
+## 🚧 Step 11 — Admin panel
+
+Grafana goes away. Two dashboards to maintain was one too many, so the graphs move
+into the panel itself and Grafana is retired once Phase 3 lands.
+
+### What it has to be
+
+| Requirement | Consequence |
+|---|---|
+| Our team **and** clients log in | Role-based access, and tenant isolation as a hard boundary |
+| Multi-tenant, multi-campaign | `tenants → campaigns`; a campaign owns prompt + KB + voice |
+| Enterprise feel | React + TypeScript, real alerting, not a CRUD skeleton |
+| Call logs with latency + tokens | Already recorded per turn — this is presentation, not new plumbing |
+| Call recordings | Asterisk `MixMonitor` writes them; needs an auth'd streaming endpoint |
+
+Campaign is the unit of configuration: one client runs sales / support / collection
+side by side, each with its own prompt, knowledge base and voice.
+
+### Deploy workflow (new from here on)
+
+Code is written on the Windows box, pushed to GitHub, pulled on the server. No more
+editing files in place over SSH — the server stops being the source of truth.
+
+```bash
+# on the server, once
+git clone https://github.com/vermaeramit/livekit_with_asterisk /srv/aivoice
+
+# every update
+cd /srv/aivoice && git pull
+docker compose -f admin/docker-compose.yml up -d --build
+```
+
+`/opt/aivoice` (media stack, `.env`, `gcp/sa.json`) stays where it is. The admin
+stack is a **separate compose project** that only joins the existing network, so
+rebuilding the panel can never bounce Asterisk, LiveKit or the agent workers.
+
+### ✅ Migration 001 — multi-tenant foundation
+
+`migrations/001_multitenant.sql`, applied live. Deliberately additive: `campaign_id`
+is added *alongside* `config_name` and backfilled, nothing is renamed or dropped, so
+the running workers never noticed. Migration 002 switches the agent over to
+`campaign_id` and only then drops `config_name`.
+
+New: `tenants`, `users`, `campaigns`, `config_audit`, `user_sessions`.
+Extended: `campaign_id` on `agent_config` / `kb_documents` / `kb_chunks` / `calls`,
+plus a denormalised `calls.tenant_id` (every list and chart filters by tenant;
+joining through `campaigns` on each query is waste).
+
+Verified after apply: 10 tables, `default/default` tenant+campaign seeded,
+`agent_config.campaign_id = 1`, 60/60 existing calls linked.
+
+Two constraints worth remembering, both enforced in the schema:
+
+```sql
+role IN ('superadmin','tenant_admin','agent','viewer')
+-- a superadmin has no tenant; everyone else must have one
+(role = 'superadmin' AND tenant_id IS NULL) OR (role <> 'superadmin' AND tenant_id IS NOT NULL)
+```
+
+### ✅ Phase 1 — backend: auth, RBAC, calls API
+
+`admin/backend/`
+
+| File | What it does |
+|---|---|
+| `app/config.py` | Settings from env — DB URL, JWT secret, token lifetimes, CORS |
+| `app/db.py` | asyncpg pool (2–10 connections, 15 s command timeout) |
+| `app/security.py` | argon2 hashing, access-token sign/verify, refresh-token pair |
+| `app/deps.py` | `current_user`, `require_roles`, `tenant_scope` |
+| `app/routers/auth.py` | login / refresh / logout / me |
+| `app/routers/calls.py` | list (filter + paginate), detail (transcript), KB citations |
+| `seed_admin.py` | creates the first superadmin, password via `getpass` |
+
+**Decisions that matter later:**
+
+*The access token is not trusted as a source of truth.* Every request re-reads the
+user row, so deactivating an account or changing a role takes effect immediately
+instead of lingering for up to 15 minutes.
+
+*Refresh tokens are stored as SHA-256, never raw.* A database leak cannot be
+replayed, and a session can be revoked without rotating the signing key. Refresh
+**rotates** — the old token dies on use, so a stolen one works at most once and the
+real client's next refresh fails loudly rather than silently sharing a session.
+
+*Tenant isolation is resolved in exactly one place* (`tenant_scope`) and every query
+takes its answer. A non-superadmin cannot widen its own scope no matter what it puts
+in the query string.
+
+*A call belonging to another tenant returns 404, not 403.* A distinct 403 would let a
+client probe which call ids exist elsewhere.
+
+*Login verifies against a dummy hash when the email is unknown*, so a wrong email and
+a wrong password take the same time — otherwise response timing enumerates accounts.
+
+**Traps hit:**
+
+- `EmailStr` needs `email-validator` installed or the module raises at *import* time,
+  not on first request — an easy one to miss until the container won't boot.
+- The refresh handler's row has `id` = **session** id and `user_id` = user id. Passing
+  the row straight into the token issuer would have minted tokens under the wrong
+  subject. `_issue()` now takes explicit arguments instead of a row.
+
+### ⏭️ Remaining phases
+
+| Phase | Scope |
+|---|---|
+| 2 | Campaign + agent-config CRUD, KB upload/management from the panel |
+| 3 | Analytics in-panel (replaces Grafana), then retire it |
+| 4 | Call recordings — storage, retention, auth'd playback |
+| 5 | Live call monitoring + alerting |
+
+---
+
 ## ⏭️ Next
 
+- Step 11 Phase 1 frontend — React shell, login, calls list + detail
 - **Wire up the fallback chain** (decided and benchmarked; ~1 hour of agent-side work)
 - Capacity test to 20 with a proper SIP load tool
 - System metrics (node_exporter + Prometheus) and alerting
-- Step 11 — admin panel
+- Migration 002 — switch the agent to `campaign_id`, drop `config_name`
 
 ---
 

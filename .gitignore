@@ -28,6 +28,11 @@ recordings/
 monitor/
 lat-*.wav
 
+# ---- node / frontend ----
+node_modules/
+dist/
+.vite/
+
 # ---- editors / os ----
 .vscode/
 .idea/

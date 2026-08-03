@@ -1,0 +1,33 @@
+# Admin panel stack. Runs separately from the media stack in /opt/aivoice so a
+# panel rebuild can never bounce Asterisk / LiveKit / the agents - it only joins
+# their network to reach postgres.
+#
+#   cd /srv/aivoice && docker compose -f admin/docker-compose.yml up -d --build
+#
+# Reads admin/.env (gitignored). See admin/.env.example.
+
+services:
+  admin-api:
+    build: ./backend
+    container_name: admin-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Bound to localhost. Reach it through the nginx container, or an SSH
+      # tunnel during development - never publish the API to the LAN directly.
+      - "127.0.0.1:8090:8000"
+    healthcheck:
+      test: ["CMD-SHELL",
+             "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 512M }
+
+networks:
+  default:
+    name: aivoice_default
+    external: true
