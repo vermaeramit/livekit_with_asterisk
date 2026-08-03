@@ -43,6 +43,14 @@ def call(base: str, path: str, *, method: str = "GET",
         raise SystemExit(2)
 
 
+def redact(body) -> str:
+    """Response bodies get printed on failure - strip anything token-shaped first."""
+    if isinstance(body, dict):
+        return json.dumps({k: ("***" if "token" in k.lower() else v)
+                           for k, v in body.items()})
+    return str(body)[:200]
+
+
 def check(label: str, ok: bool, note: str = "") -> None:
     global failures
     if not ok:
@@ -65,7 +73,7 @@ def main() -> int:
     print("\nauth")
     st, body = call(args.base, "/auth/login", method="POST",
                     body={"email": args.email, "password": pw})
-    check("login -> 200", st == 200, f"got {st} {body}")
+    check("login -> 200", st == 200, "" if st == 200 else f"got {st} {redact(body)}")
     if st != 200:
         return 1
     access, refresh = body["access_token"], body["refresh_token"]
@@ -75,8 +83,12 @@ def main() -> int:
                     body={"email": args.email, "password": pw + "x"})
     check("wrong password -> 401", st == 401, f"got {st}")
 
+    # Must be a syntactically VALID address that simply does not exist. A reserved
+    # TLD like .invalid is rejected by email-validator before the handler runs and
+    # returns 422, which tests pydantic rather than the enumeration defence.
     st, _ = call(args.base, "/auth/login", method="POST",
-                 body={"email": "nobody@example.invalid", "password": "whatever12345"})
+                 body={"email": "no-such-user@example.com",
+                       "password": "whatever12345"})
     check("unknown email -> 401 (same as wrong password)", st == 401, f"got {st}")
 
     st, body = call(args.base, "/auth/me", token=access)
