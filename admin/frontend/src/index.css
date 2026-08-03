@@ -98,9 +98,36 @@
   ::selection {
     background: hsl(var(--primary) / 0.2);
   }
+
+  /* Ambient motion is decoration. Anyone who has asked the OS to calm things
+     down gets a still page, not a slightly slower one. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer utilities {
+  /* Faint dot lattice for the login brand panel - gives the dark surface a
+     texture to catch the light instead of reading as flat ink. */
+  .bg-dot-grid {
+    background-image: radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.07) 1px, transparent 0);
+    background-size: 26px 26px;
+  }
+
+  .glass {
+    background: rgb(255 255 255 / 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgb(255 255 255 / 0.1);
+  }
+
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--border)) transparent;
