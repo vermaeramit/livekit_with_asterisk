@@ -27,6 +27,19 @@ services:
       resources:
         limits: { cpus: '0.5', memory: 512M }
 
+  admin-web:
+    build: ./frontend
+    container_name: admin-web
+    restart: unless-stopped
+    depends_on: [ admin-api ]
+    ports:
+      # This one IS reachable from the LAN - it is the panel. Keep the firewall
+      # rule source-restricted until there is TLS in front of it.
+      - "8080:80"
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256M }
+
 networks:
   default:
     name: aivoice_default

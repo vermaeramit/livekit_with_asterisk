@@ -32,6 +32,7 @@ lat-*.wav
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 
 # ---- editors / os ----
 .vscode/

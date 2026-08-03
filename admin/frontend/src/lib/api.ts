@@ -1,0 +1,190 @@
+import type { TokenPair } from '@/types'
+
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'
+const REFRESH_KEY = 'aivoice.refresh'
+
+/**
+ * The access token lives in memory only - a page reload re-derives it from the
+ * refresh token. The refresh token is the one thing that has to survive a
+ * reload, so it sits in localStorage.
+ *
+ * That trade is deliberate: an httpOnly cookie would resist XSS better but
+ * needs CSRF protection and a same-site deployment, neither of which this panel
+ * has yet. Rotation on every use (see the backend) is what limits the blast
+ * radius in the meantime - a stolen refresh token works at most once, and the
+ * real client's next refresh fails loudly.
+ */
+let accessToken: string | null = null
+let onAuthLost: (() => void) | null = null
+
+export function setAuthLostHandler(fn: (() => void) | null) {
+  onAuthLost = fn
+}
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_KEY)
+}
+
+export function storeTokens(t: TokenPair) {
+  accessToken = t.access_token
+  localStorage.setItem(REFRESH_KEY, t.refresh_token)
+}
+
+export function clearTokens() {
+  accessToken = null
+  localStorage.removeItem(REFRESH_KEY)
+}
+
+export function hasSession(): boolean {
+  return getRefreshToken() !== null
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+async function parse(res: Response): Promise<any> {
+  const text = await res.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+function messageOf(status: number, body: any): string {
+  if (typeof body?.detail === 'string') return body.detail
+  // FastAPI validation errors come back as a list of {loc, msg, type}
+  if (Array.isArray(body?.detail)) {
+    return body.detail.map((d: any) => d.msg).filter(Boolean).join('; ') || 'invalid request'
+  }
+  return `request failed (${status})`
+}
+
+/**
+ * Refresh rotates the token, so two concurrent refreshes would race and one
+ * would revoke the other's session. Everyone waits on the same promise.
+ */
+let inFlightRefresh: Promise<boolean> | null = null
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (inFlightRefresh) return inFlightRefresh
+
+  inFlightRefresh = (async () => {
+    const refresh_token = getRefreshToken()
+    if (!refresh_token) return false
+    try {
+      const res = await fetch(`${BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token }),
+      })
+      if (!res.ok) return false
+      storeTokens((await res.json()) as TokenPair)
+      return true
+    } catch {
+      return false
+    } finally {
+      // release on the next tick so late callers still see this result
+      setTimeout(() => {
+        inFlightRefresh = null
+      }, 0)
+    }
+  })()
+
+  return inFlightRefresh
+}
+
+interface RequestOptions {
+  method?: string
+  body?: unknown
+  signal?: AbortSignal
+  /** internal - stops a refresh loop if the retried request 401s again */
+  _retried?: boolean
+}
+
+export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+
+  let res: Response
+  try {
+    res = await fetch(BASE + path, {
+      method: opts.method ?? 'GET',
+      headers,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
+    })
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e
+    throw new ApiError(0, 'cannot reach the API - is the SSH tunnel up?')
+  }
+
+  if (res.status === 401 && !opts._retried && hasSession()) {
+    if (await refreshAccessToken()) {
+      return api<T>(path, { ...opts, _retried: true })
+    }
+    clearTokens()
+    onAuthLost?.()
+    throw new ApiError(401, 'session expired - please sign in again')
+  }
+
+  if (!res.ok) throw new ApiError(res.status, messageOf(res.status, await parse(res)))
+  return (await parse(res)) as T
+}
+
+// ── auth calls, which deliberately bypass the interceptor ────────────────────
+
+export async function login(email: string, password: string): Promise<TokenPair> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  }).catch(() => {
+    throw new ApiError(0, 'cannot reach the API - is the SSH tunnel up?')
+  })
+
+  if (!res.ok) {
+    const body = await parse(res)
+    throw new ApiError(
+      res.status,
+      res.status === 401 ? 'Incorrect email or password' : messageOf(res.status, body),
+    )
+  }
+  const tokens = (await res.json()) as TokenPair
+  storeTokens(tokens)
+  return tokens
+}
+
+export async function logout(): Promise<void> {
+  const refresh_token = getRefreshToken()
+  if (refresh_token) {
+    // best effort: the local session goes away whether or not the server agrees
+    await api('/auth/logout', { method: 'POST', body: { refresh_token } }).catch(() => {})
+  }
+  clearTokens()
+}
+
+/** Called on boot to turn a stored refresh token back into a usable session. */
+export async function restoreSession(): Promise<boolean> {
+  if (!hasSession()) return false
+  return refreshAccessToken()
+}
+
+export function buildQuery(params: Record<string, unknown>): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue
+    q.set(k, String(v))
+  }
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
