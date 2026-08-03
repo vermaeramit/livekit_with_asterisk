@@ -1803,6 +1803,44 @@ an `Authorization` header and this endpoint is not public.
 | Smoke test crashed on the recording | It parsed every body as JSON. This one is audio |
 | Four header checks "failed" | Looked up `Content-Range`; Starlette emits lowercase. The mechanics had been passing all along |
 
+### ✅ Migration 004 — campaign-aware routing
+
+Two panel controls were cosmetic until this: disabling a campaign stopped
+nothing, and a second campaign could not take a call at all. Every worker served
+one config, chosen by `AGENT_CONFIG`.
+
+**Routing key is the dialled number** (`campaign_routes.did` → campaign), read
+from `sip.trunkPhoneNumber`. It is how a caller already distinguishes a client's
+sales line from their collections line. DIDs are `UNIQUE` across *all* tenants —
+two clients claiming the same number must fail at configuration time, not by
+sending one client's caller to another's agent.
+
+Config now loads **after** `ctx.connect()`, because the dialled number arrives
+with the SIP participant. Measured no cost: p50 stayed at 2013 ms.
+
+Three outcomes, kept distinct on purpose:
+
+| | |
+|---|---|
+| Routed | that campaign's config |
+| Unmapped number | falls back to `AGENT_CONFIG` **with a warning** — a silent fallback would serve one client's agent to another's caller |
+| Disabled or suspended | the room is deleted, so Asterisk falls through to the human extension at once |
+
+That last one needed care. Simply returning leaves the caller ringing for the
+full 25 s Dial timeout, because livekit-sip does not answer until an agent
+subscribes. `CampaignUnavailable` is its own exception for the same reason: a
+missing config is a deployment fault and should be loud, while a paused campaign
+is a normal state whose caller deserves an answer rather than silence.
+
+Verified both paths on the server — a routed call logs `config=default` with no
+fallback warning, and a disabled campaign logs
+`DECLINED call to 700: campaign 'Default Campaign' is disabled` with the caller
+reaching the human extension in seconds.
+
+**Not in scope:** dropping `config_name` (knowledge-base retrieval keys on it),
+and per-campaign recording — Asterisk starts the recording and does not read the
+database, so that needs `func_odbc` or similar. Recording is still global.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
