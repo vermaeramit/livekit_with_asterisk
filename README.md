@@ -227,7 +227,9 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 11.2 | Clients, users, campaigns, agent config editor, KB upload | ✅ |
 | 11.3 | Analytics in-panel, Grafana retired | ✅ |
 | 11.4 | Call recordings — Opus, 90-day retention, in-panel playback | ✅ |
-| 11.5 | Live call monitoring + alerting | ⏭️ **Next** |
+| 11.5 | Live monitor + alerting (rules, webhook, in-panel) | ✅ |
+| — | Capacity test to 20 concurrent | ⏭️ **Next** |
+| 10b | Provider fallback chains — benchmarked, still not wired | 🔬 |
 
 ### Provider fallback — decided, pending implementation
 

@@ -1841,6 +1841,51 @@ reaching the human extension in seconds.
 and per-campaign recording — Asterisk starts the recording and does not read the
 database, so that needs `func_odbc` or similar. Recording is still global.
 
+### ✅ Phase 5 — live monitoring and alerting
+
+**Live monitor** reads `calls` rather than the LiveKit API. The rows are already
+tenant-scoped and already carry campaign, caller and per-turn latency, so asking
+LiveKit would mean reconciling two sources of truth for no extra information.
+
+A call is "in progress" while `ended_at IS NULL` — which is also exactly how a
+worker that died mid-call looks. Staleness is therefore *computed*: past its own
+duration guardrail plus half again, a row is flagged rather than hidden, with a
+pointer at the journal. A stuck call that quietly vanishes is worse than one that
+looks wrong.
+
+The page warns above 10 concurrent because that is the load-tested figure. It
+says "unmeasured past here" rather than inventing a limit.
+
+**Alerting** runs in the API process — it needs that pool and nothing else, and a
+second process is one more thing to notice had died. Noted in the code that this
+assumes a single instance; two replicas would double-fire.
+
+Decisions that shape whether anyone actually reads the alerts:
+
+*Written to `alerts` before the webhook is attempted.* The row is the record,
+delivery is best effort. A chat tool being down stores `delivery failed` with the
+reason instead of losing the alert.
+
+*Edge-triggered.* One alert when a rule starts breaching, then silence until it
+clears. Level-triggered would have produced sixty alerts an hour for one bad
+afternoon — and people mute those. Editing a threshold **re-arms** the rule, so
+turning the noise down cannot accidentally mute the next real breach.
+
+*Percentage rules honour `min_calls`.* Two calls, one of which errored, is not a
+50% error rate worth waking anyone for.
+
+*Thresholds come from measurements.* p50 sits at ~2.0s and p95 at ~3.3s, so the
+latency rule fires at 4000 ms — a regression, not variance.
+
+*The webhook URL is a credential* — anyone holding it can post into the channel.
+Never returned by the API, never logged, never in the audit trail; only whether
+one is set, plus a 30-character hint.
+
+**Trap:** `GET /alert-webhook` returned 400 to a superadmin, and it was right to.
+The webhook belongs to a client and a superadmin is in none of them, so an
+unscoped request is genuinely ambiguous. The console had the same gap — fixed
+with a client selector rather than by making the API guess.
+
 ### ⏭️ Remaining phases
 
 | Phase | Scope |
