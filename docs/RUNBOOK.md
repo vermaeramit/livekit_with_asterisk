@@ -96,6 +96,12 @@ checkout.
 > systemctl cat aivoice-agent@1 | grep -E 'WorkingDirectory|ExecStart'
 > ```
 
+> 🚨 **`cp` is aliased to `cp -i` for root on Rocky.** Copying a unit file over an
+> existing one prompts, and in a pasted block the next line answers the prompt —
+> so the copy silently does not happen and `daemon-reload` reloads nothing. Use
+> `\cp -f` to bypass the alias, and confirm with `grep ExecStart` on the
+> destination before restarting anything.
+
 Add a worker (each needs its **own port**, see below):
 
 ```bash
@@ -103,26 +109,36 @@ systemctl enable --now aivoice-agent@4     # binds 8084 via AGENT_HTTP_PORT=808%
 ```
 
 > 🚨 **`systemctl is-active` is NOT proof a worker is working.** With `Restart=always`, a
-> crash-looping worker still reads `active`. Always verify registration:
+> crash-looping worker still reads `active`.
+
+**A worker takes ~11 seconds to register** — plugin preload, then the inference
+executor, then four prewarmed processes. Checking before that reports a healthy
+worker as dead, which has now produced three separate false alarms. Wait for it
+instead of guessing a window:
 
 ```bash
 for i in 1 2 3; do
+  for _ in $(seq 30); do
+    journalctl -u aivoice-agent@$i --since '-3min' --no-pager \
+      | grep -q 'registered worker' && break
+    sleep 1
+  done
   printf "worker %s: %-8s registered=%s errors=%s\n" $i \
     "$(systemctl is-active aivoice-agent@$i)" \
-    "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'registered worker')" \
-    "$(journalctl -u aivoice-agent@$i --since '-2min' --no-pager | grep -c 'worker failed')"
+    "$(journalctl -u aivoice-agent@$i --since '-3min' --no-pager | grep -c 'registered worker')" \
+    "$(journalctl -u aivoice-agent@$i --since '-3min' --no-pager | grep -cE 'worker failed|Traceback|can.t open file')"
 done
+ss -tlnp | grep -E ':808[0-9]'      # one listener per worker, once startup finishes
 ```
 
-This exact failure cost three load-test runs: two workers were crash-looping on
+This cost three load-test runs once: two workers were crash-looping on
 `[Errno 98] address already in use` (fixed port 8081) while systemd reported all three
 healthy.
 
-> ⚠️ `ss -tlnp | grep ':808[0-9]'` used to be the check here. In `start` mode the
-> workers do **not** bind `AGENT_HTTP_PORT` at all, so an empty result proves
-> nothing — measured after a clean restart where all three had registered.
-> `AGENT_HTTP_PORT` still matters (a fixed value makes extra instances collide
-> once something does bind it), but registration is the health check.
+> ⚠️ Include `can't open file` in the error grep. When the units pointed at a
+> path whose `.py` files had been moved away, Python failed with exactly that —
+> which matches neither `ERROR` nor `Traceback`, so the log looked clean while
+> nothing could start.
 
 ### Manual run (debugging only)
 
