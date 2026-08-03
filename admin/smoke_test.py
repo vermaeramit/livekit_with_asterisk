@@ -93,9 +93,11 @@ def main() -> int:
 
     st, body = call(args.base, "/auth/me", token=access)
     check("me -> 200", st == 200, f"got {st}")
+    me_id = body["id"] if st == 200 else 0
     if st == 200:
         check("role is superadmin", body["role"] == "superadmin", body.get("role", ""))
         check("superadmin has no tenant", body["tenant_id"] is None)
+        check("no pending password change", body.get("must_change_password") is False)
 
     st, _ = call(args.base, "/auth/me")
     check("me without token -> 401", st == 401, f"got {st}")
@@ -150,6 +152,44 @@ def main() -> int:
 
     st, _ = call(args.base, "/calls/99999999", token=access)
     check("missing call -> 404", st == 404, f"got {st}")
+
+    print("\ntenants / campaigns")
+    st, tenants = call(args.base, "/tenants", token=access)
+    check("tenants -> 200", st == 200, f"got {st}")
+    check("default tenant is seeded", any(t["slug"] == "default" for t in tenants or []))
+
+    st, camps = call(args.base, "/campaigns", token=access)
+    check("campaigns -> 200", st == 200, f"got {st}")
+    check("default campaign is seeded", any(c["slug"] == "default" for c in camps or []))
+    check("campaign reports its agent config",
+          all(c.get("config_name") for c in camps or []),
+          "a campaign with no agent_config cannot take a call")
+
+    st, body = call(args.base, "/tenants", method="POST", token=access,
+                    body={"slug": "Not A Slug!", "name": "x"})
+    check("invalid slug -> 422", st == 422, f"got {st}")
+
+    st, _ = call(args.base, "/tenants", method="POST", token=access,
+                 body={"slug": "default", "name": "duplicate"})
+    check("duplicate tenant slug -> 409", st == 409, f"got {st}")
+
+    print("\nrbac")
+    st, _ = call(args.base, "/users", method="POST", token=access,
+                 body={"email": "weak@example.com", "role": "viewer",
+                       "tenant_id": 1, "password": "short"})
+    check("password under 12 chars -> 422", st == 422, f"got {st}")
+
+    st, _ = call(args.base, "/users", method="POST", token=access,
+                 body={"email": args.email, "role": "viewer", "tenant_id": 1,
+                       "password": "a-perfectly-long-password"})
+    check("duplicate email -> 409", st == 409, f"got {st}")
+
+    st, _ = call(args.base, f"/users/{me_id}", method="PATCH", token=access,
+                 body={"active": False})
+    check("cannot deactivate yourself -> 400", st == 400, f"got {st}")
+
+    st, _ = call(args.base, f"/users/{me_id}", method="DELETE", token=access)
+    check("cannot delete yourself -> 400", st == 400, f"got {st}")
 
     print("\nlogout")
     if new_refresh:

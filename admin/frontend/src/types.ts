@@ -8,6 +8,9 @@ export interface User {
   tenant_id: number | null
   tenant_name: string | null
   last_login_at: string | null
+  must_change_password: boolean
+  active: boolean
+  created_at: string | null
 }
 
 export interface TokenPair {
@@ -20,10 +23,14 @@ export interface TokenPair {
 export interface Campaign {
   id: number
   tenant_id: number
+  tenant_name: string | null
   slug: string
   name: string
+  description: string | null
   enabled: boolean
-  tenant_name: string
+  created_at: string | null
+  call_count: number
+  config_name: string | null
 }
 
 export interface Tenant {
@@ -33,6 +40,8 @@ export interface Tenant {
   status: 'active' | 'suspended'
   created_at: string
   campaign_count: number
+  user_count: number
+  call_count: number
 }
 
 export interface CallListItem {

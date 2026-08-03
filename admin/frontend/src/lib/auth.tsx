@@ -7,6 +7,7 @@ interface AuthState {
   ready: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
+  refreshUser: () => Promise<void>
   can: (...roles: Role[]) => boolean
 }
 
@@ -57,6 +58,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }, [])
 
+  const refreshUser = useCallback(async () => {
+    setUser(await apiClient.api<User>('/auth/me'))
+  }, [])
+
   const can = useCallback(
     (...roles: Role[]) => {
       if (!user) return false
@@ -66,8 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const value = useMemo<AuthState>(
-    () => ({ user, ready, signIn, signOut, can }),
-    [user, ready, signIn, signOut, can],
+    () => ({ user, ready, signIn, signOut, refreshUser, can }),
+    [user, ready, signIn, signOut, refreshUser, can],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

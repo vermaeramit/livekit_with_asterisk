@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   Building2,
   ChevronDown,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -11,26 +12,33 @@ import {
   PhoneCall,
   Radio,
   Sun,
+  Users2,
   X,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { cn, initials } from '@/lib/utils'
 import type { Role } from '@/types'
 
-interface NavItem {
+type NavSection = { kind: 'section'; label: string }
+type NavLinkItem = {
+  kind: 'link'
   to: string
   label: string
   icon: React.ComponentType<{ className?: string }>
   roles?: Role[]
   soon?: boolean
 }
+type NavItem = NavSection | NavLinkItem
 
 const NAV: NavItem[] = [
-  { to: '/calls', label: 'Calls', icon: PhoneCall },
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, soon: true },
-  { to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'], soon: true },
-  { to: '/live', label: 'Live monitor', icon: Radio, soon: true },
-  { to: '/tenants', label: 'Tenants', icon: Building2, roles: [], soon: true },
+  { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall },
+  { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, soon: true },
+  { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio, soon: true },
+  { kind: 'section', label: 'Manage' },
+  { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'] },
+  { kind: 'link', to: '/users', label: 'Users', icon: Users2, roles: ['tenant_admin'] },
+  // roles: [] means superadmin only - the guard passes superadmin unconditionally
+  { kind: 'link', to: '/tenants', label: 'Clients', icon: Building2, roles: [] },
 ]
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -66,28 +74,51 @@ function Wordmark() {
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const { user } = useAuth()
+
   const visible = NAV.filter((item) => {
-    if (!item.roles) return true
+    if (item.kind !== 'link' || !item.roles) return true
     if (user?.role === 'superadmin') return true
     return item.roles.includes(user!.role)
   })
 
+  // A section heading with nothing under it is just a stray label.
+  const pruned = visible.filter((item, i) => {
+    if (item.kind === 'link') return true
+    return visible.slice(i + 1).some((n) => n.kind === 'link')
+  })
+
   return (
     <nav className="space-y-0.5">
-      {visible.map(({ to, label, icon: Icon, soon }) =>
-        soon ? (
-          <span
-            key={to}
-            title="Arriving in a later phase"
-            className="flex cursor-default select-none items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground/55"
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-            <span className="ml-auto rounded border border-border px-1 py-px text-2xs uppercase tracking-wide text-muted-foreground/70">
-              soon
+      {pruned.map((item) => {
+        if (item.kind === 'section') {
+          return (
+            <p
+              key={`section-${item.label}`}
+              className="px-2.5 pb-1 pt-4 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/70"
+            >
+              {item.label}
+            </p>
+          )
+        }
+
+        const { to, label, icon: Icon, soon } = item
+        if (soon) {
+          return (
+            <span
+              key={to}
+              title="Arriving in a later phase"
+              className="flex cursor-default select-none items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground/55"
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+              <span className="ml-auto rounded border border-border px-1 py-px text-2xs uppercase tracking-wide text-muted-foreground/70">
+                soon
+              </span>
             </span>
-          </span>
-        ) : (
+          )
+        }
+
+        return (
           <NavLink
             key={to}
             to={to}
@@ -111,8 +142,8 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
               </>
             )}
           </NavLink>
-        ),
-      )}
+        )
+      })}
     </nav>
   )
 }
@@ -174,11 +205,22 @@ function UserMenu() {
           </div>
           <button
             role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              navigate('/change-password')
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-accent"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            Change password
+          </button>
+          <button
+            role="menuitem"
             onClick={async () => {
               await signOut()
               navigate('/login', { replace: true })
             }}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-accent"
+            className="flex w-full items-center gap-2 border-t border-border px-3 py-2.5 text-xs transition-colors hover:bg-accent"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sign out
@@ -204,7 +246,7 @@ export function Layout() {
           <NavItems />
         </div>
         <div className="border-t border-border px-5 py-3">
-          <p className="text-2xs text-muted-foreground">Phase 1 · calls &amp; access</p>
+          <p className="text-2xs text-muted-foreground">Phase 2 · access &amp; campaigns</p>
         </div>
       </aside>
 

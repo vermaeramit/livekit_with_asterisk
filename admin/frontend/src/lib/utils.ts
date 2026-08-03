@@ -57,6 +57,16 @@ export function latencyTone(ms: number | null | undefined) {
   return 'danger' as const
 }
 
+/** Mirrors the backend's slug rule so the field cannot produce a 422. */
+export function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '')
+}
+
 export function initials(nameOrEmail: string): string {
   const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail
   return base

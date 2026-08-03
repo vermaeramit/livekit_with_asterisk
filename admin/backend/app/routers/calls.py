@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import db
-from ..deps import CurrentUser, current_user, tenant_scope
+from ..deps import CurrentUser, active_user, tenant_scope
 from ..schemas import (CallDetail, CallListItem, CallListResponse, CallUsage,
                        TurnOut)
 
@@ -20,7 +20,7 @@ LIST_COLUMNS = """
 
 @router.get("", response_model=CallListResponse)
 async def list_calls(
-    user: CurrentUser = Depends(current_user),
+    user: CurrentUser = Depends(active_user),
     tenant_id: int | None = Query(None, description="superadmin only"),
     campaign_id: int | None = None,
     search: str | None = Query(None, description="caller / callee / room name"),
@@ -86,7 +86,7 @@ async def list_calls(
 
 
 @router.get("/{call_id}", response_model=CallDetail)
-async def get_call(call_id: int, user: CurrentUser = Depends(current_user)):
+async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     row = await db.pool().fetchrow(
         f"""SELECT {LIST_COLUMNS},
                    c.room_name, c.sip_call_id, c.outcome, c.transfer_reason,
@@ -119,7 +119,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(current_user)):
 
 @router.get("/{call_id}/kb-chunks")
 async def get_call_kb_chunks(call_id: int,
-                             user: CurrentUser = Depends(current_user)):
+                             user: CurrentUser = Depends(active_user)):
     """Text of every KB chunk cited during a call, keyed by chunk id.
 
     The transcript stores only chunk ids; this resolves them in one query so the
