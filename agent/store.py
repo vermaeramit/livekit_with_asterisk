@@ -59,13 +59,58 @@ async def close():
         _pool = None
 
 
+class CampaignUnavailable(Exception):
+    """The dialled number maps to a campaign that must not take this call.
+
+    Distinct from a missing config on purpose. A missing config is a deployment
+    fault and should be loud; this is a normal, expected state - a suspended
+    client or a paused campaign - and the caller deserves a spoken answer rather
+    than a phone that rings until it gives up.
+    """
+
+
+def _as_config(row) -> AgentConfig:
+    return AgentConfig(**{f.name: row[f.name] for f in fields(AgentConfig)})
+
+
 async def load_config(name: str = "default") -> AgentConfig:
     row = await (await pool()).fetchrow(
         "SELECT * FROM agent_config WHERE name = $1 AND enabled", name
     )
     if row is None:
         raise RuntimeError(f"agent_config '{name}' missing or disabled")
-    return AgentConfig(**{f.name: row[f.name] for f in fields(AgentConfig)})
+    return _as_config(row)
+
+
+async def load_config_for_did(did: str) -> Optional[AgentConfig]:
+    """Resolve the dialled number to a campaign's config.
+
+    -> None when the number is not mapped, so the caller can fall back.
+    -> raises CampaignUnavailable when it IS mapped but the campaign is disabled
+       or the client is suspended. Those two must not be conflated: falling back
+       to a default config for a suspended client would answer calls that were
+       deliberately turned off.
+    """
+    row = await (await pool()).fetchrow(
+        """SELECT ac.*, cam.enabled AS campaign_enabled, cam.name AS campaign_name,
+                  t.status AS tenant_status, t.name AS tenant_name
+             FROM campaign_routes r
+             JOIN campaigns cam ON cam.id = r.campaign_id
+             JOIN tenants   t   ON t.id   = cam.tenant_id
+             JOIN agent_config ac ON ac.campaign_id = cam.id
+            WHERE r.did = $1 AND ac.enabled
+            ORDER BY ac.id LIMIT 1""",
+        did,
+    )
+    if row is None:
+        return None
+    if not row["campaign_enabled"]:
+        raise CampaignUnavailable(
+            f"campaign '{row['campaign_name']}' is disabled")
+    if row["tenant_status"] != "active":
+        raise CampaignUnavailable(
+            f"client '{row['tenant_name']}' is {row['tenant_status']}")
+    return _as_config(row)
 
 
 async def start_call(room_name, caller, callee, config_name, language,

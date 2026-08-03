@@ -212,19 +212,32 @@ class KBAgent(Agent):
             await lkapi.aclose()
 
 
+async def _end_room(room_name: str) -> None:
+    """Force the SIP leg down for a call this agent will not serve.
+
+    Simply returning is not enough. livekit-sip does not answer until an agent
+    subscribes, so the caller would just hear ringing until Asterisk's 25 s Dial
+    timeout. Deleting the room ends it immediately, and Asterisk falls straight
+    through to the human extension.
+    """
+    lkapi = api.LiveKitAPI(url=_api_url(),
+                           api_key=os.environ["LIVEKIT_API_KEY"],
+                           api_secret=os.environ["LIVEKIT_API_SECRET"])
+    try:
+        await lkapi.room.delete_room(api.DeleteRoomRequest(room=room_name))
+    except Exception:
+        logger.exception("could not end room %s - the caller will ring out", room_name)
+    finally:
+        await lkapi.aclose()
+
+
 async def entrypoint(ctx: JobContext):
     import store
 
-    cfg = await store.load_config(CONFIG_NAME)
-    stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
-
-    # built in prompt.py so the cache warmer emits a byte-identical prefix
-    instructions, kb_mode, kb_tokens = await prompt_mod.build_instructions(cfg)
-
-    logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
-                cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
-                kb_tokens, cfg.transfer_enabled, cfg.transfer_to)
-
+    # Connect first: which campaign this call belongs to is decided by the
+    # number that was dialled, and that only arrives with the SIP participant.
+    # livekit-sip creates the participant before dispatching this job, so it is
+    # already there.
     await ctx.connect()
 
     caller = callee = sip_call_id = None
@@ -237,6 +250,32 @@ async def entrypoint(ctx: JobContext):
         # purpose - storing the wrong one would silently produce a column that
         # never matches a file while looking perfectly populated.
         sip_call_id = sip_call_id or _sip_attr(p, "sip.callIDFull")
+
+    cfg = None
+    if callee:
+        try:
+            cfg = await store.load_config_for_did(callee)
+        except store.CampaignUnavailable as e:
+            logger.warning("DECLINED call to %s: %s", callee, e)
+            await _end_room(ctx.room.name)
+            return
+
+    if cfg is None:
+        # Unmapped number. Falls back to the env config so a lab extension keeps
+        # working, but says so - in production every DID should be routed, and a
+        # silent fallback would serve one client's agent to another's caller.
+        cfg = await store.load_config(CONFIG_NAME)
+        logger.warning("no campaign route for dialled number %r - "
+                       "falling back to AGENT_CONFIG=%s", callee, CONFIG_NAME)
+
+    stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
+
+    # built in prompt.py so the cache warmer emits a byte-identical prefix
+    instructions, kb_mode, kb_tokens = await prompt_mod.build_instructions(cfg)
+
+    logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
+                cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
+                kb_tokens, cfg.transfer_enabled, cfg.transfer_to)
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
                                      cfg.language, cfg.campaign_id, sip_call_id)
