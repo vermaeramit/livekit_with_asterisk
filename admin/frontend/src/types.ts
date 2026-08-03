@@ -177,6 +177,51 @@ export interface KbChunk2 {
   n_tokens: number | null
 }
 
+export interface Percentiles {
+  p50: number | null
+  p90: number | null
+  p95: number | null
+  worst: number | null
+  turns: number
+}
+
+export interface LatencySplit {
+  eou_ms: number | null
+  llm_ttft_ms: number | null
+  tts_ttfb_ms: number | null
+}
+
+export interface AnalyticsSummary {
+  calls: number
+  transferred: number
+  limit_hit: number
+  errors: number
+  total_duration_ms: number
+  avg_duration_ms: number | null
+  total_turns: number
+  prompt_tokens: number
+  cached_tokens: number
+  completion_tokens: number
+  tts_characters: number
+  latency: Percentiles
+  split: LatencySplit
+  end_reasons: Record<string, number>
+}
+
+export interface TimeBucket {
+  bucket: string
+  calls: number
+  transferred: number
+  limit_hit: number
+  prompt_tokens: number
+  cached_tokens: number
+  p50: number | null
+  p95: number | null
+  eou_ms: number | null
+  llm_ttft_ms: number | null
+  tts_ttfb_ms: number | null
+}
+
 export interface AuditEntry {
   id: number
   entity: string

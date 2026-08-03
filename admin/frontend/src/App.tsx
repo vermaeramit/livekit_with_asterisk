@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { Layout } from '@/components/Layout'
@@ -11,6 +12,12 @@ import { Tenants } from '@/pages/Tenants'
 import { Users } from '@/pages/Users'
 import { useAuth } from '@/lib/auth'
 import type { Role } from '@/types'
+
+// Recharts is ~250 kB gzipped and only the dashboard needs it. Loading it
+// eagerly tripled the bundle that the login screen has to fetch.
+const Dashboard = lazy(() =>
+  import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })),
+)
 
 function Spinner() {
   return (
@@ -52,6 +59,14 @@ export function App() {
           </Protected>
         }
       >
+        <Route
+          path="/dashboard"
+          element={
+            <Suspense fallback={<Spinner />}>
+              <Dashboard />
+            </Suspense>
+          }
+        />
         <Route path="/calls" element={<Calls />} />
         <Route path="/calls/:id" element={<CallDetail />} />
         <Route path="/change-password" element={<ChangePassword />} />

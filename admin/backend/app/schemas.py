@@ -236,6 +236,58 @@ class KbIngestResult(BaseModel):
     error: str | None = None
 
 
+# ───────────────────────────── analytics ─────────────────────────────
+
+class Percentiles(BaseModel):
+    p50: float | None
+    p90: float | None
+    p95: float | None
+    worst: int | None
+    turns: int
+
+
+class LatencySplit(BaseModel):
+    """Median contribution of each stage to a turn.
+
+    Three fields, not four. stt_ms is already inside eou_ms - adding it as a
+    fourth slice double-counts, which this project has done once before.
+    """
+    eou_ms: float | None
+    llm_ttft_ms: float | None
+    tts_ttfb_ms: float | None
+
+
+class AnalyticsSummary(BaseModel):
+    calls: int
+    transferred: int
+    limit_hit: int
+    errors: int
+    total_duration_ms: int
+    avg_duration_ms: int | None
+    total_turns: int
+    prompt_tokens: int
+    cached_tokens: int
+    completion_tokens: int
+    tts_characters: int
+    latency: Percentiles
+    split: LatencySplit
+    end_reasons: dict[str, int]
+
+
+class TimeBucket(BaseModel):
+    bucket: datetime
+    calls: int
+    transferred: int
+    limit_hit: int
+    prompt_tokens: int
+    cached_tokens: int
+    p50: float | None
+    p95: float | None
+    eou_ms: float | None
+    llm_ttft_ms: float | None
+    tts_ttfb_ms: float | None
+
+
 class AuditEntry(BaseModel):
     id: int
     entity: str

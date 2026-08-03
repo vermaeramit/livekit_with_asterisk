@@ -243,6 +243,42 @@ def main() -> int:
     st, _ = call(args.base, "/campaigns/99999999/config", token=access)
     check("config for a missing campaign -> 404", st == 404, f"got {st}")
 
+    print("\nanalytics")
+    st, sm = call(args.base, "/analytics/summary?days=365", token=access)
+    check("summary -> 200", st == 200, f"got {st}")
+    if st == 200:
+        check("call count matches the calls list", sm["calls"] == total,
+              f"{sm['calls']} vs {total}")
+        check("latency percentiles are ordered",
+              (sm["latency"]["p50"] or 0) <= (sm["latency"]["p95"] or 0)
+              <= (sm["latency"]["worst"] or 0),
+              f"p50={sm['latency']['p50']} p95={sm['latency']['p95']} "
+              f"worst={sm['latency']['worst']}")
+        check("cached tokens do not exceed prompt tokens",
+              sm["cached_tokens"] <= sm["prompt_tokens"],
+              f"{sm['cached_tokens']} of {sm['prompt_tokens']}")
+        check("end reasons account for every call",
+              sum(sm["end_reasons"].values()) == sm["calls"],
+              f"{sum(sm['end_reasons'].values())} vs {sm['calls']}")
+        # stt_ms lives inside eou_ms; a fourth slice would double-count
+        check("latency split has exactly three stages",
+              set(sm["split"]) == {"eou_ms", "llm_ttft_ms", "tts_ttfb_ms"},
+              str(sorted(sm["split"])))
+
+    st, ts = call(args.base, "/analytics/timeseries?days=365", token=access)
+    check("timeseries -> 200", st == 200, f"got {st}")
+    if st == 200 and ts:
+        check("buckets sum to the summary total",
+              sum(b["calls"] for b in ts) == sm["calls"],
+              f"{sum(b['calls'] for b in ts)} vs {sm['calls']}")
+        # a join against turns would multiply these by the turn count
+        check("token totals are not inflated by the turn join",
+              sum(b["prompt_tokens"] for b in ts) == sm["prompt_tokens"],
+              f"{sum(b['prompt_tokens'] for b in ts)} vs {sm['prompt_tokens']}")
+
+    st, _ = call(args.base, "/analytics/summary?days=0", token=access)
+    check("days out of range -> 422", st == 422, f"got {st}")
+
     print("\nknowledge base")
     if default_campaign:
         cmp_id = default_campaign["id"]

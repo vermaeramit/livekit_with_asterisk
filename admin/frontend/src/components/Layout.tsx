@@ -32,7 +32,7 @@ type NavItem = NavSection | NavLinkItem
 
 const NAV: NavItem[] = [
   { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall },
-  { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, soon: true },
+  { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio, soon: true },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'] },
