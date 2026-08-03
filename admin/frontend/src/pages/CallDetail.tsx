@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
-import { cn, formatDateTime, formatDuration, formatMs, formatNumber, latencyTone } from '@/lib/utils'
+import { cn, formatDateTime, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
 import type { CallDetail as CallDetailType, KbChunk, Turn } from '@/types'
 import { EndReasonBadge } from './Calls'
 
@@ -252,7 +252,7 @@ export function CallDetail() {
 
   const cached = c.usage.llm_prompt_cached_tokens ?? 0
   const prompt = c.usage.llm_prompt_tokens ?? 0
-  const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
+  const cacheRate = prompt > 0 ? (cached / prompt) * 100 : null
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
@@ -327,7 +327,7 @@ export function CallDetail() {
           icon={Coins}
           label="Prompt tokens"
           value={formatNumber(prompt)}
-          hint={cacheRate != null ? `${cacheRate}% served from cache` : undefined}
+          hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
         />
         <Stat
           icon={Coins}

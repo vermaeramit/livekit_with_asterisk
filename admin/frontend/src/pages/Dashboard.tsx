@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, EmptyState, Select, Skeleton } from '@/components/ui/primitives'
 import { api, buildQuery } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { cn, formatDuration, formatMs, formatNumber, latencyTone } from '@/lib/utils'
+import { cn, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
 import type { AnalyticsSummary, Campaign, TimeBucket } from '@/types'
 
 const RANGES = [
@@ -131,6 +131,19 @@ const axis = {
   tickLine: false,
   axisLine: false,
 }
+
+/**
+ * percentile_cont interpolates, so a p95 arrives as 2828.4999999999995. Two
+ * decimals everywhere, and no trailing ".00" on whole numbers.
+ */
+const round2 = (v: unknown) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
+}
+
+const msTick = (v: number) => `${Math.round(v)}ms`
+const msValue = (v: unknown) => `${round2(v)} ms`
 
 const tooltipStyle = {
   contentStyle: {
@@ -275,7 +288,7 @@ export function Dashboard() {
         <Stat
           icon={ArrowRightLeft}
           label="Handed to a human"
-          value={`${transferRate.toFixed(1)}%`}
+          value={formatPercent(transferRate)}
           tone={transferRate > 40 ? 'warning' : undefined}
           hint={`${formatNumber(s?.transferred)} of ${formatNumber(s?.calls)} calls`}
         />
@@ -283,7 +296,7 @@ export function Dashboard() {
           icon={Coins}
           label="Prompt tokens"
           value={formatNumber(s?.prompt_tokens)}
-          hint={cacheRate != null ? `${cacheRate.toFixed(0)}% served from cache` : undefined}
+          hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
         />
       </div>
 
@@ -312,10 +325,10 @@ export function Dashboard() {
           empty={!buckets.length}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={buckets} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <BarChart data={buckets} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="t" {...axis} />
-              <YAxis {...axis} allowDecimals={false} />
+              <YAxis {...axis} allowDecimals={false} width={40} />
               <Tooltip {...tooltipStyle} cursor={{ fill: 'hsl(var(--accent))' }} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="calls" name="Calls" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
@@ -335,11 +348,13 @@ export function Dashboard() {
           empty={!buckets.some((b) => b.p50 != null)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={buckets} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <LineChart data={buckets} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="t" {...axis} />
-              <YAxis {...axis} unit="ms" width={54} />
-              <Tooltip {...tooltipStyle} />
+              {/* tickFormatter rather than unit="ms": the unit is appended after
+                  the width is reserved, so the label overflows and is clipped */}
+              <YAxis {...axis} width={70} tickFormatter={msTick} />
+              <Tooltip {...tooltipStyle} formatter={msValue} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Line
                 type="monotone"
@@ -367,11 +382,11 @@ export function Dashboard() {
           empty={!buckets.some((b) => b.eou_ms != null)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={buckets} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <AreaChart data={buckets} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="t" {...axis} />
-              <YAxis {...axis} unit="ms" width={54} />
-              <Tooltip {...tooltipStyle} />
+              <YAxis {...axis} width={70} tickFormatter={msTick} />
+              <Tooltip {...tooltipStyle} formatter={msValue} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               {(Object.keys(STAGE) as (keyof typeof STAGE)[]).map((k) => (
                 <Area
@@ -395,10 +410,10 @@ export function Dashboard() {
           empty={!buckets.some((b) => b.prompt_tokens > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={buckets} margin={{ top: 4, right: 8, left: -6, bottom: 0 }}>
+            <BarChart data={buckets} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="t" {...axis} />
-              <YAxis {...axis} width={64} tickFormatter={(v) => formatNumber(v as number)} />
+              <YAxis {...axis} width={72} tickFormatter={(v) => formatNumber(v as number)} />
               <Tooltip {...tooltipStyle} formatter={(v) => formatNumber(v as number)} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar
@@ -455,7 +470,7 @@ export function Dashboard() {
                 ['Calls', formatNumber(s?.calls)],
                 ['Total talk time', formatDuration(s?.total_duration_ms)],
                 ['Turns', formatNumber(s?.total_turns)],
-                ['Handed to a human', `${formatNumber(s?.transferred)} (${transferRate.toFixed(1)}%)`],
+                ['Handed to a human', `${formatNumber(s?.transferred)} (${formatPercent(transferRate)})`],
                 ['Stopped by a guardrail', formatNumber(s?.limit_hit)],
                 ['Errors', formatNumber(s?.errors)],
                 ['Prompt tokens', formatNumber(s?.prompt_tokens)],

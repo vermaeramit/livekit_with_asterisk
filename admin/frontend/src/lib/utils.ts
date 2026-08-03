@@ -13,9 +13,20 @@ export function formatDuration(ms: number | null | undefined): string {
   return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
 }
 
+/**
+ * Latency comes from percentile_cont, which interpolates - a p95 arrives as
+ * 2828.4999999999995. Everything is capped at two decimals, and a whole number
+ * is not padded with ".00".
+ */
 export function formatMs(ms: number | null | undefined): string {
   if (ms == null) return '—'
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
+  return `${Number.isInteger(ms) ? ms : ms.toFixed(2)}ms`
+}
+
+export function formatPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return `${Number.isInteger(value) ? value : value.toFixed(2)}%`
 }
 
 export function formatNumber(n: number | null | undefined): string {
