@@ -33,16 +33,25 @@ def _json_or_none(raw: bytes) -> dict | None:
 def fetch_headers(base: str, path: str, *, token: str,
                   extra: dict[str, str] | None = None
                   ) -> tuple[int, dict[str, str], int]:
-    """-> (status, headers, body length). For endpoints whose body is not JSON."""
+    """-> (status, headers, body length). For endpoints whose body is not JSON.
+
+    Header names are lowercased. They are case-insensitive on the wire and
+    Starlette emits them lowercase, so looking up "Content-Range" finds nothing
+    and reports a missing header that was in fact sent.
+    """
     req = urllib.request.Request(base + path)
     req.add_header("Authorization", f"Bearer {token}")
     for k, v in (extra or {}).items():
         req.add_header(k, v)
+
+    def lower(headers) -> dict[str, str]:
+        return {k.lower(): v for k, v in headers.items()}
+
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, dict(r.headers), len(r.read())
+            return r.status, lower(r.headers), len(r.read())
     except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers), len(e.read())
+        return e.code, lower(e.headers), len(e.read())
 
 
 def call(base: str, path: str, *, method: str = "GET",
@@ -234,11 +243,11 @@ def main() -> int:
               (st == 200) == available, f"got {st}, flag={available}")
 
         if st == 200:
-            check("served as audio", headers.get("Content-Type") == "audio/ogg",
-                  headers.get("Content-Type", ""))
+            check("served as audio", headers.get("content-type") == "audio/ogg",
+                  headers.get("content-type", "missing"))
             check("advertises byte ranges",
-                  headers.get("Accept-Ranges") == "bytes",
-                  headers.get("Accept-Ranges", "missing"))
+                  headers.get("accept-ranges") == "bytes",
+                  headers.get("accept-ranges", "missing"))
 
             # Seeking in a browser's audio element is entirely a Range feature.
             # Without 206 the scrubber moves and the audio does not.
@@ -248,8 +257,8 @@ def main() -> int:
             check("Range request -> 206", st_r == 206, f"got {st_r}")
             check("returns exactly the requested bytes", n_r == 100, f"got {n_r}")
             check("Content-Range is correct",
-                  h_r.get("Content-Range", "").startswith(f"bytes 0-99/{size}"),
-                  h_r.get("Content-Range", "missing"))
+                  h_r.get("content-range", "").startswith(f"bytes 0-99/{size}"),
+                  h_r.get("content-range", "missing"))
 
             # "bytes=-64" is the LAST 64 bytes, not the first 64 - the easiest
             # part of the spec to implement backwards.
@@ -259,9 +268,9 @@ def main() -> int:
             check("suffix range returns the tail", st_s == 206 and n_s == 64,
                   f"got {st_s}, {n_s} bytes")
             check("suffix range points at the end",
-                  h_s.get("Content-Range", "").startswith(
+                  h_s.get("content-range", "").startswith(
                       f"bytes {size - 64}-{size - 1}/"),
-                  h_s.get("Content-Range", "missing"))
+                  h_s.get("content-range", "missing"))
 
             st_b, h_b, _ = fetch_headers(
                 args.base, f"/calls/{newest}/recording", token=access,
