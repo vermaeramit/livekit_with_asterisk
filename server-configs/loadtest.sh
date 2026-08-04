@@ -99,12 +99,22 @@ echo "=== where the calls went ===" | tee -a "$OUT"
 # matches, which reads as "nothing happened" - it cost a full round of guessing.
 UTC_FROM=$(date -u -d "@$((START_EPOCH - 5))" '+%Y-%m-%d %H:%M')
 UTC_TO=$(date -u '+%Y-%m-%d %H:%M')
-dialled=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
-          /var/log/asterisk/debug.log 2>/dev/null | grep -c "Routing to LiveKit AI")
-recorded=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
-          /var/log/asterisk/debug.log 2>/dev/null | grep -c "recording id:")
-fellback=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
-          /var/log/asterisk/debug.log 2>/dev/null | grep -c "AI UNAVAILABLE")
+
+# This used to be `sed -n "/$UTC_FROM/,/$UTC_TO/p"`. A sed range only opens once
+# a line MATCHING the start pattern is seen, so if Asterisk happened to log
+# nothing during that one minute the range never opened and every count came
+# back 0 - a run where all ten calls connected reported "reached the dialplan 0".
+# Compare the timestamps instead; the format sorts lexicographically.
+window() {
+  docker exec asterisk awk -v a="$UTC_FROM" -v b="$UTC_TO" '
+    /^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/ {
+      ts = substr($0, 2, 16)
+      if (ts >= a && ts <= b) print
+    }' /var/log/asterisk/debug.log 2>/dev/null
+}
+dialled=$(window  | grep -c "Routing to LiveKit AI")
+recorded=$(window | grep -c "recording id:")
+fellback=$(window | grep -c "AI UNAVAILABLE")
 printf "requested %s | reached the dialplan %s | recordings started %s | no agent, sent to human %s\n" \
        "$N" "$dialled" "$recorded" "$fellback" | tee -a "$OUT"
 echo "(dialplan < requested means originate is failing; dialplan > db rows means the agent did not pick them up)" \
