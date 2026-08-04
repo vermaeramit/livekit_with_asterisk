@@ -6,6 +6,10 @@ livekit-agents==1.6.7
 livekit-api==1.2.0
 livekit-blingfire==1.1.0
 livekit-local-inference==0.2.6
+# Gemini is the LLM fallback. It was installed by hand during the Step 10b
+# benchmarks and never declared - a rebuilt venv would have dropped it and the
+# fallback chain would have failed to import at worker start.
+livekit-plugins-google==1.6.7
 livekit-plugins-openai==1.6.7
 livekit-plugins-sarvam==1.6.7
 livekit-plugins-silero==1.6.7

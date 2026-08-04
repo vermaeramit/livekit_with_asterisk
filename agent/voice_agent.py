@@ -24,7 +24,9 @@ from livekit.agents import (
     Agent, AgentSession, JobContext, JobProcess, RoomInputOptions, RunContext,
     WorkerOptions, cli, function_tool, metrics,
 )
-from livekit.plugins import openai, sarvam, silero
+# aliased: bare stt/tts/llm would shadow the local variables of the same name
+from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
+from livekit.plugins import google, openai, sarvam, silero
 
 import prompt as prompt_mod
 
@@ -212,6 +214,63 @@ class KBAgent(Agent):
             await lkapi.aclose()
 
 
+# ────────────────────────── provider stacks ──────────────────────────
+# Chains chosen in Step 10b by measurement, not preference:
+#
+#   STT  Sarvam saarika:v2.5  -> OpenAI gpt-4o-mini-transcribe  (worse Indic)
+#   TTS  Sarvam bulbul:v3     -> OpenAI gpt-4o-mini-tts         (+650ms, new voice)
+#   LLM  OpenAI gpt-4.1-mini  -> Google gemini-flash-lite-latest (~no cost)
+#
+# All four Gemini TTS models were measured at a 3.5-15s TTFB floor and rejected.
+# Do not revisit without new evidence that Google has changed something.
+#
+# Set PROVIDER_FALLBACK=0 to run on primaries alone - useful when benchmarking,
+# because a fallback firing quietly changes what is being measured.
+
+FALLBACK = os.getenv("PROVIDER_FALLBACK", "1") != "0"
+
+# The defaults are tuned for transcription jobs, not phone calls: 10s on STT and
+# 5s on LLM mean the caller sits in silence long past the point the call is lost.
+# Our own p95 TTFT is ~900ms, so 3s is already generous.
+ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
+
+
+def _stt_stack(stt_kw: dict, vad):
+    primary = sarvam.STT(**stt_kw)
+    if not FALLBACK:
+        return primary
+    # vad is required: gpt-4o-mini-transcribe is not a streaming STT, so without
+    # a VAD to chunk the audio it has nothing to send.
+    return lk_stt.FallbackAdapter(
+        [primary, openai.STT(model="gpt-4o-mini-transcribe")],
+        vad=vad, attempt_timeout=ATTEMPT_TIMEOUT)
+
+
+def _tts_stack(tts_kw: dict):
+    primary = sarvam.TTS(**tts_kw)
+    if not FALLBACK:
+        return primary
+    # sample_rate is Sarvam's native 22050 so the PRIMARY path never resamples.
+    # Only the fallback pays that cost, and only while it is in use.
+    # Note there is no attempt_timeout on the TTS adapter - unlike STT and LLM.
+    return lk_tts.FallbackAdapter(
+        [primary, openai.TTS(model="gpt-4o-mini-tts")], sample_rate=22050)
+
+
+def _llm_stack(cfg):
+    primary = openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature,
+                         prompt_cache_key=cfg.name)
+    if not FALLBACK:
+        return primary
+    # The only layer with real provider diversity: gemini-flash-lite matches the
+    # primary's latency, so a full OpenAI outage costs speech and hearing but
+    # not thought.
+    return lk_llm.FallbackAdapter(
+        [primary, google.LLM(model="gemini-flash-lite-latest",
+                             temperature=cfg.llm_temperature)],
+        attempt_timeout=ATTEMPT_TIMEOUT)
+
+
 async def _end_room(room_name: str) -> None:
     """Force the SIP leg down for a call this agent will not serve.
 
@@ -290,12 +349,12 @@ async def entrypoint(ctx: JobContext):
 
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room)
 
+    vad = ctx.proc.userdata["vad"]
     session = AgentSession(
-        stt=sarvam.STT(**stt_kw),
-        llm=openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature,
-                       prompt_cache_key=cfg.name),
-        tts=sarvam.TTS(**tts_kw),
-        vad=ctx.proc.userdata["vad"],
+        stt=_stt_stack(stt_kw, vad),
+        llm=_llm_stack(cfg),
+        tts=_tts_stack(tts_kw),
+        vad=vad,
         turn_detection=MultilingualModel(),
         allow_interruptions=cfg.allow_interrupt,
         min_endpointing_delay=MIN_ENDPOINTING,
