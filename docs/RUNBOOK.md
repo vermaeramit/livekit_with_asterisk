@@ -785,6 +785,30 @@ sysctl net.core.rmem_max        # should be 26214400
 On this single box, agent workers are CPU-capped precisely so they cannot starve the
 LiveKit SFU — a starved SFU degrades audio on **every** call, not just one.
 
+### Changing Asterisk config: `pjsip reload` is not enough
+
+The container's `entrypoint.sh` overlays `conf/` onto `/etc/asterisk` **at startup**.
+Editing `/opt/aivoice/asterisk/conf/pjsip.conf` therefore changes nothing a running
+Asterisk can see, and `pjsip reload` re-reads the container's stale copy and reports:
+
+```
+Module 'res_pjsip.so' reloaded successfully.
+```
+
+The success message is the trap. Restart the container:
+
+```bash
+docker restart asterisk
+docker exec asterisk grep -c '^password=OLDVALUE$' /etc/asterisk/pjsip.conf   # expect 0
+```
+
+Verify **inside the container**, not on the host — the host file is only the source.
+Note that a restart drops every SIP registration; softphones must re-register.
+
+> 🔒 Never run `pjsip show auth <id>` — it prints the password in plaintext. That is how
+> the softphone secret ended up in a shared terminal. To check a password without
+> revealing it, `grep -c` for the exact value and read the 0/1.
+
 ### Agent crashes on startup
 
 | Error | Cause |
