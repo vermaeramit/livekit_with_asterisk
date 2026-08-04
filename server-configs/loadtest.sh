@@ -14,6 +14,7 @@ OUT=/tmp/loadtest-$(date +%H%M%S)-n${N}.log
 
 # Scopes the result query to this run. Taken before anything is originated.
 START_TS=$(docker exec postgres psql -U aivoice -d aivoice -tAc "SELECT now()")
+START_EPOCH=$(date +%s)
 
 echo "=== load test: $N concurrent, ${STAGGER}s stagger ===" | tee "$OUT"
 echo "start $(date +%T)" | tee -a "$OUT"
@@ -86,6 +87,24 @@ journalctl -u 'aivoice-agent@*' --since "-10min" --no-pager 2>/dev/null \
   | grep -iE "full capacity|below capacity|ERROR|Traceback|DECLINED|fallback" \
   | tail -20 | tee -a "$OUT"
 echo "(nothing listed above means no errors and no fallbacks fired)" | tee -a "$OUT"
+
+echo | tee -a "$OUT"
+echo "=== where the calls went ===" | tee -a "$OUT"
+# Asterisk logs in UTC while journalctl and `date` here show IST, so the window
+# is computed rather than typed. Getting that wrong silently returns zero
+# matches, which reads as "nothing happened" - it cost a full round of guessing.
+UTC_FROM=$(date -u -d "@$((START_EPOCH - 5))" '+%Y-%m-%d %H:%M')
+UTC_TO=$(date -u '+%Y-%m-%d %H:%M')
+dialled=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
+          /var/log/asterisk/debug.log 2>/dev/null | grep -c "Routing to LiveKit AI")
+recorded=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
+          /var/log/asterisk/debug.log 2>/dev/null | grep -c "recording id:")
+fellback=$(docker exec asterisk sed -n "/${UTC_FROM}/,/${UTC_TO}/p" \
+          /var/log/asterisk/debug.log 2>/dev/null | grep -c "AI UNAVAILABLE")
+printf "requested %s | reached the dialplan %s | recordings started %s | no agent, sent to human %s\n" \
+       "$N" "$dialled" "$recorded" "$fellback" | tee -a "$OUT"
+echo "(dialplan < requested means originate is failing; dialplan > db rows means the agent did not pick them up)" \
+     | tee -a "$OUT"
 
 echo | tee -a "$OUT"
 echo "=== result ===" | tee -a "$OUT"
