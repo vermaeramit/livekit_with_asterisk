@@ -110,6 +110,21 @@ printf "requested %s | reached the dialplan %s | recordings started %s | no agen
 echo "(dialplan < requested means originate is failing; dialplan > db rows means the agent did not pick them up)" \
      | tee -a "$OUT"
 
+# The line above cannot tell two very different failures apart. livekit-sip
+# refuses a burst from a single source with SIP 486 and reason "flood", and it
+# does so BEFORE any dispatch rule lookup - so a rate-limited call and a call
+# that found no free worker both land on the human fallback and look identical
+# from Asterisk. They share nothing else: one is fixed by pacing the callers,
+# the other by adding workers. A whole afternoon went into the wrong one.
+SIP_SINCE="$(( $(date +%s) - START_EPOCH + 5 ))s"
+invites=$(docker logs sip --since "$SIP_SINCE" 2>&1 | grep -c "processing invite")
+flooded=$(docker logs sip --since "$SIP_SINCE" 2>&1 | grep -c '"reason": "flood"')
+printf "livekit-sip: invites %s | refused as flood %s\n" "$invites" "$flooded" | tee -a "$OUT"
+if [ "${flooded:-0}" -gt 0 ]; then
+  echo "!! $flooded call(s) were rate-limited by livekit-sip, NOT starved of an agent" \
+    | tee -a "$OUT"
+fi
+
 echo | tee -a "$OUT"
 echo "=== result ===" | tee -a "$OUT"
 docker exec postgres psql -U aivoice -d aivoice -X -P pager=off -c "
