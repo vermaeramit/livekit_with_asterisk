@@ -1,11 +1,15 @@
 #!/bin/bash
-# Usage: ./loadtest.sh <concurrent> [stagger_seconds]
+# Usage: ./loadtest.sh <concurrent> [stagger_seconds] [extension]
 #
-# Originates N calls into extension 700 and reports what happened. Each run is
-# self-contained: it prints its own p50/p95 from Postgres, so two runs can be
-# compared without a separate query afterwards.
+# Originates N calls and reports what happened. Each run is self-contained: it
+# prints its own p50/p95 from Postgres, so two runs compare directly.
 N=${1:-5}
 STAGGER=${2:-0.7}
+# 709 is the load-test campaign - same pipeline, transfer disabled. On 700 the
+# agent hands every synthetic call to a human inside the first turn, so the
+# calls end in seconds and the run measures near-simultaneous single-turn calls
+# rather than sustained concurrency.
+EXTEN=${3:-709}
 OUT=/tmp/loadtest-$(date +%H%M%S)-n${N}.log
 
 # Scopes the result query to this run. Taken before anything is originated.
@@ -38,12 +42,24 @@ SAMPLER=$!
 # which buries the results under a wall of the subshell's own source.
 disown $SAMPLER 2>/dev/null
 
+# The originate result used to go to /dev/null. Half a run can fail to start and
+# the script would still report a clean, quiet test on whatever did.
+FAILED=0
 for i in $(seq 1 "$N"); do
-  docker exec asterisk asterisk -rx \
-    "channel originate Local/s@loadtest extension 700@from-internal" > /dev/null
+  resp=$(docker exec asterisk asterisk -rx \
+    "channel originate Local/s@loadtest extension ${EXTEN}@from-internal" 2>&1)
+  case "$resp" in
+    *Failed*|*Unable*|*"No such"*|*Error*)
+      FAILED=$((FAILED + 1))
+      echo "originate $i FAILED: $resp" | tee -a "$OUT" ;;
+  esac
   sleep "$STAGGER"
 done
-echo "all $N originated $(date +%T)" | tee -a "$OUT"
+echo "originated $((N - FAILED))/$N into ${EXTEN} at $(date +%T)" | tee -a "$OUT"
+if [ "$FAILED" -gt 0 ]; then
+  echo "!! $FAILED originate(s) failed - the numbers below cover only what started" \
+    | tee -a "$OUT"
+fi
 
 # Wait for the calls to finish rather than guessing. The old fixed 90s sleep was
 # too short once concurrency rose, and silently truncated the results.
