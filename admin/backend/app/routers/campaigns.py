@@ -94,7 +94,7 @@ async def create_campaign(body: CampaignCreate, actor: CurrentUser = Depends(edi
                        VALUES ($1, $2, $3, $4,
                                'sarvam', 'saarika:v2.5',
                                'openai', 'gpt-4.1-mini',
-                               'sarvam', 'bulbul:v3', 'anushka')""",
+                               'sarvam', 'bulbul:v3', 'shubh')""",
                     config_name, campaign_id,
                     "You are a helpful voice assistant. Keep answers short and "
                     "natural for a phone call.",

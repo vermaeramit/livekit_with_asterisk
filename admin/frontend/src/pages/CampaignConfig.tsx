@@ -62,15 +62,16 @@ const TTS_MODELS = [
   { value: 'bulbul:v2', label: 'bulbul:v2' },
 ]
 
+// bulbul:v3's speakers, taken from the plugin's own rejection message rather
+// than from documentation. The first version of this list was written from
+// memory and was bulbul:v2's - every one of those names makes TTS.__init__
+// raise, so the job dies before the call is even answered.
 const VOICES = [
-  { value: 'anushka', label: 'anushka — female' },
-  { value: 'manisha', label: 'manisha — female' },
-  { value: 'vidya', label: 'vidya — female' },
-  { value: 'arya', label: 'arya — female' },
-  { value: 'abhilash', label: 'abhilash — male' },
-  { value: 'karun', label: 'karun — male' },
-  { value: 'hitesh', label: 'hitesh — male' },
-]
+  'shubh', 'ritu', 'rahul', 'pooja', 'simran', 'kavya', 'amit', 'ratan',
+  'rohan', 'dev', 'ishita', 'shreya', 'manan', 'sumit', 'priya', 'aditya',
+  'kabir', 'neha', 'varun', 'roopa', 'aayan', 'ashutosh', 'advait', 'amelia',
+  'sophia', 'suhani', 'rupali', 'tanya', 'shruti', 'kavitha',
+].map((v) => ({ value: v, label: v }))
 
 type TabKey = 'conversation' | 'voice' | 'knowledge' | 'routing' | 'limits' | 'history'
 
@@ -374,7 +375,7 @@ export function CampaignConfig() {
               placeholder="speaker name"
               allowEmpty
               emptyLabel="Model default"
-              hint="A speaker the chosen model does not have will fail at call time, not on save."
+              hint="These are bulbul:v3 speakers. A speaker the chosen model does not have makes the call fail before it is answered, not on save."
             />
 
             <div className="grid gap-5 sm:grid-cols-2">
