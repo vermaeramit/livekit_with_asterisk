@@ -200,11 +200,17 @@ python voice_agent.py dev 2>&1 | grep -A 1 -E "voice-agent|ERROR|Traceback"
 >
 > | Option | dev | **prod** |
 > |---|---|---|
-> | `load_threshold` | `inf` | **0.7** — blocked dispatch at 3 concurrent |
+> | `load_threshold` | `inf` | **0.7** — the worker's own gate; see the warning below |
 > | `port` | `0` (random) | **8081** (fixed) — extra workers crash-loop |
 > | `num_idle_processes` | `0` | 2 — first call after restart only rang |
 >
 > A problem that does not reproduce in `dev` may still be real in production.
+>
+> ⚠️ **`load_threshold` is not the dispatch limit, and tuning it is a dead end.**
+> It gates only the worker's own `_is_available()`, which LiveKit never asks
+> about — the server reads the *load value* the worker reports and weights it as
+> `max(0, 1 - load)`. What decides concurrency is `load_fnc`; ours reports
+> `len(active_jobs) / MAX_JOBS_PER_WORKER`. See §3d.
 
 Readable log filter (keeps the timing continuation lines):
 
@@ -543,13 +549,39 @@ docker compose -f /opt/aivoice/docker-compose.yml logs --since 10m asterisk \
 
 Three workers, jobs distributed 0/4/3. Above 10 is untested.
 
+**Superseded — 20 concurrent now passes.** On 32 cores / 48 GB with six workers
+and `MAX_JOBS_PER_WORKER=10`: 20 requested, 20 reached the dialplan, 20 got an
+agent, **0 sent to the human fallback**. Latency held at p50 ≈ 2.0 s. (The 20-run
+that produced p95 3918 ms was measured while Sarvam ran out of credits and the
+LLM chain failed — not a valid latency sample.)
+
+### Concurrency: where the limit actually is
+
+**`MAX_JOBS_PER_WORKER × enabled worker instances`, and nowhere else.** The
+dialplan has no concurrency limit; `agents.target_load` in `livekit.yaml` does
+not impose one either.
+
+Everything else that looks like a capacity knob is not one:
+
+| Knob | What it really does |
+|---|---|
+| `LOAD_THRESHOLD` | The worker's own `_is_available()`. The server never consults it. Tuned 0.7 → 5.0 → `inf` across a whole afternoon with zero effect. |
+| `NUM_IDLE_PROCESSES` | Warm processes only. An empty pool costs a ~2.3 s cold spawn, not a refusal. |
+| Worker count | Only helps once load is reported per worker. While load was system-wide CPU, 1, 3 and 6 workers all hit the same ceiling. |
+| CPU / RAM | 8→32 cores and 12→48 GB changed the ceiling by nothing. |
+| `agents.target_load` | Lifts the psrpc-level refusal, then `selectWorkerWeightedByLoad` refuses anyway — it weights by a hardcoded `1 - w.Load()`. |
+
 ### If calls do not connect
 
 | Check | |
 |---|---|
-| All workers registered? | See §1 — `is-active` alone is not enough |
+| All workers registered? | See §1 — `is-active` alone is not enough. **And anchor the check to the restart**: `journalctl --since '-5min'` happily matches a registration from *before* a LiveKit restart, i.e. a dead connection. |
 | `AI UNAVAILABLE` in Asterisk log | Dial timed out; agent did not join in 8 s |
-| `full capacity` in the journal | `load_threshold` blocking — it clamps to 0–1, so any value below 1.0 trips on a momentary spike. Use > 1.0 to disable. |
+| `no workers with sufficient capacity` (LiveKit) | Every worker is reporting load ≥ 1.0. With `load_fnc` job-based that means genuinely full — raise `MAX_JOBS_PER_WORKER` or add instances. |
+| `no servers available (received 1 responses)` (LiveKit) | `agents.target_load` in `livekit.yaml`. The "1 response" is our single LiveKit node, not a worker count — it is not a clue about workers. |
+| `full capacity` in the journal | The worker's own gate. Rare, and **not** what refuses jobs. |
+| SIP 486 with `"reason": "flood"` | livekit-sip rate-limited the source. Refused *before* any dispatch lookup, so it looks exactly like "no agent" from Asterisk. `loadtest.sh` counts it separately. |
+| Calls ring and die after a reboot | Redis lost the SIP trunk + dispatch rule. `lk sip inbound list` — if empty, see §2. |
 | `processing invite` vs `received job request` | SIP took the call but no agent was dispatched |
 
 ---

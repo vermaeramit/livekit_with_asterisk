@@ -281,15 +281,29 @@ stacked. A rising `eou` is our machine (VAD and turn detection run locally); ris
 | 1 | 1921 ms | ~2400 ms | — |
 | **10** | **2001 ms** | **2776 ms** | 2.0–2.2 (~27 %) |
 
-Three worker instances; latency essentially flat under load. Above 10 is untested — the
-headroom suggests 18–20 is reachable with 4–5 workers, but that is extrapolation.
+Three worker instances; latency essentially flat under load.
 
-**Two bugs that only exist in production mode** were found here. `WorkerOptions` carries
-separate dev and prod defaults, and both prod values broke things:
+**20 concurrent now passes** — 20 requested, 20 got an agent, 0 fell to the human
+fallback — on 32 cores / 48 GB with six workers and `MAX_JOBS_PER_WORKER=10`.
 
-- `load_threshold` (dev `inf`, prod `0.7`) stopped dispatch at **3 concurrent** while the
-  machine sat at 12 % CPU. The metric clamps to 0–1, so any threshold below 1.0 trips on a
-  momentary spike — it has to be set above 1.0 to disable.
+Getting there took a day, because the ceiling was not where any dial suggested. It did
+not move for worker count (1/3/6), `load_threshold` (0.7/5.0/`inf`), warm-pool size,
+arrival stagger, or a hardware upgrade from 8 cores/12 GB. LiveKit picks a worker by
+weighting `max(0, 1 - w.Load())`, and `w.Load()` is whatever the worker reports —
+livekit-agents defaults to **system-wide CPU**, clamped to 1.0. One live call pins a core,
+the value saturates, the weight hits zero, and since the metric is system-wide every
+worker on the box loses its weight at the same instant. That is precisely why adding
+workers, cores and RAM achieved nothing.
+
+The fix is to report what actually limits us: `load_fnc` returns
+`len(active_jobs) / MAX_JOBS_PER_WORKER`. CPU never described this workload — STT, LLM and
+TTS are network calls, and a conversation is mostly waiting.
+
+**Two more production-only defaults** bit along the way. `WorkerOptions` carries separate
+dev and prod values:
+
+- `load_threshold` (dev `inf`, prod `0.7`) gates the worker's own availability check — a
+  gate LiveKit never consults. An afternoon went into tuning it for nothing.
 - `port` (dev random, prod fixed `8081`) made every extra worker crash-loop on
   `address already in use`. `systemctl is-active` reported all three healthy while only one
   had registered — three load-test runs were interpreted on that false assumption.

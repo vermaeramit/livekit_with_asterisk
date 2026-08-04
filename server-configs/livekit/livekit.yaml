@@ -36,8 +36,13 @@ turn:
 # 0.7 is a sane default for cpu-bound agents. Ours is not: stt, llm and tts are
 # all network calls, and cpu is the one resource this workload does not spend.
 # Raised so the server stops shedding on a metric that does not describe us.
-# The real ceiling stays enforced where it is measurable - MAX_CONCURRENT in
-# the dialplan, and the box's own memory.
+#
+# This alone did NOT lift the ceiling - it only moved the refusal from psrpc to
+# selectWorkerWeightedByLoad, which weights by a hardcoded `1 - w.Load()` and
+# ignores target_load entirely. The fix that mattered is on the agent side:
+# MAX_JOBS_PER_WORKER, via load_fnc in voice_agent.py. Concurrency is capped
+# there - MAX_JOBS_PER_WORKER x enabled worker instances - and nowhere else.
+# The dialplan has no concurrency limit of its own.
 agents:
   target_load: 5.0
 

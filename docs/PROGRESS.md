@@ -1907,13 +1907,95 @@ with a client selector rather than by making the API guess.
 
 ---
 
+## Capacity — 20 concurrent (4 Aug 2026)
+
+**Result: 20 requested, 20 reached the dialplan, 20 got an agent, 0 fell to the
+human.** Six workers, `MAX_JOBS_PER_WORKER=10`, 32 cores / 48 GB.
+
+### The ceiling was CPU-based load reporting
+
+Dispatch stopped dead between 2 and 6 concurrent calls all day. It did not move
+for **any** of these:
+
+| Changed | Ceiling |
+|---|---|
+| workers 1 → 3 → 6 | 2 → 6 → 6 |
+| `LOAD_THRESHOLD` 0.7 → 5.0 → `inf` | unchanged |
+| `NUM_IDLE_PROCESSES` 3 → 8 | unchanged |
+| stagger 0.7 s → 3 s | *worse* |
+| 8 cores/12 GB → 32 cores/48 GB | unchanged |
+
+Two LiveKit functions decide it, and neither is the worker's own gate:
+
+```go
+// psrpc claim - pkg/service/agentservice.go
+affinity += max(0, h.targetLoad - w.Load())      // DefaultTargetLoad = 0.7
+
+// then worker selection
+normalized := max(0, 1 - w.Load())               // hardcoded 1, ignores targetLoad
+```
+
+`w.Load()` is whatever the worker reports. livekit-agents defaults to
+`psutil.cpu_percent()` — **system-wide CPU, clamped to 1.0**. One live call pins
+roughly a core, the value saturates, the weight goes to zero. And because it is
+system-wide, every worker on the box reports the same saturated number at the
+same instant — which is exactly why adding workers, cores and RAM did nothing.
+
+The fix is `load_fnc`: report `len(active_jobs) / MAX_JOBS_PER_WORKER` instead.
+CPU never described this workload — STT, LLM and TTS are network calls and a
+conversation is mostly spent waiting. `agents.target_load: 5.0` in
+`livekit.yaml` is also needed, but on its own it only moves the refusal from
+`no servers available` to `no workers with sufficient capacity`.
+
+### What the failure looked like from outside
+
+Nothing pointed at LiveKit. Workers stayed `WS_AVAILABLE`, never logged `full
+capacity`, declined nothing, and three of six sat idle through runs they were
+refused for. `_answer_availability()` rejects **silently** — the "full capacity"
+line lives in a different function — so "no full-capacity logs" was true and
+worthless. Six wrong causes were proposed and killed by measurement before the
+right one: CPU saturation, spawn contention, memory, a blocking load function,
+warm-pool exhaustion, and a leak in LiveKit's job accounting.
+
+### Two unrelated faults found on the way
+
+**A reboot silently deleted the SIP configuration.** `redis.conf` had
+`save ""` / `appendonly no` under a comment saying it held only LiveKit
+coordination state. It also holds the SIP inbound trunk and dispatch rule. After
+the reboot Redis had two keys, and every call rang and died with SIP 486 —
+refused *before* any rule lookup, so no log anywhere said "no rule". Persistence
+is on now, with a named volume, and `maxmemory-policy` is `noeviction` (it was
+`allkeys-lru`, free to evict the same two keys mid-production).
+
+**livekit-sip rate-limits a burst from one source** with 486 and
+`"reason": "flood"`, which is indistinguishable from "no agent" at the Asterisk
+end. `loadtest.sh` now counts it separately.
+
+### Provider limits are the next wall, not the platform
+
+At 20 concurrent, Sarvam ran out of credits (402) and the **TTS FallbackAdapter
+switched to OpenAI mid-call, as designed** — its first real proof. The LLM chain
+did not hold: `all LLMs are unavailable, retrying..` means both OpenAI and
+Gemini failed, and three calls ended `end_reason='error'`. Latency from that run
+(p50 2221 / p95 3918) is not a valid sample.
+
+---
+
 ## ⏭️ Next
 
-- Step 11 Phase 1 frontend — React shell, login, calls list + detail
-- **Wire up the fallback chain** (decided and benchmarked; ~1 hour of agent-side work)
-- Capacity test to 20 with a proper SIP load tool
-- System metrics (node_exporter + Prometheus) and alerting
-- Migration 002 — switch the agent to `campaign_id`, drop `config_name`
+- **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
+  once, 3 calls lost. TTS held; LLM did not
+- Re-measure latency at 20 once Sarvam credits are restored
+- **Change the SIP password** — `1002` was printed to a shared terminal by
+  `pjsip show auth`
+- Recording disclosure line in each campaign greeting — recording is global and
+  callers are not told
+- Per-campaign recording (needs Asterisk to read the DB, e.g. `func_odbc`)
+- Estimated-spend panel from stored usage (credits cannot be read from the
+  provider APIs)
+- Drop `config_name` — needs the KB migrated off it
+- Ask the dialler team: `asterisk -V`, `chan_sip` vs `chan_pjsip`, new SIP trunk,
+  trunk codec, registration interval
 
 ---
 
