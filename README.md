@@ -204,6 +204,8 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | `v0.5.0` | Step 10 — production hardening *(planned)* |
 | `v1.0.0` | Step 11 — admin panel *(planned)* |
 
+> The `*(planned)*` tags were never cut. Steps 9, 10 and 11 are all done and on `main`.
+
 ---
 
 ## 7. Roadmap
@@ -221,17 +223,31 @@ blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
 | 9 | Knowledge base + grounding | ✅ **no hallucinations** |
 | 9b | Human transfer (SIP REFER) | ✅ verified end to end |
 | 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
-| 10b | Provider fallbacks — benchmarked, chain decided, **not yet wired** | 🔬 |
+| 10b | Provider fallback chains — wired for STT, TTS and LLM | ✅ |
 | 10c | Cost guardrails + monitoring | ✅ |
 | 11.1 | Admin panel — auth, RBAC, tenant isolation, call review | ✅ |
 | 11.2 | Clients, users, campaigns, agent config editor, KB upload | ✅ |
 | 11.3 | Analytics in-panel, Grafana retired | ✅ |
 | 11.4 | Call recordings — Opus, 90-day retention, in-panel playback | ✅ |
 | 11.5 | Live monitor + alerting (rules, webhook, in-panel) | ✅ |
-| — | Capacity test to 20 concurrent | ⏭️ **Next** |
-| 10b | Provider fallback chains — benchmarked, still not wired | 🔬 |
+| — | Capacity test | ✅ **20 concurrent, 0 calls dropped** |
+| — | LLM fallback chain failed at 20 concurrent — both legs down, 3 calls lost | ⏭️ deferred |
+| — | Recording disclosure in campaign greetings — callers are not told | ⏭️ **Next** |
 
-### Provider fallback — decided, pending implementation
+### Provider fallback — wired, and half of it is proven
+
+The TTS chain earned its keep: Sarvam ran out of credits mid-load-test and every call
+switched to OpenAI TTS without dropping, logging
+`livekit.plugins.sarvam.tts.TTS error, switching to next TTS`.
+
+The LLM chain did **not** hold in the same run — `all LLMs are unavailable, retrying..`
+means OpenAI and Gemini failed together, and three calls ended `end_reason='error'`.
+Untangling that is deferred, not done.
+
+> A dead primary is not free. `FallbackAdapter` tries the primary first **every
+> utterance**, so while Sarvam was out of credits TTS time-to-first-byte went from
+> ~240 ms to ~2200 ms — the failed attempt, not OpenAI being slow. Restore the credits or
+> switch the campaign's provider; leaving a dead primary in place is the worst of both.
 
 | Layer | Primary | Fallback |
 |---|---|---|
