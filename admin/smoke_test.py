@@ -326,6 +326,12 @@ def main() -> int:
             # present them as if changing them would do anything.
             check("providers are not exposed",
                   not any(k.endswith("_provider") for k in cfg))
+            # A campaign created from the panel used to inherit
+            # llm_model='gemini-flash-latest' from a stale column default and
+            # die with 404 on its first call.
+            check("no campaign is left on a model we do not use",
+                  not str(cfg.get("llm_model", "")).startswith("gemini"),
+                  cfg.get("llm_model", ""))
             check("agent_config.enabled is not exposed", "enabled" not in cfg,
                   "disabling it makes load_config raise and calls ring forever")
 

@@ -77,9 +77,24 @@ async def create_campaign(body: CampaignCreate, actor: CurrentUser = Depends(edi
                     f"this tenant already has a campaign with the slug '{body.slug}'")
 
             try:
+                # The providers and models are set EXPLICITLY, not left to the
+                # column defaults. Those defaults dated from the original Google
+                # plan, so a campaign created here inherited
+                # llm_model='gemini-flash-latest' and died with 404
+                # model_not_found on its first call - born broken, and invisible
+                # until someone dialled it. Migration 006 fixed the defaults;
+                # naming them here means a future default drift cannot do it
+                # again.
                 await conn.execute(
-                    """INSERT INTO agent_config (name, campaign_id, instructions, greeting)
-                       VALUES ($1, $2, $3, $4)""",
+                    """INSERT INTO agent_config
+                           (name, campaign_id, instructions, greeting,
+                            stt_provider, stt_model,
+                            llm_provider, llm_model,
+                            tts_provider, tts_model, tts_voice)
+                       VALUES ($1, $2, $3, $4,
+                               'sarvam', 'saarika:v2.5',
+                               'openai', 'gpt-4.1-mini',
+                               'sarvam', 'bulbul:v3', 'anushka')""",
                     config_name, campaign_id,
                     "You are a helpful voice assistant. Keep answers short and "
                     "natural for a phone call.",
