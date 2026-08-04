@@ -17,7 +17,17 @@ Type=simple
 # live in a checkout.
 WorkingDirectory=/srv/aivoice/agent
 EnvironmentFile=/opt/aivoice/.env
-Environment=LOAD_THRESHOLD=5.0
+# Load is a job count now, not CPU (see load_fnc in voice_agent.py), so these
+# two are the real concurrency dials: this box can carry
+# MAX_JOBS_PER_WORKER x (number of enabled instances) calls at once. 1.0 means
+# a worker stops taking work exactly when it is full - LOAD_THRESHOLD spent
+# months being tuned (0.7, 5.0, inf) against a CPU figure the server never
+# looked at.
+Environment=LOAD_THRESHOLD=1.0
+Environment=MAX_JOBS_PER_WORKER=10
+# Warm processes, not a capacity limit - a job spawns one on demand if the pool
+# is empty, at a ~2.3s cold start. Keep it near the expected concurrent load per
+# worker so a burst does not pay that.
 Environment=NUM_IDLE_PROCESSES=4
 Environment=AGENT_HTTP_PORT=808%i
 Environment=LIVEKIT_URL=ws://127.0.0.1:7880

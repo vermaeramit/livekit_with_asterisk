@@ -547,14 +547,38 @@ if __name__ == "__main__":
         # systemd's Restart=always then hides it: the unit reads "active" while
         # the worker is actually crash-looping and never registers.
         _kw["port"] = int(os.getenv("AGENT_HTTP_PORT", "8081"))
+    if "load_fnc" in _p:
+        # THE number that decides how many concurrent calls this box can take.
+        #
+        # By default livekit-agents reports psutil.cpu_percent() - system-wide
+        # CPU, clamped to 1.0 - and LiveKit's worker selection weights each
+        # worker by `max(0, 1 - load)` (pkg/service/agentservice.go). A worker
+        # busy on one call pins a core, the metric saturates at 1.0, its weight
+        # becomes 0, and the server answers "no workers with sufficient
+        # capacity" while 30 of 32 cores sit idle. Every worker on the box
+        # reports the same system-wide figure, so they all lose their weight at
+        # the same instant - which is why running 1, 3 or 6 workers made no
+        # difference to the ceiling.
+        #
+        # CPU is the wrong meter for this workload: STT, LLM and TTS are network
+        # calls, and a live conversation spends most of its time waiting. Report
+        # what actually limits us instead - how many calls this worker is
+        # already carrying. Load reaches 1.0 at MAX_JOBS_PER_WORKER, which makes
+        # that env var a real, enforced concurrency cap rather than a side
+        # effect of how busy the CPU happened to look.
+        _max_jobs = max(1, int(os.getenv("MAX_JOBS_PER_WORKER", "10")))
+
+        def _job_count_load(worker) -> float:
+            return min(len(worker.active_jobs) / _max_jobs, 1.0)
+
+        _kw["load_fnc"] = _job_count_load
     if "load_threshold" in _p:
-        # prod_default is 0.7 and dev_default is inf, so this only bites once the
-        # worker runs in `start` mode. Load-tested at 5 concurrent: the worker
-        # marked itself unavailable at load=1.0 after only 3 calls and LiveKit
-        # stopped dispatching - two callers fell through to the human fallback.
-        # System load average at that moment was 0.94 across 8 cores (~12%), so
-        # the machine was fine; psutil was sampling the spawn spikes.
-        _kw["load_threshold"] = float(os.getenv("LOAD_THRESHOLD", "0.9"))
+        # Now that load is a job count, 1.0 is the honest threshold: it makes the
+        # worker's own _is_available() agree with the server's weighting instead
+        # of guarding a different quantity. It used to be tuned against the CPU
+        # metric (0.9, then 5.0, then inf) - none of which mattered, because the
+        # server never consults this gate; it reads the reported load directly.
+        _kw["load_threshold"] = float(os.getenv("LOAD_THRESHOLD", "1.0"))
     if "drain_timeout" in _p:
         _kw["drain_timeout"] = int(os.getenv("DRAIN_TIMEOUT", "150"))
     cli.run_app(WorkerOptions(**_kw))
