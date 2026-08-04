@@ -78,10 +78,14 @@ echo | tee -a "$OUT"
 echo "=== worker errors during the run ===" | tee -a "$OUT"
 # The INSTANCE units, not `aivoice-agent`. That plain unit is disabled, so the
 # original filter reported a clean run no matter what the workers actually did.
+# `fallback` is in here on purpose. Disabling the chains for a benchmark would
+# measure something we do not ship; the answer is to make a fallback firing
+# visible instead, because a run where the primary degraded under load and the
+# secondary quietly took over looks identical to a healthy one otherwise.
 journalctl -u 'aivoice-agent@*' --since "-10min" --no-pager 2>/dev/null \
-  | grep -E "full capacity|below capacity|ERROR|Traceback|DECLINED" \
+  | grep -iE "full capacity|below capacity|ERROR|Traceback|DECLINED|fallback" \
   | tail -20 | tee -a "$OUT"
-echo "(nothing listed above means no errors)" | tee -a "$OUT"
+echo "(nothing listed above means no errors and no fallbacks fired)" | tee -a "$OUT"
 
 echo | tee -a "$OUT"
 echo "=== result ===" | tee -a "$OUT"
