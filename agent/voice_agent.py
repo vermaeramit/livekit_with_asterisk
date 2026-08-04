@@ -397,16 +397,40 @@ async def entrypoint(ctx: JobContext):
         except Exception:
             logger.exception("transcript handler failed")
 
+    # A provider failing hard is not a completed call. Without this the row is
+    # recorded as "completed" and the error_rate alert - which keys on
+    # end_reason = 'error' - never fires. An entire Sarvam outage went through
+    # as ten clean calls, which is how it stayed invisible.
+    session_error: dict[str, str] = {}
+
+    def _on_error(ev) -> None:
+        # Keep the first: it usually causes the rest, and the later ones are
+        # noise from the teardown.
+        if session_error:
+            return
+        err = getattr(ev, "error", ev)
+        session_error["source"] = type(err).__name__
+        session_error["message"] = str(err)[:400]
+        logger.error("session error (%s): %s",
+                     session_error["source"], session_error["message"])
+
+    session.on("error", _on_error)
+
     async def _shutdown():
         try:
             summary = usage.get_summary()
             u = summary.__dict__ if hasattr(summary, "__dict__") else dict(summary)
-            logger.info("usage: %s  turns=%d  kb_tools=%d  limit=%s  transferred=%s",
+            logger.info("usage: %s  turns=%d  kb_tools=%d  limit=%s  transferred=%s  error=%s",
                         summary, agent.turn_count, agent.tool_calls,
-                        agent.limit_hit, agent.transferred)
+                        agent.limit_hit, agent.transferred,
+                        session_error.get("source"))
 
+            # transferred and limit are deliberate outcomes and outrank an error
+            # seen on the way out; anything else that errored did not complete.
             reason = ("transferred" if agent.transferred
-                      else "limit" if agent.limit_hit else "completed")
+                      else "limit" if agent.limit_hit
+                      else "error" if session_error
+                      else "completed")
             await store.end_call_usage(call_id, reason, agent.limit_hit,
                                        agent.turn_count, u)
             if agent.transferred:
@@ -414,6 +438,12 @@ async def entrypoint(ctx: JobContext):
                 await (await store.pool()).execute(
                     "UPDATE calls SET transferred_to=$2, transfer_reason=$3, outcome=$3 "
                     "WHERE id=$1", call_id, dest, why)
+            elif session_error:
+                # The message goes in outcome so the console shows WHY, not just
+                # that something went wrong.
+                await (await store.pool()).execute(
+                    "UPDATE calls SET outcome=$2 WHERE id=$1", call_id,
+                    f"{session_error['source']}: {session_error['message']}")
             await store.close()
         except Exception:
             logger.exception("shutdown failed")
