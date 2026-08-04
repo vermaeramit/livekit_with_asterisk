@@ -83,8 +83,12 @@ echo "=== worker errors during the run ===" | tee -a "$OUT"
 # measure something we do not ship; the answer is to make a fallback firing
 # visible instead, because a run where the primary degraded under load and the
 # secondary quietly took over looks identical to a healthy one otherwise.
+# Matching a bare "ERROR" also matched `error=None` inside every healthy call's
+# usage summary - the HEALTHY case - so this section filled with four screens of
+# noise and a real error would have been scrolled off the top by it. Match the
+# log's own level field instead.
 journalctl -u 'aivoice-agent@*' --since "-10min" --no-pager 2>/dev/null \
-  | grep -iE "full capacity|below capacity|ERROR|Traceback|DECLINED|fallback" \
+  | grep -E '"level": "ERROR"|Traceback|full capacity|below capacity|DECLINED|[Ff]allback' \
   | tail -20 | tee -a "$OUT"
 echo "(nothing listed above means no errors and no fallbacks fired)" | tee -a "$OUT"
 
