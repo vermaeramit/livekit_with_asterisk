@@ -27,6 +27,10 @@ services:
     command: redis-server /etc/redis/redis.conf
     volumes:
       - ./redis/redis.conf:/etc/redis/redis.conf:ro,Z
+      # Without this the RDB snapshot lives in the container's writable layer,
+      # so it survives a reboot but not a `compose up -d` that recreates the
+      # container - and losing it silently deletes the SIP trunk again.
+      - redis-data:/data
     deploy:
       resources:
         limits: { cpus: '0.5', memory: 320M }
@@ -94,5 +98,6 @@ volumes:
   recordings:
     name: aivoice_recordings
   pgdata:
+  redis-data:
   asterisk-spool:
   asterisk-log:
