@@ -138,6 +138,25 @@ async def start_call(room_name, caller, callee, config_name, language,
     )
 
 
+async def end_call_if_open(call_id: int, reason: str, outcome: str) -> None:
+    """Close a call only if nothing else already did.
+
+    A job that dies between start_call() and the real shutdown handler - a bad
+    voice or model raises while AgentSession is being built - leaves a row with
+    no ended_at. Nothing ever closes it, so it sits in the live monitor as a
+    stuck call forever and skews every duration average.
+    """
+    await (await pool()).execute(
+        """UPDATE calls
+              SET ended_at    = now(),
+                  duration_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
+                  end_reason  = $2,
+                  outcome     = $3
+            WHERE id = $1 AND ended_at IS NULL""",
+        call_id, reason, outcome,
+    )
+
+
 async def end_call(call_id: int, reason: str, outcome: str | None = None):
     await (await pool()).execute(
         """UPDATE calls

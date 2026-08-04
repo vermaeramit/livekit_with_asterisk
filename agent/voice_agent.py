@@ -347,6 +347,20 @@ async def entrypoint(ctx: JobContext):
                                      cfg.language, cfg.campaign_id, sip_call_id)
     logger.info("call_id=%s caller=%s callee=%s", call_id, caller, callee)
 
+    # Registered HERE, before anything that can raise. Everything below - the
+    # TTS constructor, the LLM constructor, the prompt build - can throw on a
+    # bad config, and until this exists the row created above would never be
+    # closed by anything. Six of them sat in the live monitor as "stuck calls"
+    # after a bad voice took the workers down.
+    #
+    # It only writes when nothing else has, so the real shutdown handler still
+    # sets the accurate reason whichever order they run in.
+    async def _safety_net():
+        await store.end_call_if_open(
+            call_id, "error", "the job failed before the session started")
+
+    ctx.add_shutdown_callback(_safety_net)
+
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room)
 
     vad = ctx.proc.userdata["vad"]
