@@ -19,6 +19,28 @@ redis:
 turn:
   enabled: false          # everything is on the LAN; no TURN needed
 
+# Dispatch stopped dead at 6 concurrent calls while the box sat at 12% CPU on
+# 32 cores. Nothing on the agent side explained it - workers stayed AVAILABLE,
+# never logged "full capacity", and three of six were handed no work at all.
+# The decision is here, not there:
+#
+#   affinity += max(0, targetLoad - w.Load())      // pkg/service/agentservice.go
+#
+# w.Load() is whatever the worker reports, and livekit-agents reports
+# psutil.cpu_percent() - SYSTEM-WIDE cpu. Every worker on this box therefore
+# reports the same number, so once it crosses target_load they all lose their
+# capacity at the same instant and affinity sums to zero. Adding workers cannot
+# help; the agent-side load_threshold is a different gate the server never
+# consults.
+#
+# 0.7 is a sane default for cpu-bound agents. Ours is not: stt, llm and tts are
+# all network calls, and cpu is the one resource this workload does not spend.
+# Raised so the server stops shedding on a metric that does not describe us.
+# The real ceiling stays enforced where it is measurable - MAX_CONCURRENT in
+# the dialplan, and the box's own memory.
+agents:
+  target_load: 5.0
+
 logging:
   level: info
   json: false
