@@ -34,6 +34,9 @@ echo "start $(date +%T)" | tee -a "$OUT"
   done
 ) >> "$OUT" &
 SAMPLER=$!
+# Interactive bash prints a "Terminated" job notice when the sampler is killed,
+# which buries the results under a wall of the subshell's own source.
+disown $SAMPLER 2>/dev/null
 
 for i in $(seq 1 "$N"); do
   docker exec asterisk asterisk -rx \
@@ -52,7 +55,7 @@ for _ in $(seq 1 120); do
   [ "${live:-0}" -eq 0 ] && break
 done
 sleep 5   # let the last end_call write land
-kill $SAMPLER 2>/dev/null
+kill $SAMPLER 2>/dev/null; wait $SAMPLER 2>/dev/null
 echo "end $(date +%T)" | tee -a "$OUT"
 
 echo | tee -a "$OUT"
