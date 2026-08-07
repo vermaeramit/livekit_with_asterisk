@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Pause, Play, Plus } from 'lucide-react'
+import { Building2, KeyRound, Pause, Play, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/Layout'
+import { ProviderKeys } from '@/components/ProviderKeys'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -119,6 +120,7 @@ export function Tenants() {
   const toast = useToast()
   const [creating, setCreating] = useState(false)
   const [confirm, setConfirm] = useState<Tenant | null>(null)
+  const [keysFor, setKeysFor] = useState<Tenant | null>(null)
 
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<Tenant[]>('/tenants') })
 
@@ -181,23 +183,30 @@ export function Tenants() {
       key: 'actions',
       header: '',
       align: 'right',
-      render: (t) =>
-        t.status === 'active' ? (
-          <Button variant="outline" size="sm" onClick={() => setConfirm(t)}>
-            <Pause className="h-3.5 w-3.5" />
-            Suspend
+      render: (t) => (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => setKeysFor(t)}>
+            <KeyRound className="h-3.5 w-3.5" />
+            Keys
           </Button>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setStatus.mutate({ id: t.id, status: 'active' })}
-            loading={setStatus.isPending}
-          >
-            <Play className="h-3.5 w-3.5" />
-            Reactivate
-          </Button>
-        ),
+          {t.status === 'active' ? (
+            <Button variant="outline" size="sm" onClick={() => setConfirm(t)}>
+              <Pause className="h-3.5 w-3.5" />
+              Suspend
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setStatus.mutate({ id: t.id, status: 'active' })}
+              loading={setStatus.isPending}
+            >
+              <Play className="h-3.5 w-3.5" />
+              Reactivate
+            </Button>
+          )}
+        </div>
+      ),
     },
   ]
 
@@ -235,6 +244,17 @@ export function Tenants() {
       />
 
       <CreateTenantDialog open={creating} onClose={() => setCreating(false)} />
+
+      <Dialog
+        open={keysFor !== null}
+        onClose={() => setKeysFor(null)}
+        title={`${keysFor?.name ?? ''} � API keys`}
+        description="Every campaign for this client runs on these, unless it sets its own."
+        size="lg"
+        footer={<Button variant="ghost" onClick={() => setKeysFor(null)}>Done</Button>}
+      >
+        {keysFor && <ProviderKeys scope="client" id={keysFor.id} />}
+      </Dialog>
 
       <Dialog
         open={confirm !== null}

@@ -6,6 +6,7 @@ import {
   BookOpen,
   History,
   Info,
+  KeyRound,
   MessageSquare,
   PhoneForwarded,
   PhoneIncoming,
@@ -16,6 +17,7 @@ import {
 } from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
+import { ProviderKeys } from '@/components/ProviderKeys'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
@@ -73,13 +75,17 @@ const VOICES = [
   'sophia', 'suhani', 'rupali', 'tanya', 'shruti', 'kavitha',
 ].map((v) => ({ value: v, label: v }))
 
-type TabKey = 'conversation' | 'voice' | 'knowledge' | 'routing' | 'limits' | 'history'
+type TabKey =
+  | 'conversation' | 'voice' | 'knowledge' | 'routing' | 'keys' | 'limits' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
   { key: 'voice', label: 'Voice & model', icon: Waves },
   { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
   { key: 'routing', label: 'Routing', icon: PhoneIncoming },
+  // Its own tab rather than a section under "Voice & model": these decide whose
+  // account the calls are billed to, and that is not a voice setting.
+  { key: 'keys', label: 'API keys', icon: KeyRound },
   { key: 'limits', label: 'Limits & handoff', icon: ShieldCheck },
   { key: 'history', label: 'History', icon: History },
 ]
@@ -499,6 +505,28 @@ export function CampaignConfig() {
               here.
             </Note>
             <CampaignRoutes campaignId={campaignId} />
+          </CardBody>
+        </Card>
+      )}
+
+      {tab === 'keys' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>API keys</CardTitle>
+          </CardHeader>
+          <CardBody className="space-y-5">
+            <Note>
+              These decide whose provider account this campaign's calls are billed
+              to. By default it uses the client's keys; set one here only if this
+              campaign needs its own.
+            </Note>
+            <Note tone="warn">
+              A campaign cannot be enabled unless every key resolves — its own or
+              the client's. That check is here on purpose: without a key the call
+              still connects, but the agent cannot answer and the caller is handed
+              to a human, which looks like a fault rather than a missing setting.
+            </Note>
+            <ProviderKeys scope="campaign" id={campaignId} />
           </CardBody>
         </Card>
       )}

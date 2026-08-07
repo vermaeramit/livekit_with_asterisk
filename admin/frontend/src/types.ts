@@ -311,3 +311,21 @@ export interface CallFilters {
   date_to?: string
   min_duration_ms?: number
 }
+
+export interface ProviderKey {
+  provider: string
+  // Which key the next call would actually use. 'client' on a campaign row
+  // means it is inheriting, not that it has one of its own.
+  source: 'campaign' | 'client' | 'none'
+  hint: string | null
+  updated_at: string | null
+}
+
+export interface ProviderKeyWritten {
+  provider: string
+  hint: string
+  message: string
+  // Key is genuine, account is empty. Saved, but the client will not get a
+  // call answered until they top up.
+  no_credits: boolean
+}
