@@ -8,6 +8,9 @@ email-validator==2.2.0
 PyJWT==2.10.1
 argon2-cffi==23.1.0
 python-multipart==0.0.20
+# Fernet. agent/crypto.py is mounted into this image and imported from it,
+# so this must stay pinned to the same version as agent/requirements.txt.
+cryptography==46.0.3
 
 # Knowledge-base ingestion. Pinned to the same versions as agent/requirements.txt:
 # agent/kb.py is mounted into this image and runs against whichever of the two is

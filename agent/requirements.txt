@@ -1,5 +1,7 @@
 asyncpg==0.31.0
 av==18.0.0
+# Fernet, for the per-client provider keys in crypto.py
+cryptography==46.0.3
 indic_transliteration==2.3.82
 livekit==1.1.13
 livekit-agents==1.6.7
