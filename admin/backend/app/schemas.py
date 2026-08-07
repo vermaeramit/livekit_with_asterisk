@@ -504,3 +504,33 @@ class CallDetail(CallListItem):
     recording_bytes: int | None = None
     usage: CallUsage
     turns: list[TurnOut]
+
+
+# --- provider keys -----------------------------------------------------------
+# Note what is absent: there is no field anywhere here that carries a key back
+# to the client. ProviderKeySet is write-only, and everything returned is built
+# from the hint.
+
+class ProviderKeySet(BaseModel):
+    # No format validation. Providers change their key prefixes, and a regex
+    # that rejects a valid new-style key is worse than one that lets a typo
+    # through - the live check against the provider catches the typo anyway.
+    key: str = Field(min_length=8, max_length=512)
+
+
+class ProviderKeyOut(BaseModel):
+    provider: str
+    # campaign | client | none - which key the next call would actually use
+    source: str
+    hint: str | None
+    updated_at: datetime | None
+
+
+class ProviderKeyWritten(BaseModel):
+    provider: str
+    hint: str
+    message: str
+    # The key authenticates but the account cannot pay. Saved anyway - the key
+    # is correct - but the console has to say so, or the first anyone hears of
+    # it is a caller being handed to a human.
+    no_credits: bool = False

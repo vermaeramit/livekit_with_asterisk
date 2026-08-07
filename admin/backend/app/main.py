@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import alerting, db
 from .config import settings
 from .routers import (agent_config, alerts, analytics, auth, calls, campaigns,
-                      kb, live, tenants, users)
+                      kb, live, provider_keys, tenants, users)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,6 +64,7 @@ app.include_router(kb.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
+app.include_router(provider_keys.router, prefix="/api")
 
 
 @app.get("/api/health")

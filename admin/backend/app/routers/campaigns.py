@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import audit, db
+from .. import audit, db, provider_keys as pk
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
                     require_roles, resolve_tenant, tenant_scope)
 from ..schemas import CampaignCreate, CampaignOut, CampaignUpdate
@@ -64,13 +64,25 @@ async def create_campaign(body: CampaignCreate, actor: CurrentUser = Depends(edi
     # campaign_id - which is why it is derived from the slugs, not the labels.
     config_name = f"{tenant['slug']}-{body.slug}"
 
+    # Born disabled if the client has no provider keys yet, rather than born
+    # enabled and broken. Every panel-created campaign was once enabled by
+    # default and inherited a dead model name from the column defaults - nobody
+    # found out until a caller dialled it. The same shape of bug, so the same
+    # answer: do not create something that is switched on and cannot work.
+    has_keys = await db.pool().fetchval(
+        """SELECT count(DISTINCT provider) = $2 FROM provider_keys
+            WHERE tenant_id = $1 AND campaign_id IS NULL""",
+        tenant_id, len(pk.PROVIDERS))
+
     async with db.pool().acquire() as conn:
         async with conn.transaction():
             try:
                 campaign_id = await conn.fetchval(
-                    """INSERT INTO campaigns (tenant_id, slug, name, description)
-                       VALUES ($1, $2, $3, $4) RETURNING id""",
-                    tenant_id, body.slug, body.name, body.description)
+                    """INSERT INTO campaigns (tenant_id, slug, name, description,
+                                              enabled)
+                       VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+                    tenant_id, body.slug, body.name, body.description,
+                    bool(has_keys))
             except asyncpg.UniqueViolationError:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
@@ -117,6 +129,20 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate,
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         return CampaignOut(**await _get(campaign_id))
+
+    # A campaign with no provider key cannot take a call - the agent refuses it
+    # and the caller gets a human. Catching that here, where someone is looking
+    # at a screen, is the entire point of making keys mandatory; the alternative
+    # is catching it on a live call, where the only symptom is a transfer nobody
+    # can explain.
+    if fields.get("enabled") is True:
+        missing = await pk.missing_for_campaign(campaign_id)
+        if missing:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "cannot enable this campaign: no "
+                + " or ".join(missing)
+                + " key is set for it or for its client")
 
     before = await _get(campaign_id)
     sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(fields, start=2))
