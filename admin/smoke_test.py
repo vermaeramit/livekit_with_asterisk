@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -312,6 +313,9 @@ def main() -> int:
     check("duplicate tenant slug -> 409", st == 409, f"got {st}")
 
     print("\nagent config")
+    # Initialised unconditionally: later sections use it, and a NameError there
+    # would abort the whole run instead of reporting one skipped check.
+    cmp_id = 0
     default_campaign = next((c for c in camps or [] if c["slug"] == "default"), None)
     if default_campaign:
         cmp_id = default_campaign["id"]
@@ -495,6 +499,74 @@ def main() -> int:
 
     st, _ = call(args.base, f"/users/{me_id}", method="DELETE", token=access)
     check("cannot delete yourself -> 400", st == 400, f"got {st}")
+
+    print("\nprovider keys")
+    # The point of this section is the negative space: a key goes in and must
+    # never come back out. Everything below checks either that a bad key is
+    # refused, or that a good one is unreadable afterwards.
+    st, body = call(args.base, "/clients/1/keys", token=access)
+    check("list client keys -> 200", st == 200, f"got {st}")
+    if st == 200:
+        check("one row per provider", {r["provider"] for r in body}
+              == {"openai", "sarvam"}, redact(body))
+        check("no response field carries a key",
+              not any(k in r for r in body for k in ("key", "key_enc")),
+              redact(body))
+
+    st, _ = call(args.base, "/clients/1/keys/notaprovider", method="PUT",
+                 token=access, body={"key": "irrelevant-but-long-enough"})
+    check("unknown provider -> 404", st == 404, f"got {st}")
+
+    st, _ = call(args.base, "/clients/1/keys/openai", method="PUT",
+                 token=access, body={"key": "short"})
+    check("key under 8 chars -> 422", st == 422, f"got {st}")
+
+    # A syntactically fine key that the provider rejects. This is the check that
+    # matters: without it a typo is stored happily and only fails on a call.
+    st, body = call(args.base, "/clients/1/keys/openai", method="PUT",
+                    token=access, body={"key": "sk-not-a-real-key-at-all-000"})
+    check("provider rejects the key -> 422", st == 422, f"got {st}")
+
+    # Full round trip, opt-in: SMOKE_OPENAI_KEY=sk-... ./smoke_test.py ...
+    # Off by default so a normal run never sends a live key anywhere.
+    live_key = os.environ.get("SMOKE_OPENAI_KEY", "")
+    if not live_key:
+        print("  [skip] round trip - set SMOKE_OPENAI_KEY to include it")
+    elif not cmp_id:
+        check("round trip needs a campaign", False, "no campaign found earlier")
+    else:
+        # Campaign scope on purpose: it is the only one whose audit entries are
+        # reachable through the API, and the audit trail is where a leak would
+        # be most damaging - every tenant admin can read their own.
+        st, body = call(args.base, f"/campaigns/{cmp_id}/keys/openai",
+                        method="PUT", token=access, body={"key": live_key})
+        check("valid key -> 200", st == 200, f"got {st} {redact(body)}")
+        if st == 200:
+            check("hint is the last 4 chars only",
+                  body.get("hint") == live_key[-4:], body.get("hint", ""))
+            check("write response does not echo the key",
+                  live_key not in json.dumps(body))
+
+        st, body = call(args.base, f"/campaigns/{cmp_id}/keys", token=access)
+        check("key is not readable afterwards",
+              st == 200 and live_key not in json.dumps(body), f"got {st}")
+        if st == 200:
+            row = next((r for r in body if r["provider"] == "openai"), {})
+            check("source says campaign", row.get("source") == "campaign",
+                  row.get("source", ""))
+
+        st, body = call(args.base, f"/campaigns/{cmp_id}/audit", token=access)
+        check("audit -> 200", st == 200, f"got {st}")
+        check("audit trail does not contain the key",
+              st == 200 and live_key not in json.dumps(body, default=str),
+              f"got {st}")
+
+        st, _ = call(args.base, f"/campaigns/{cmp_id}/keys/openai",
+                     method="DELETE", token=access)
+        check("delete -> 204", st == 204, f"got {st}")
+        st, _ = call(args.base, f"/campaigns/{cmp_id}/keys/openai",
+                     method="DELETE", token=access)
+        check("delete again -> 404", st == 404, f"got {st}")
 
     print("\nlogout")
     if new_refresh:
