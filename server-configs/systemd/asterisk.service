@@ -23,13 +23,13 @@ ExecReload=/usr/sbin/asterisk -rx "core reload"
 Restart=always
 RestartSec=5
 
-# Asterisk needs to bind privileged-ish ports and set real-time priority while
-# running as a non-root user. Without these it starts but drifts under load.
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_NICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_NICE
+# No AmbientCapabilities / CapabilityBoundingSet here, on purpose. The first
+# version of this unit granted CAP_NET_BIND_SERVICE and CAP_SYS_NICE and bounded
+# the set to those two - which made Asterisk log "Unable to install
+# capabilities" on every start, because bounding the set stops it installing the
+# ones it asks for itself. Neither is needed: SIP is on 5060, well above 1024,
+# and real-time priority is not enabled in asterisk.conf.
 
-# The recordings directory and the log directory are the only places it writes
-# outside /var/lib/asterisk.
 RuntimeDirectory=asterisk
 RuntimeDirectoryMode=0755
 
