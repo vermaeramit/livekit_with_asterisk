@@ -1,5 +1,17 @@
 services:
+  # ⚠️ NOT IN USE. Asterisk runs natively - see server-configs/systemd/asterisk.service.
+  #
+  # It moved out of Docker because the team who operate the telephony side do not
+  # work with containers, and a PBX nobody on call can debug is worse than one
+  # built slightly differently. Kept here, stopped, as the rollback path:
+  #
+  #     systemctl stop asterisk && docker compose up -d asterisk
+  #
+  # That still works because network_mode is host either way, and the
+  # aivoice_recordings volume has not been deleted. Do not start both: they bind
+  # the same ports.
   asterisk:
+    profiles: [ "rollback" ]
     build: ./asterisk
     container_name: asterisk
     network_mode: host
