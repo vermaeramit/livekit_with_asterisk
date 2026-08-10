@@ -64,16 +64,23 @@ not start it.
 
 ### The AI agent (systemd)
 
-Three worker instances plus the prompt-cache warmer:
+Six worker instances. Concurrency is `MAX_JOBS_PER_WORKER` x instances.
 
 ```bash
-systemctl status  aivoice-agent@1 aivoice-agent@2 aivoice-agent@3
-systemctl restart aivoice-agent@1 aivoice-agent@2 aivoice-agent@3
-systemctl status  aivoice-cache-warmer
+systemctl status  'aivoice-agent@*'
+systemctl restart aivoice-agent@{1,2,3,4,5,6}
 
 journalctl -u aivoice-agent@2 -f | grep -A 1 -E "voice-agent|ERROR"
-journalctl -u aivoice-cache-warmer -f
 ```
+
+> The prompt-cache warmer is **retired** — `aivoice-cache-warmer` should be
+> disabled. The cache belongs to the organisation of the key that filled it, so
+> once calls moved to per-client keys a warmer on the platform key warmed
+> nothing reachable. Warming per client would have billed each client for a
+> standing cost whether or not anyone rang, and the measurement that justified
+> it (cache still alive at 180 s idle) says any campaign busier than one call
+> every three minutes keeps its own cache warm for free. Cost of removing it:
+> the first call after a quiet spell is ~400 ms slower on its first turn.
 
 **A restart does not cut live calls.** `KillSignal=SIGINT` plus
 `TimeoutStopSec=180` lets livekit-agents drain in-flight conversations first.
@@ -141,7 +148,7 @@ grep -A 12 "REGISTER sip:" /var/log/asterisk/debug.log | tail -60
 
 ```bash
 cd /srv/aivoice && git pull
-systemctl restart aivoice-agent@1 aivoice-agent@2 aivoice-agent@3 aivoice-cache-warmer
+systemctl restart aivoice-agent@{1,2,3,4,5,6}
 ```
 
 Code runs from the **checkout** (`/srv/aivoice/agent`); only the virtualenv and

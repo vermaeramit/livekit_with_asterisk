@@ -13,21 +13,25 @@ needed.
 Cost is a ~1300-token mostly-cached prompt and a single output token every
 INTERVAL seconds.
 
-🚨 THIS IS CURRENTLY WARMING THE WRONG ACCOUNT.
+⚠️ NOT RUN IN PRODUCTION. The systemd unit is retired; this file is kept as a
+measurement tool.
 
-"org-level" above is the problem. Calls now run on per-client OpenAI keys
-(see store.load_provider_keys), and a prompt cache belongs to the organization
-of the key that filled it. This warmer still uses the platform key from .env, so
-it warms a cache no client call can hit.
+Two reasons it went.
 
-Nothing breaks loudly: calls work, the warmer reports healthy cached-token
-counts against its own key, and the only symptom is that first turns quietly go
-back to ~1200 ms.
+"org-level" above is the first. Calls run on per-client OpenAI keys now (see
+store.load_provider_keys), and a prompt cache belongs to the organization of the
+key that filled it - so a warmer on the platform key warms a cache no client
+call can hit. It would have had to warm per campaign, on each client's key,
+which puts the standing cost on the client's account whether or not anyone rings.
 
-The fix is to warm per campaign - enumerate enabled campaigns, resolve each
-one's key, and warm its own prefix with it - which also means one warmer process
-covers N campaigns instead of one AGENT_CONFIG. Until then, treat the numbers at
-the top of this file as historical.
+The second reason is in the measurements above, and undercuts the whole idea:
+the cache still held at 180 s idle. A campaign busier than one call every three
+minutes keeps its own cache warm for free. A campaign quieter than that is being
+paid for on the chance a call arrives. The numbers were taken on an idle dev box
+- the one traffic pattern production does not have.
+
+Cost of retiring it: after a long quiet spell the FIRST call's first turn is
+~400 ms slower. Everything after it is warm again.
 """
 from __future__ import annotations
 

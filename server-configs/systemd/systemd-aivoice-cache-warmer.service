@@ -1,5 +1,36 @@
+# ⚠️ RETIRED. Do not enable.
+#
+#     systemctl disable --now aivoice-cache-warmer
+#
+# It kept OpenAI's prompt cache warm so no caller paid for a cold first turn:
+#
+#     cold    ttft 1198 ms
+#     +2s     ttft  805 ms
+#     +180s   ttft  950 ms
+#
+# Two things killed it.
+#
+# 1. The cache belongs to the ORGANISATION of the key that filled it. Once calls
+#    moved to per-client OpenAI keys, a warmer on the platform key was warming a
+#    cache no client call could hit - working perfectly, achieving nothing.
+#
+# 2. Warming per client would have put the cost on the client's own account:
+#    ~1300 tokens every 120s per campaign, forever, whether or not anyone rang.
+#
+# And the measurement above is the argument against it anyway: the cache still
+# held at 180 s idle. Any campaign busier than one call every three minutes keeps
+# its own cache warm for free, and any campaign quieter than that is being paid
+# for on the chance a call arrives. The original numbers were taken on an idle
+# dev box - the one traffic pattern production does not have.
+#
+# What was given up: after a long quiet spell, the FIRST call's first turn costs
+# roughly 400 ms more. Every call after it is warm again.
+#
+# cache_warmer.py is kept. It is still the cleanest way to measure prompt-cache
+# behaviour by hand if the question ever comes back.
+
 [Unit]
-Description=OpenAI prompt cache warmer
+Description=OpenAI prompt cache warmer (RETIRED - see comments)
 After=network-online.target docker.service aivoice-agent.service
 Wants=network-online.target
 
@@ -13,5 +44,5 @@ Restart=always
 RestartSec=15
 SyslogIdentifier=aivoice-warmer
 
-[Install]
-WantedBy=multi-user.target
+# No [Install] section on purpose: `systemctl enable` now fails outright rather
+# than quietly bringing back something that costs money and warms nothing.
