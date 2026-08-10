@@ -12,6 +12,22 @@ needed.
 
 Cost is a ~1300-token mostly-cached prompt and a single output token every
 INTERVAL seconds.
+
+🚨 THIS IS CURRENTLY WARMING THE WRONG ACCOUNT.
+
+"org-level" above is the problem. Calls now run on per-client OpenAI keys
+(see store.load_provider_keys), and a prompt cache belongs to the organization
+of the key that filled it. This warmer still uses the platform key from .env, so
+it warms a cache no client call can hit.
+
+Nothing breaks loudly: calls work, the warmer reports healthy cached-token
+counts against its own key, and the only symptom is that first turns quietly go
+back to ~1200 ms.
+
+The fix is to warm per campaign - enumerate enabled campaigns, resolve each
+one's key, and warm its own prefix with it - which also means one warmer process
+covers N campaigns instead of one AGENT_CONFIG. Until then, treat the numbers at
+the top of this file as historical.
 """
 from __future__ import annotations
 

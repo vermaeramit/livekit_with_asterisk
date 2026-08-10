@@ -104,9 +104,12 @@ def _api_url() -> str:
 
 
 class KBAgent(Agent):
-    def __init__(self, instructions: str, cfg, kb_mode: str, room):
+    def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict):
         super().__init__(instructions=instructions)
         self.cfg = cfg
+        # Carried so the KB tool embeds its query on the client's key too. The
+        # search path is easy to forget - it is billed per turn, not per upload.
+        self.keys = keys
         self.kb_mode = kb_mode
         self.room = room
         self.tool_calls = 0
@@ -136,7 +139,8 @@ class KBAgent(Agent):
         t0 = time.perf_counter()
         try:
             hits = await kb.search(query, self.cfg.name,
-                                   self.cfg.kb_top_k, self.cfg.kb_min_score)
+                                   self.cfg.kb_top_k, self.cfg.kb_min_score,
+                                   api_key=self.keys.get("openai"))
         except Exception:
             logger.exception("kb search failed")
             return "The knowledge base is unavailable right now."
@@ -235,36 +239,49 @@ FALLBACK = os.getenv("PROVIDER_FALLBACK", "1") != "0"
 ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
 
 
-def _stt_stack(stt_kw: dict, vad):
-    primary = sarvam.STT(**stt_kw)
+# Every constructor below takes its key EXPLICITLY rather than letting the
+# plugin read the environment. That is the whole point of per-client keys: the
+# env still holds platform keys (the cache warmer and KB embedding use them), so
+# a plugin left to find its own would silently bill the wrong account and
+# nothing would look wrong.
+def _stt_stack(stt_kw: dict, vad, keys: dict):
+    primary = sarvam.STT(**stt_kw, api_key=keys["sarvam"])
     if not FALLBACK:
         return primary
     # vad is required: gpt-4o-mini-transcribe is not a streaming STT, so without
     # a VAD to chunk the audio it has nothing to send.
     return lk_stt.FallbackAdapter(
-        [primary, openai.STT(model="gpt-4o-mini-transcribe")],
+        [primary, openai.STT(model="gpt-4o-mini-transcribe",
+                             api_key=keys["openai"])],
         vad=vad, attempt_timeout=ATTEMPT_TIMEOUT)
 
 
-def _tts_stack(tts_kw: dict):
-    primary = sarvam.TTS(**tts_kw)
+def _tts_stack(tts_kw: dict, keys: dict):
+    primary = sarvam.TTS(**tts_kw, api_key=keys["sarvam"])
     if not FALLBACK:
         return primary
     # sample_rate is Sarvam's native 22050 so the PRIMARY path never resamples.
     # Only the fallback pays that cost, and only while it is in use.
     # Note there is no attempt_timeout on the TTS adapter - unlike STT and LLM.
     return lk_tts.FallbackAdapter(
-        [primary, openai.TTS(model="gpt-4o-mini-tts")], sample_rate=22050)
+        [primary, openai.TTS(model="gpt-4o-mini-tts", api_key=keys["openai"])],
+        sample_rate=22050)
 
 
-def _llm_stack(cfg):
+def _llm_stack(cfg, keys: dict):
     primary = openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature,
-                         prompt_cache_key=cfg.name)
+                         prompt_cache_key=cfg.name, api_key=keys["openai"])
     if not FALLBACK:
         return primary
     # The only layer with real provider diversity: gemini-flash-lite matches the
     # primary's latency, so a full OpenAI outage costs speech and hearing but
     # not thought.
+    #
+    # Gemini stays on the PLATFORM credentials: it authenticates with a service
+    # account JSON file, not a key string, and there is nowhere in the console to
+    # put a file. So the fallback leg is ours, not the client's - worth knowing
+    # when reading an invoice, and the reason this leg is not offered as a
+    # per-client setting.
     return lk_llm.FallbackAdapter(
         [primary, google.LLM(model="gemini-flash-lite-latest",
                              temperature=cfg.llm_temperature)],
@@ -334,6 +351,27 @@ async def entrypoint(ctx: JobContext):
         logger.info("no dialled number on this job - using AGENT_CONFIG=%s",
                     CONFIG_NAME)
 
+    # Whose provider account this call runs on: the campaign's own keys, or the
+    # client's. A missing key ends the call here rather than at the first
+    # utterance - the caller falls through to a human, which is the same
+    # treatment a disabled campaign gets, and for the same reason.
+    keys: dict[str, str] = {}
+    if cfg.campaign_id is not None:
+        keys = await store.load_provider_keys(cfg.campaign_id)
+        missing = [p for p in ("openai", "sarvam") if not keys.get(p)]
+        if missing:
+            logger.warning("DECLINED call to %s: campaign %s has no %s key",
+                           callee, cfg.campaign_id, " or ".join(missing))
+            await _end_room(ctx.room.name)
+            return
+    else:
+        # A `dev` run against AGENT_CONFIG has no campaign and therefore no
+        # client to bill. Platform keys are the only thing available, and this
+        # path never serves a real caller.
+        keys = {"openai": os.environ["OPENAI_API_KEY"],
+                "sarvam": os.environ["SARVAM_API_KEY"]}
+        logger.info("no campaign on this job - using the platform keys")
+
     stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
 
     # built in prompt.py so the cache warmer emits a byte-identical prefix
@@ -361,13 +399,13 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(_safety_net)
 
-    agent = KBAgent(instructions, cfg, kb_mode, ctx.room)
+    agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys)
 
     vad = ctx.proc.userdata["vad"]
     session = AgentSession(
-        stt=_stt_stack(stt_kw, vad),
-        llm=_llm_stack(cfg),
-        tts=_tts_stack(tts_kw),
+        stt=_stt_stack(stt_kw, vad, keys),
+        llm=_llm_stack(cfg, keys),
+        tts=_tts_stack(tts_kw, keys),
         vad=vad,
         turn_detection=MultilingualModel(),
         allow_interruptions=cfg.allow_interrupt,

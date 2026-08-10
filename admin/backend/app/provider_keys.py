@@ -161,6 +161,32 @@ async def remove(*, tenant_id: int, campaign_id: int | None,
     return tag.endswith(" 1")
 
 
+async def resolve(*, tenant_id: int, campaign_id: int | None) -> dict[str, str]:
+    """-> {'openai': '...', 'sarvam': '...'}, decrypted.
+
+    The ONLY function here that produces plaintext. Everything else works from
+    hints. Used by knowledge-base ingestion, which embeds on the client's key so
+    the cost lands with the documents rather than with us.
+
+    Mirrors the agent's store.load_provider_keys(): campaign override first,
+    client default second. The two resolve identically on purpose - a call and
+    an ingest for the same campaign must not end up on different accounts.
+    """
+    c = secretlib.crypto()
+    rows = await db.pool().fetch(
+        """SELECT provider, key_enc
+             FROM provider_keys
+            WHERE tenant_id = $1
+              AND (campaign_id = $2 OR campaign_id IS NULL)
+            ORDER BY provider, campaign_id NULLS LAST""",
+        tenant_id, campaign_id,
+    )
+    out: dict[str, str] = {}
+    for r in rows:
+        out.setdefault(r["provider"], c.decrypt(r["key_enc"]))
+    return out
+
+
 async def status_for(*, tenant_id: int,
                      campaign_id: int | None) -> list[dict]:
     """What the console shows: one row per provider, never a key.

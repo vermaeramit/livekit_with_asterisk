@@ -19,7 +19,7 @@ from fastapi import (APIRouter, Depends, File, HTTPException, Query, UploadFile,
                      status)
 from fastapi.responses import StreamingResponse
 
-from .. import audit, db, kblib
+from .. import audit, db, provider_keys as pk, kblib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
 from ..schemas import KbDocument, KbIngestResult
 
@@ -112,6 +112,17 @@ async def upload_document(campaign_id: int,
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "this campaign has no agent config to attach documents to")
 
+    # Embedding is billed to whoever owns the documents, so it runs on the
+    # client's OpenAI key - the same one their calls use. Refused up front
+    # rather than half way through a 200-chunk ingest, where the partial work
+    # would already have been paid for by somebody.
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get("openai"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no OpenAI key is set for this campaign or its client - "
+            "embedding cannot be billed to anyone")
+
     filename = safe_filename(file.filename or "")
     dest_dir = STORE_DIR / str(campaign_id)
     staging_root = dest_dir / ".staging"
@@ -160,7 +171,8 @@ async def upload_document(campaign_id: int,
 
             task = asyncio.create_task(kblib.kb().ingest_file(
                 str(staged), config_name=cfg["name"], force=force,
-                campaign_id=campaign_id, on_progress=on_progress))
+                campaign_id=campaign_id, on_progress=on_progress,
+                api_key=keys["openai"]))
 
             # Drain progress events until ingestion finishes. Waiting on the
             # queue with a timeout, rather than on the task alone, keeps a slow

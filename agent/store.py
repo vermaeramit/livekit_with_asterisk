@@ -113,6 +113,44 @@ async def load_config_for_did(did: str) -> Optional[AgentConfig]:
     return _as_config(row)
 
 
+class ProviderKeyMissing(Exception):
+    """The campaign has no usable key for a provider it needs.
+
+    Sibling of CampaignUnavailable, and handled the same way: the caller gets a
+    human rather than a call answered on somebody else's provider account. There
+    is deliberately no fallback to the platform keys in .env - falling back would
+    keep the calls running and the bill arriving, with nothing to notice.
+    """
+
+
+async def load_provider_keys(campaign_id: int) -> dict[str, str]:
+    """-> {'openai': '...', 'sarvam': '...'} for this campaign.
+
+    Resolution is campaign override first, then the client's default. The
+    ORDER BY does that: campaign_id NULLS LAST puts the override ahead of the
+    inherited row, and the dict comprehension keeps the first of each provider.
+
+    Decryption happens here rather than in the caller so a plaintext key exists
+    only inside the plugin constructors that need it.
+    """
+    import crypto
+
+    rows = await (await pool()).fetch(
+        """SELECT pk.provider, pk.key_enc
+             FROM campaigns c
+             JOIN provider_keys pk
+               ON pk.tenant_id = c.tenant_id
+              AND (pk.campaign_id = c.id OR pk.campaign_id IS NULL)
+            WHERE c.id = $1
+            ORDER BY pk.provider, pk.campaign_id NULLS LAST""",
+        campaign_id,
+    )
+    out: dict[str, str] = {}
+    for r in rows:
+        out.setdefault(r["provider"], crypto.decrypt(r["key_enc"]))
+    return out
+
+
 async def start_call(room_name, caller, callee, config_name, language,
                      campaign_id: Optional[int] = None,
                      sip_call_id: Optional[str] = None) -> int:

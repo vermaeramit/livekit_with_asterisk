@@ -214,17 +214,24 @@ def _absorb_tiny(chunks: list[Chunk]) -> list[Chunk]:
 
 # ────────────────────────────── embeddings ──────────────────────────────
 
-_client: AsyncOpenAI | None = None
+# One client per key, not one client overall. Embedding is billed to whoever
+# owns the documents, so an ingest for client A and a search for client B run on
+# different credentials inside the same process - a single global client would
+# quietly put both on whichever key happened to be first.
+_clients: dict[str, AsyncOpenAI] = {}
 
 
-def _openai() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    return _client
+def _openai(api_key: str | None = None) -> AsyncOpenAI:
+    # Falling back to the platform key keeps the CLI and the cache warmer
+    # working; neither belongs to a client.
+    key = api_key or os.environ["OPENAI_API_KEY"]
+    if key not in _clients:
+        _clients[key] = AsyncOpenAI(api_key=key)
+    return _clients[key]
 
 
-async def embed(texts: list[str], on_batch=None) -> list[list[float]]:
+async def embed(texts: list[str], on_batch=None,
+                api_key: str | None = None) -> list[list[float]]:
     """on_batch(done, total) is awaited after each batch, if given.
 
     Embedding is the long pole of an ingest and the only stage with a real
@@ -232,7 +239,7 @@ async def embed(texts: list[str], on_batch=None) -> list[list[float]]:
     """
     out: list[list[float]] = []
     for i in range(0, len(texts), EMBED_BATCH):
-        r = await _openai().embeddings.create(
+        r = await _openai(api_key).embeddings.create(
             model=EMBED_MODEL, input=texts[i:i + EMBED_BATCH])
         out.extend(d.embedding for d in sorted(r.data, key=lambda d: d.index))
         if on_batch:
@@ -249,7 +256,7 @@ def _vec(v: list[float]) -> str:
 
 async def ingest_file(path: str, config_name: str = "default",
                       force: bool = False, campaign_id: int | None = None,
-                      on_progress=None) -> dict:
+                      on_progress=None, api_key: str | None = None) -> dict:
     """on_progress(event: dict) is awaited at each stage, if given.
 
     Stages: hashing, extracting, chunking, embedding (with done/total), saving.
@@ -289,6 +296,7 @@ async def ingest_file(path: str, config_name: str = "default",
     vectors = await embed(
         [c.embed_text for c in chunks],
         on_batch=lambda done, total: emit(stage="embedding", done=done, total=total),
+        api_key=api_key,
     )
     await emit(stage="saving", chunks=len(chunks))
 
@@ -328,7 +336,8 @@ async def ingest_file(path: str, config_name: str = "default",
 # ────────────────────────────── retrieval ──────────────────────────────
 
 async def search(query: str, config_name: str = "default",
-                 top_k: int = 3, min_score: float = 0.25) -> list[dict]:
+                 top_k: int = 3, min_score: float = 0.25,
+                 api_key: str | None = None) -> list[dict]:
     """Hybrid: cosine similarity + trigram word similarity.
 
     word_similarity, NOT similarity: the latter compares whole strings, so a
@@ -338,7 +347,7 @@ async def search(query: str, config_name: str = "default",
     """
     if not query.strip():
         return []
-    qvec = _vec((await embed([query]))[0])
+    qvec = _vec((await embed([query], api_key=api_key))[0])
     rows = await (await store.pool()).fetch(
         """
         WITH vec AS (
