@@ -562,8 +562,12 @@ async def entrypoint(ctx: JobContext):
     ctx.add_shutdown_callback(_shutdown)
     await session.start(room=ctx.room, agent=agent,
                         room_input_options=RoomInputOptions())
-    if cfg.greeting:
-        await session.say(cfg.greeting, allow_interruptions=cfg.allow_interrupt)
+    # One utterance, not two. Said separately, a caller who speaks over the
+    # greeting cancels what follows - and what follows is the recording notice.
+    # Joined here it is either both or neither.
+    opening = " ".join(x for x in (cfg.greeting, cfg.recording_disclosure) if x)
+    if opening:
+        await session.say(opening, allow_interruptions=cfg.allow_interrupt)
 
 
 if __name__ == "__main__":

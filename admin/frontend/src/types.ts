@@ -142,6 +142,7 @@ export interface AgentConfig {
   transfer_enabled: boolean
   transfer_to: string
   transfer_message: string | null
+  recording_disclosure: string
 
   updated_at: string
 }

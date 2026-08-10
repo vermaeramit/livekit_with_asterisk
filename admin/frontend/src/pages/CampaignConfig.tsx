@@ -319,6 +319,22 @@ export function CampaignConfig() {
               hint="Spoken the moment the call connects. Leave empty to let the caller speak first."
             />
 
+            <TextField
+              label="Recording notice"
+              value={value.recording_disclosure ?? ''}
+              onChange={(v) => set('recording_disclosure', v)}
+              placeholder="Yeh call quality aur training ke liye record ki ja rahi hai."
+              hint="Spoken immediately after the greeting, as one sentence with it."
+            />
+            <Note tone="warn">
+              Every call on this platform is recorded — the dialplan does it
+              unconditionally, whatever a campaign is set to. This line is what
+              tells the caller, so it cannot be left empty. It is kept out of the
+              greeting on purpose: the greeting gets rewritten often, and a notice
+              living inside it would eventually be deleted by accident with
+              nothing to warn you.
+            </Note>
+
             <TextArea
               label="Instructions"
               value={value.instructions}

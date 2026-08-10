@@ -172,6 +172,8 @@ class AgentConfigOut(BaseModel):
     transfer_to: str
     transfer_message: str | None
 
+    recording_disclosure: str
+
     updated_at: datetime
 
     @field_validator("llm_temperature", "kb_min_score", mode="before")
@@ -212,6 +214,21 @@ class AgentConfigUpdate(BaseModel):
     transfer_enabled: bool | None = None
     transfer_to: str | None = Field(default=None, max_length=200)
     transfer_message: str | None = Field(default=None, max_length=600)
+
+    # min_length=1, not Optional. Every call is recorded unconditionally by the
+    # dialplan, so a campaign with nothing to say here would be recording callers
+    # without telling them. The database carries the same CHECK.
+    recording_disclosure: str | None = Field(default=None, min_length=1,
+                                             max_length=400)
+
+    @field_validator("recording_disclosure")
+    @classmethod
+    def _not_blank(cls, v: str | None) -> str | None:
+        # min_length alone accepts "   ". Postgres rejects it via btrim; catching
+        # it here turns a 500 into a readable 422.
+        if v is not None and not v.strip():
+            raise ValueError("the recording disclosure cannot be blank")
+        return v
 
     @field_validator("transfer_to")
     @classmethod

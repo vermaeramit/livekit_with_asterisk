@@ -37,6 +37,10 @@ class AgentConfig:
     transfer_enabled: bool
     transfer_to: str
     transfer_message: Optional[str]
+    # Spoken with the greeting on every call. Recording is unconditional in the
+    # dialplan, so this is the notice that makes keeping it lawful - not a
+    # per-campaign preference. NOT NULL in the schema for that reason.
+    recording_disclosure: str
     # Added by migration 001 and backfilled. Carried here so start_call() can
     # stamp every call with its tenant - without it a call is invisible to the
     # client it belongs to, and only a superadmin ever sees it.
