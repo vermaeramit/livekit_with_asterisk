@@ -1981,6 +1981,68 @@ Gemini failed, and three calls ended `end_reason='error'`. Latency from that run
 
 ---
 
+## Asterisk out of Docker (10 Aug 2026)
+
+The team who operate the telephony side do not work with containers. A PBX
+nobody on call can debug is the wrong trade, so it now runs natively.
+
+Worth saying plainly: **the usual argument against Asterisk in Docker never
+applied here.** Everything ran `network_mode: host`, so there was no NAT, no
+port mapping, and no measurable difference — `inviteToRingingMs: 4`, and 20
+concurrent calls sat inside a 1.5-CPU container limit. This move is
+operational, not technical.
+
+| | |
+|---|---|
+| Version | 20.20.1 from source; EPEL only has 18, which is **EOL upstream** |
+| Service | `systemctl {status,restart} asterisk` |
+| Config | `/etc/asterisk` — five files ours, ~100 stock |
+| Recordings | `/var/spool/asterisk/recordings`, bind-mounted read-only into `admin-api` |
+| Rollback | compose service kept behind a `rollback` profile |
+
+### SELinux is the part that will catch the next person
+
+Asterisk started, then exited immediately:
+
+```
+ASTdb initialization failed.  ASTERISK EXITING!
+Unable to open Asterisk database '/var/lib/asterisk/astdb.sqlite3'
+```
+
+Meanwhile `sudo -u asterisk touch /var/lib/asterisk/.writetest` succeeded. DAC
+said yes; SELinux said no, and the message named neither.
+
+`/usr/sbin/asterisk` carries `asterisk_exec_t`, so Rocky's policy confines the
+process to `asterisk_t` and expects `asterisk_var_lib_t` on its data. A source
+build creates those directories as plain `var_lib_t`. The policy was already
+right — only the labels were wrong:
+
+```bash
+restorecon -Rv /etc/asterisk /var/lib/asterisk /var/log/asterisk                /var/spool/asterisk /usr/lib64/asterisk
+```
+
+`ausearch -m avc` gave the answer in one line and should have been the first
+thing checked, not the fourth.
+
+### Three things that would have broken quietly
+
+- **Recordings.** They lived in the `aivoice_recordings` volume that the panel
+  mounted. All 131 were copied to the host path — copied, not moved, and the
+  volume left in place. Missed, every recording made before today would have
+  disappeared from the console with nothing in any log to say so.
+- **`rec-postprocess.sh` and ffmpeg.** ffmpeg is not in Rocky 8's repos.
+  Without it the script keeps the WAV and logs — recordings survive, at ten
+  times the disk, and nobody notices until the disk does.
+- **`loadtest.sh`.** Four `docker exec asterisk` calls, plus a `docker stats`
+  read for the ASTERISK column that would simply have gone blank.
+
+### Not verified
+
+Capacity was not re-measured natively. 20/20 was proven under Docker; on the
+native install it is assumed. Run `loadtest.sh 20` before relying on it.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at

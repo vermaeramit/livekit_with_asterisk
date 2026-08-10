@@ -48,16 +48,19 @@ cd /opt/aivoice
 docker compose up -d              # start all
 docker compose ps                 # status
 docker compose down               # stop all (calls drop)
-docker compose restart asterisk   # one service
+systemctl restart asterisk        # asterisk is not a container
 ```
 
 | Service | What it is |
 |---|---|
-| `asterisk` | Test PBX — softphone registration, dialplan |
 | `redis` | LiveKit coordination (loopback only) |
 | `livekit` | SFU / media server |
 | `sip` | SIP ↔ WebRTC gateway on port 5080 |
 | `postgres` | Agent config, call logs, transcripts |
+
+Asterisk is **not** in this list — it runs natively under systemd. `docker
+compose down` therefore does not stop the PBX, and `docker compose up -d` does
+not start it.
 
 ### The AI agent (systemd)
 
@@ -77,18 +80,33 @@ journalctl -u aivoice-cache-warmer -f
 
 ### Deploying Asterisk changes
 
+Asterisk runs natively (see [SERVER.md](SERVER.md)), so config lives in
+`/etc/asterisk` and a reload actually reads the file you edited.
+
 ```bash
 cd /srv/aivoice && git pull
-\cp -rf server-configs/asterisk/. /opt/aivoice/asterisk/
-cd /opt/aivoice && docker compose restart asterisk      # conf only
-cd /opt/aivoice && docker compose up -d --build asterisk # Dockerfile changed
+\cp -f server-configs/asterisk/conf/extensions.conf /etc/asterisk/
+asterisk -rx "dialplan reload"          # dialplan only, no dropped calls
+
+# pjsip.conf / rtp.conf / modules.conf / logger.conf:
+asterisk -rx "core reload"              # or systemctl restart asterisk
 ```
 
-> 🚨 **`pjsip.conf` is gitignored and must never be in that copy.** It was once
-> tracked with a `CHANGEME` placeholder, and this exact command overwrote the
-> live softphone password with it. Every endpoint then failed to register with
-> `401` and nothing in the logs said why — the config looked perfectly valid.
-> Only `pjsip.conf.template` is tracked now, so the copy cannot reach it.
+Only five files are ours — `pjsip.conf`, `extensions.conf`, `rtp.conf`,
+`modules.conf`, `logger.conf`. The other ~100 in `/etc/asterisk` are the stock
+`make samples` set and are not tracked.
+
+> 🚨 **`pjsip.conf` is gitignored and must never be copied from the repo.** It was
+> once tracked with a `CHANGEME` placeholder, and a bulk copy overwrote the live
+> softphone password with it. Every endpoint then failed to register with `401`
+> and nothing in the logs said why — the config looked perfectly valid. Only
+> `pjsip.conf.template` is tracked, which is why the copy above names files one
+> at a time rather than copying the directory.
+
+> 🚨 **`cp` is aliased to `cp -i` for root on Rocky.** In a pasted block the next
+> line answers the prompt, so the copy silently does not happen and the reload
+> reloads the old file. Use `\cp -f`, and confirm with `cmp` rather than trusting
+> that it printed "copied".
 
 > ⚠️ **Restarting Asterisk drops every registration.** Softphones and the dialer
 > are unauthorised until they re-register, which happens on their own expiry
@@ -97,15 +115,15 @@ cd /opt/aivoice && docker compose up -d --build asterisk # Dockerfile changed
 > production.
 
 ```bash
-docker exec asterisk asterisk -rx "pjsip show endpoints" | grep -A1 "Endpoint:  1001"
+asterisk -rx "pjsip show endpoints" | grep -A1 "Endpoint:  1001"
 ```
 
 `Unavailable` means nothing is registered. Enable a SIP trace to see why:
 
 ```bash
-docker exec asterisk asterisk -rx "logger add channel debug.log notice,warning,error,verbose"
-docker exec asterisk asterisk -rx "pjsip set logger on"
-docker exec asterisk grep -A 12 "REGISTER sip:" /var/log/asterisk/debug.log | tail -60
+asterisk -rx "logger add channel debug.log notice,warning,error,verbose"
+asterisk -rx "pjsip set logger on"
+grep -A 12 "REGISTER sip:" /var/log/asterisk/debug.log | tail -60
 ```
 
 > A first `401` is normal — SIP always challenges before accepting credentials.
@@ -309,13 +327,19 @@ Params that do **not** work on `saarika:*` — the plugin drops them silently be
 ### Asterisk
 
 ```bash
-vi /opt/aivoice/asterisk/conf/extensions.conf   # dialplan
-vi /opt/aivoice/asterisk/conf/pjsip.conf        # endpoints, trunk
-cd /opt/aivoice && docker compose restart asterisk
+vi /etc/asterisk/extensions.conf     # dialplan
+vi /etc/asterisk/pjsip.conf          # endpoints, trunk
+
+asterisk -rx "dialplan reload"       # dialplan changes, no dropped calls
+asterisk -rx "core reload"           # anything else
 ```
 
-Config is overlaid onto the image at startup, so a **restart** is enough — no rebuild.
-Only Dockerfile changes need `docker compose up -d --build`.
+These are the live files — a reload reads exactly what you just edited. Prefer
+`dialplan reload` where it applies: a full restart drops every SIP registration,
+and softphones only come back on their own expiry interval.
+
+Mirror any dialplan change back into `server-configs/asterisk/conf/` and commit
+it. `pjsip.conf` is the exception — it holds the SIP password and is gitignored.
 
 ### LiveKit SIP objects
 
@@ -463,7 +487,7 @@ exten => 800,1,NoOp(<-- TRANSFER landed)
  same => n,Hangup()
 ```
 
-then `docker compose restart asterisk`.
+then `systemctl restart asterisk`.
 
 > 🚨 The target extension **must** be in `from-livekit` (that is the `livekit` endpoint's
 > context, where the REFER arrives) and **must come before the `_.` catch-all**, which
@@ -477,7 +501,7 @@ then `docker compose restart asterisk`.
 #   TRANSFER OK -> sip:800@10.130.9.243
 
 # asterisk side - this is the proof the call actually landed
-docker compose logs --tail=40 asterisk | grep -E 'TRANSFER landed|left .simple_bridge|Playback'
+tail -40 /var/log/asterisk/debug.log | grep -E 'TRANSFER landed|left .simple_bridge|Playback'
 
 # call record
 docker exec postgres psql -U aivoice -d aivoice -c "
@@ -494,7 +518,7 @@ what confirms the call reached the destination.
 |---|---|
 | Handoff line cut off mid-sentence | `wait_for_playout()` not awaited before the REFER |
 | Call drops instead of transferring | Target extension missing from `from-livekit`, or shadowed by the `_.` catch-all |
-| `transfer failed` in the agent log | Check `res_pjsip_refer.so` is loaded: `docker exec asterisk asterisk -rx "module show like refer"` |
+| `transfer failed` in the agent log | Check `res_pjsip_refer.so` is loaded: `asterisk -rx "module show like refer"` |
 | Transfers on questions it could answer | Tighten the HANDOFF rules in the prompt |
 
 ---
@@ -674,8 +698,8 @@ ps aux | grep -c "[v]oice_agent"     # 0 = agent is not running
 ss -tulnp | grep -E '5060|5080|6379|7880|7881|7882'
 
 # asterisk
-docker exec asterisk asterisk -rx "pjsip show endpoints"     # 1001 -> Avail
-docker exec asterisk asterisk -rx "core show channels"       # during a call
+asterisk -rx "pjsip show endpoints"     # 1001 -> Avail
+asterisk -rx "core show channels"       # during a call
 
 # livekit + db
 docker exec redis redis-cli ping                             # PONG
@@ -693,15 +717,15 @@ df -h / ; free -h
 cd /opt/aivoice
 
 docker compose logs -f --tail=50 sip         # SIP gateway - most useful
-docker compose logs -f --tail=50 asterisk
+tail -f /var/log/asterisk/debug.log
 docker compose logs -f --tail=50 livekit
 docker compose logs --tail=50 postgres
 
 # full SIP signalling trace (very verbose - turn off after)
-docker exec asterisk asterisk -rx "pjsip set logger on"
-docker exec asterisk asterisk -rx "rtp set debug on"
-docker exec asterisk asterisk -rx "pjsip set logger off"
-docker exec asterisk asterisk -rx "rtp set debug off"
+asterisk -rx "pjsip set logger on"
+asterisk -rx "rtp set debug on"
+asterisk -rx "pjsip set logger off"
+asterisk -rx "rtp set debug off"
 ```
 
 Docker log rotation is set to 50 MB × 5 files per container in
@@ -761,7 +785,7 @@ Signalling is fine, RTP is not.
 
 ```bash
 firewall-cmd --zone=voip --list-all           # is the RTP range open?
-docker exec asterisk asterisk -rx "rtp set debug on"
+asterisk -rx "rtp set debug on"
 ```
 
 The workstation has three NICs (`10.130.23.37` LAN, plus hotspot and WSL adapters) and
@@ -785,29 +809,33 @@ sysctl net.core.rmem_max        # should be 26214400
 On this single box, agent workers are CPU-capped precisely so they cannot starve the
 LiveKit SFU — a starved SFU degrades audio on **every** call, not just one.
 
-### Changing Asterisk config: `pjsip reload` is not enough
+### Changing a SIP password
 
-The container's `entrypoint.sh` overlays `conf/` onto `/etc/asterisk` **at startup**.
-Editing `/opt/aivoice/asterisk/conf/pjsip.conf` therefore changes nothing a running
-Asterisk can see, and `pjsip reload` re-reads the container's stale copy and reports:
-
-```
-Module 'res_pjsip.so' reloaded successfully.
-```
-
-The success message is the trap. Restart the container:
+`/etc/asterisk/pjsip.conf` is the live file now that Asterisk runs natively, so
+an edit plus a reload is genuinely all it takes:
 
 ```bash
-docker restart asterisk
-docker exec asterisk grep -c '^password=OLDVALUE$' /etc/asterisk/pjsip.conf   # expect 0
+read -rsp 'New password: ' NEWPW; echo          # run this on its own line
+sed -i "s|^password=.*|password=${NEWPW}|" /etc/asterisk/pjsip.conf
+unset NEWPW
+asterisk -rx "core reload"
+grep -c '^password=OLDVALUE$' /etc/asterisk/pjsip.conf   # expect 0
 ```
 
-Verify **inside the container**, not on the host — the host file is only the source.
-Note that a restart drops every SIP registration; softphones must re-register.
+> ⚠️ `read` must be its own command. Pasted inside a block, it consumes the next
+> line as its input — so the password becomes empty and the following command
+> never runs.
 
 > 🔒 Never run `pjsip show auth <id>` — it prints the password in plaintext. That is how
 > the softphone secret ended up in a shared terminal. To check a password without
 > revealing it, `grep -c` for the exact value and read the 0/1.
+
+> 📎 While Asterisk was containerised this was a trap worth remembering, in case
+> anything is ever run that way again: `conf/` was overlaid onto `/etc/asterisk`
+> **at startup only**, so editing the host file changed nothing a running
+> Asterisk could see, and `pjsip reload` re-read the container's stale copy and
+> answered `Module 'res_pjsip.so' reloaded successfully.` The success message was
+> the whole problem.
 
 ### Agent crashes on startup
 
@@ -881,7 +909,7 @@ export ECHO_BEEP=0 ECHO_QUEUE_MS=60
 python echo_agent.py dev
 
 # 2. clear old recordings, dial 702, stay silent 2s, ONE sharp clap, silent 2s, hang up
-docker exec asterisk sh -c 'rm -f /var/spool/asterisk/monitor/lat*.wav'
+sh -c 'rm -f /var/spool/asterisk/monitor/lat*.wav'
 
 # 3. analyse
 docker cp asterisk:/var/spool/asterisk/monitor/lat-in.wav  /tmp/lat-in.wav

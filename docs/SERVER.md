@@ -84,20 +84,13 @@ set -a; source /opt/aivoice/.env; set +a
 
 ```
 /opt/aivoice/
-├── .env                        # LiveKit API key + secret (chmod 600)
+├── .env                        # provider + LiveKit keys, SECRETS_KEY (chmod 600)
 ├── docker-compose.yml
-├── asterisk/
-│   ├── Dockerfile              # ubuntu:24.04 + Asterisk 20 (LTS)
-│   ├── entrypoint.sh           # overlays conf/ onto /etc/asterisk at startup
-│   └── conf/
-│       ├── pjsip.conf          # transport, endpoint 1001, livekit trunk
-│       ├── extensions.conf     # 600 echo, 601 playback, 700 -> LiveKit
-│       ├── rtp.conf            # RTP range 10000-19999
-│       └── modules.conf        # autoload + noloads to silence log noise
+├── asterisk/                   # kept for the rollback profile only - see below
 ├── livekit/
 │   └── livekit.yaml            # use_external_ip:false, node_ip pinned to LAN
 ├── redis/
-│   └── redis.conf              # 127.0.0.1 only, persistence off
+│   └── redis.conf              # 127.0.0.1 only, RDB on, noeviction
 └── sip/
     ├── config.yaml             # sip_port 5080, rtp 20000-29999 (chmod 600)
     └── objects/
@@ -105,7 +98,47 @@ set -a; source /opt/aivoice/.env; set +a
         └── dispatch-rule.json
 ```
 
-Docker named volumes: `aivoice_asterisk-spool`, `aivoice_asterisk-log`.
+Docker named volumes: `aivoice_asterisk-spool`, `aivoice_asterisk-log`,
+`aivoice_recordings` (kept, no longer written to), `aivoice_redis-data`.
+
+### Asterisk is NOT in Docker
+
+It runs natively — the team who operate the telephony side do not work with
+containers, and a PBX nobody on call can debug is the wrong trade.
+
+| | |
+|---|---|
+| Version | **20.20.1**, built from source (`/usr/local/src/asterisk-20.20.1`) |
+| Why source | EPEL only carries Asterisk 18, which is **end of life** upstream |
+| Config | `/etc/asterisk` — ours are `pjsip.conf`, `extensions.conf`, `rtp.conf`, `modules.conf`, `logger.conf`; the rest is the stock `make samples` set |
+| Service | `systemctl {status,restart} asterisk` — unit in `server-configs/systemd/` |
+| Runs as | `asterisk:asterisk`, not root |
+| Recordings | `/var/spool/asterisk/recordings`, bind-mounted read-only into `admin-api` |
+| CLI | `asterisk -rvvv`, `asterisk -rx "..."` — no `docker exec` |
+
+> 🚨 **SELinux labels are not optional.** `/usr/sbin/asterisk` carries
+> `asterisk_exec_t`, so Rocky's policy confines the process to `asterisk_t` and
+> expects `asterisk_var_lib_t` on its data. A source build creates those
+> directories as plain `var_lib_t`, and Asterisk exits at startup with
+> `ASTdb initialization failed` — while `ls -l` shows the directory perfectly
+> writable by the asterisk user. After any reinstall:
+>
+> ```bash
+> restorecon -Rv /etc/asterisk /var/lib/asterisk /var/log/asterisk \
+>                /var/spool/asterisk /usr/lib64/asterisk
+> ```
+
+**Rollback**, if the native install ever has to be undone:
+
+```bash
+systemctl disable --now asterisk
+cd /opt/aivoice && docker compose --profile rollback up -d asterisk
+```
+
+The container is kept behind a `rollback` profile so a plain `compose up -d`
+cannot start it by accident — both bind the same ports. `aivoice_recordings`
+still holds every recording made before the move; the panel's bind mount would
+need pointing back at it.
 
 ### Running containers
 

@@ -25,10 +25,13 @@ echo "start $(date +%T)" | tee -a "$OUT"
          TIME LOAD1 CHANS ASTERISK LIVEKIT SIP AGENT ROOMS
   while :; do
     read -r l1 _ < /proc/loadavg
-    chans=$(docker exec asterisk asterisk -rx "core show channels count" 2>/dev/null \
+    chans=$(asterisk -rx "core show channels count" 2>/dev/null \
             | grep -oP '^\d+(?= active channel)' || echo 0)
     stats=$(docker stats --no-stream --format '{{.Name}} {{.CPUPerc}}' 2>/dev/null)
-    ast=$(echo "$stats"  | awk '$1=="asterisk"{print $2}')
+    # Asterisk is not a container any more, so `docker stats` has no row for it.
+    # Left as-is this column just went blank - the same silent-empty failure as
+    # the dialplan counts below, and just as easy to read as "nothing happened".
+    ast=$(ps -C asterisk -o %cpu= 2>/dev/null | awk '{s+=$1} END {printf "%.0f%%", s+0}')
     lk=$(echo "$stats"   | awk '$1=="livekit"{print $2}')
     sip=$(echo "$stats"  | awk '$1=="sip"{print $2}')
     agent=$(ps -C python -o %cpu= 2>/dev/null | awk '{s+=$1} END {printf "%.0f%%", s}')
@@ -47,7 +50,7 @@ disown $SAMPLER 2>/dev/null
 # the script would still report a clean, quiet test on whatever did.
 FAILED=0
 for i in $(seq 1 "$N"); do
-  resp=$(docker exec asterisk asterisk -rx \
+  resp=$(asterisk -rx \
     "channel originate Local/s@loadtest extension ${EXTEN}@from-internal" 2>&1)
   case "$resp" in
     *Failed*|*Unable*|*"No such"*|*Error*)
@@ -67,7 +70,7 @@ fi
 echo "waiting for channels to drain..." | tee -a "$OUT"
 for _ in $(seq 1 120); do
   sleep 5
-  live=$(docker exec asterisk asterisk -rx "core show channels count" 2>/dev/null \
+  live=$(asterisk -rx "core show channels count" 2>/dev/null \
          | grep -oP '^\d+(?= active channel)' || echo 0)
   [ "${live:-0}" -eq 0 ] && break
 done
@@ -106,7 +109,7 @@ UTC_TO=$(date -u '+%Y-%m-%d %H:%M')
 # back 0 - a run where all ten calls connected reported "reached the dialplan 0".
 # Compare the timestamps instead; the format sorts lexicographically.
 window() {
-  docker exec asterisk awk -v a="$UTC_FROM" -v b="$UTC_TO" '
+  awk -v a="$UTC_FROM" -v b="$UTC_TO" '
     /^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/ {
       ts = substr($0, 2, 16)
       if (ts >= a && ts <= b) print
