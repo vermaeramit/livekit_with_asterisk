@@ -18,11 +18,14 @@ class AgentConfig:
     instructions: str
     stt_provider: str
     stt_model: Optional[str]
+    # NULL = no fallback. Deliberately a column and not a rule - see migration 011.
+    stt_fallback_provider: Optional[str]
     llm_provider: str
     llm_model: str
     llm_temperature: float
     tts_provider: str
     tts_model: Optional[str]
+    tts_fallback_provider: Optional[str]
     tts_voice: Optional[str]
     allow_interrupt: bool
     max_turns: int

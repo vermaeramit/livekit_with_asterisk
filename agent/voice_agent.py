@@ -26,7 +26,7 @@ from livekit.agents import (
 )
 # aliased: bare stt/tts/llm would shadow the local variables of the same name
 from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
-from livekit.plugins import google, openai, sarvam, silero
+from livekit.plugins import google, openai, sarvam, silero, soniox
 
 import prompt as prompt_mod
 
@@ -241,31 +241,120 @@ ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
 
 # Every constructor below takes its key EXPLICITLY rather than letting the
 # plugin read the environment. That is the whole point of per-client keys: the
-# env still holds platform keys (the cache warmer and KB embedding use them), so
-# a plugin left to find its own would silently bill the wrong account and
-# nothing would look wrong.
-def _stt_stack(stt_kw: dict, vad, keys: dict):
-    primary = sarvam.STT(**stt_kw, api_key=keys["sarvam"])
-    if not FALLBACK:
+# env still holds platform keys (KB embedding uses them), so a plugin left to
+# find its own would silently bill the wrong account and nothing would look
+# wrong.
+
+# What each provider emits natively. The TTS FallbackAdapter resamples anything
+# that does not match the rate it is given, so this is set from the PRIMARY -
+# the common path then never resamples, and only a firing fallback pays for it.
+_TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000}
+
+
+def _soniox_lang(language: str) -> str:
+    """Soniox takes bare ISO codes ("hi"); the config carries Sarvam's regional
+    form ("hi-IN"). Passing hi-IN through is not an error the API reports - it
+    just synthesises something else."""
+    return (language or "en").split("-")[0]
+
+
+def _build_stt(provider: str, cfg, key: str, use_config_model: bool):
+    """use_config_model is False for a fallback leg: cfg.stt_model names a model
+    that belongs to the PRIMARY provider, and handing Sarvam's 'saarika:v2.5' to
+    OpenAI fails at the first utterance rather than at startup."""
+    if provider == "sarvam":
+        kw = _stt_kwargs(cfg)
+        if not use_config_model:
+            kw["model"] = "saarika:v2.5"
+        return sarvam.STT(**kw, api_key=key)
+    if provider == "openai":
+        model = (cfg.stt_model if use_config_model else None) or "gpt-4o-mini-transcribe"
+        return openai.STT(model=model, api_key=key)
+    if provider == "soniox":
+        return soniox.STT(
+            api_key=key,
+            params=soniox.STTOptions(
+                model=(cfg.stt_model if use_config_model else None) or "stt-rt-v5",
+                # The caller's language first, English second: these calls are
+                # Hinglish, and the pair is what the hint field is for.
+                language_hints=[_soniox_lang(cfg.language), "en"],
+                # Soniox defaults this to 2000 ms - its own endpointing would
+                # then decide turns 500 ms after our local turn detector has
+                # already given up. Tied to the same budget instead.
+                max_endpoint_delay_ms=int(MAX_ENDPOINTING * 1000),
+            ),
+        )
+    raise ValueError(f"unknown STT provider '{provider}'")
+
+
+def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
+    if provider == "sarvam":
+        kw = _tts_kwargs(cfg)
+        if not use_config_model:
+            kw["model"], kw["speaker"] = "bulbul:v3", "shubh"
+        return sarvam.TTS(**kw, api_key=key)
+    if provider == "openai":
+        model = (cfg.tts_model if use_config_model else None) or "gpt-4o-mini-tts"
+        return openai.TTS(model=model, api_key=key)
+    if provider == "soniox":
+        # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
+        # Soniox one when Soniox is. The console validates that pairing; here we
+        # only fall back to a default when it is empty.
+        return soniox.TTS(
+            api_key=key,
+            model=(cfg.tts_model if use_config_model else None) or "tts-rt-v1-preview",
+            language=_soniox_lang(cfg.language),
+            voice=(cfg.tts_voice if use_config_model else None) or "Priya",
+            sample_rate=_TTS_NATIVE_RATE["soniox"],
+        )
+    raise ValueError(f"unknown TTS provider '{provider}'")
+
+
+def _fallback_provider(layer: str, configured: str | None, primary: str,
+                       keys: dict) -> str | None:
+    """-> the fallback provider to use, or None with a reason logged.
+
+    A fallback the client has no key for is not a fallback. Silently building it
+    would produce a chain that reports itself as protected and fails on the
+    first real outage - which is the one moment it exists for.
+    """
+    if not FALLBACK or not configured:
+        return None
+    if configured == primary:
+        # The schema forbids this, so reaching here means the row predates the
+        # constraint. Retrying the same dead provider twice is worse than no
+        # fallback: the console would show one.
+        logger.warning("%s fallback equals the primary (%s) - ignoring",
+                       layer, primary)
+        return None
+    if not keys.get(configured):
+        logger.warning("%s fallback '%s' has no key for this campaign - "
+                       "running on %s alone", layer, configured, primary)
+        return None
+    return configured
+
+
+def _stt_stack(cfg, vad, keys: dict):
+    primary = _build_stt(cfg.stt_provider, cfg, keys[cfg.stt_provider], True)
+    fb = _fallback_provider("stt", cfg.stt_fallback_provider, cfg.stt_provider, keys)
+    if not fb:
         return primary
     # vad is required: gpt-4o-mini-transcribe is not a streaming STT, so without
     # a VAD to chunk the audio it has nothing to send.
     return lk_stt.FallbackAdapter(
-        [primary, openai.STT(model="gpt-4o-mini-transcribe",
-                             api_key=keys["openai"])],
+        [primary, _build_stt(fb, cfg, keys[fb], False)],
         vad=vad, attempt_timeout=ATTEMPT_TIMEOUT)
 
 
-def _tts_stack(tts_kw: dict, keys: dict):
-    primary = sarvam.TTS(**tts_kw, api_key=keys["sarvam"])
-    if not FALLBACK:
+def _tts_stack(cfg, keys: dict):
+    primary = _build_tts(cfg.tts_provider, cfg, keys[cfg.tts_provider], True)
+    fb = _fallback_provider("tts", cfg.tts_fallback_provider, cfg.tts_provider, keys)
+    if not fb:
         return primary
-    # sample_rate is Sarvam's native 22050 so the PRIMARY path never resamples.
-    # Only the fallback pays that cost, and only while it is in use.
     # Note there is no attempt_timeout on the TTS adapter - unlike STT and LLM.
     return lk_tts.FallbackAdapter(
-        [primary, openai.TTS(model="gpt-4o-mini-tts", api_key=keys["openai"])],
-        sample_rate=22050)
+        [primary, _build_tts(fb, cfg, keys[fb], False)],
+        sample_rate=_TTS_NATIVE_RATE.get(cfg.tts_provider, 24000))
 
 
 def _llm_stack(cfg, keys: dict):
@@ -358,7 +447,11 @@ async def entrypoint(ctx: JobContext):
     keys: dict[str, str] = {}
     if cfg.campaign_id is not None:
         keys = await store.load_provider_keys(cfg.campaign_id)
-        missing = [p for p in ("openai", "sarvam") if not keys.get(p)]
+        # Whichever providers THIS campaign actually uses - not a fixed pair.
+        # openai is always in the set: the LLM runs on it, and so does knowledge
+        # base retrieval, whatever STT and TTS are set to.
+        needed = {cfg.stt_provider, cfg.tts_provider, "openai"}
+        missing = sorted(p for p in needed if not keys.get(p))
         if missing:
             logger.warning("DECLINED call to %s: campaign %s has no %s key",
                            callee, cfg.campaign_id, " or ".join(missing))
@@ -368,11 +461,15 @@ async def entrypoint(ctx: JobContext):
         # A `dev` run against AGENT_CONFIG has no campaign and therefore no
         # client to bill. Platform keys are the only thing available, and this
         # path never serves a real caller.
-        keys = {"openai": os.environ["OPENAI_API_KEY"],
-                "sarvam": os.environ["SARVAM_API_KEY"]}
-        logger.info("no campaign on this job - using the platform keys")
-
-    stt_kw, tts_kw = _stt_kwargs(cfg), _tts_kwargs(cfg)
+        # Whatever the environment happens to hold. Built by lookup rather than
+        # as a fixed pair so a dev run against a soniox config does not die with
+        # a KeyError three lines later.
+        keys = {p: os.environ[v] for p, v in
+                (("openai", "OPENAI_API_KEY"),
+                 ("sarvam", "SARVAM_API_KEY"),
+                 ("soniox", "SONIOX_API_KEY")) if os.environ.get(v)}
+        logger.info("no campaign on this job - using the platform keys (%s)",
+                    ",".join(sorted(keys)) or "none")
 
     # built in prompt.py so the cache warmer emits a byte-identical prefix
     instructions, kb_mode, kb_tokens = await prompt_mod.build_instructions(cfg)
@@ -403,9 +500,9 @@ async def entrypoint(ctx: JobContext):
 
     vad = ctx.proc.userdata["vad"]
     session = AgentSession(
-        stt=_stt_stack(stt_kw, vad, keys),
+        stt=_stt_stack(cfg, vad, keys),
         llm=_llm_stack(cfg, keys),
-        tts=_tts_stack(tts_kw, keys),
+        tts=_tts_stack(cfg, keys),
         vad=vad,
         turn_detection=MultilingualModel(),
         allow_interruptions=cfg.allow_interrupt,
