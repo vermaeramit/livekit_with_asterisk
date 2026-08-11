@@ -69,10 +69,16 @@ async def create_campaign(body: CampaignCreate, actor: CurrentUser = Depends(edi
     # default and inherited a dead model name from the column defaults - nobody
     # found out until a caller dialled it. The same shape of bug, so the same
     # answer: do not create something that is switched on and cannot work.
+    # The providers a NEW campaign will use - its agent_config is created below
+    # with the defaults named there, so this is that set. Not every provider in
+    # PROVIDERS: demanding a Soniox key from a client who never uses Soniox
+    # would block them from creating anything.
+    born_with = {"sarvam", "openai"}
     has_keys = await db.pool().fetchval(
         """SELECT count(DISTINCT provider) = $2 FROM provider_keys
-            WHERE tenant_id = $1 AND campaign_id IS NULL""",
-        tenant_id, len(pk.PROVIDERS))
+            WHERE tenant_id = $1 AND campaign_id IS NULL
+              AND provider = ANY($3::text[])""",
+        tenant_id, len(born_with), sorted(born_with))
 
     async with db.pool().acquire() as conn:
         async with conn.transaction():

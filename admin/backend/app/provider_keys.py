@@ -21,8 +21,8 @@ from . import db, secretlib
 
 log = logging.getLogger("admin-api")
 
-PROVIDERS = ("openai", "sarvam")
-Provider = Literal["openai", "sarvam"]
+PROVIDERS = ("openai", "sarvam", "soniox")
+Provider = Literal["openai", "sarvam", "soniox"]
 
 _TIMEOUT = 15
 
@@ -112,7 +112,34 @@ def _check_sarvam(key: str) -> Validation:
     return Validation(False, f"Sarvam returned {code}")
 
 
-_CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam}
+def _check_soniox(key: str) -> Validation:
+    """GET /v1/models - free, read-only, and genuinely authenticated.
+
+    Every Soniox endpoint tried (models, transcriptions, files, voices) answered
+    401 to a made-up key, so unlike Sarvam's /v1/models there is no trap here.
+    The 401 path is verified against the live API; the 200 path is not, because
+    there was no funded account when this was written. If a valid key ever
+    reports as rejected, that is the first thing to re-check.
+    """
+    req = urllib.request.Request(
+        "https://api.soniox.com/v1/models",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    code, body = _status_of(req)
+    if code == 200:
+        return Validation(True, "key accepted by Soniox")
+    if code in (401, 403):
+        return Validation(False, "Soniox rejected this key")
+    if code in (402, 429):
+        return Validation(True, "key is valid but the Soniox account is out of "
+                                "credit or rate limited", no_credits=True)
+    if code == 0:
+        return Validation(False, f"could not reach Soniox: {body}")
+    return Validation(False, f"Soniox returned {code}")
+
+
+_CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
+           "soniox": _check_soniox}
 
 
 async def validate(provider: str, key: str) -> Validation:
@@ -220,13 +247,37 @@ async def status_for(*, tenant_id: int,
     return out
 
 
+async def required_for_campaign(campaign_id: int) -> set[str]:
+    """Which providers this campaign actually needs a key for.
+
+    Its configured STT and TTS, plus openai - the LLM runs on it, and so does
+    knowledge-base retrieval, whatever STT and TTS are set to.
+
+    NOT every provider in PROVIDERS. That was the rule until soniox was added,
+    at which point it would have demanded a Soniox key from clients who never
+    use Soniox before letting them enable anything.
+
+    Fallbacks are deliberately excluded: a fallback with no key is skipped with
+    a warning at call time, not a reason to block the campaign.
+    """
+    row = await db.pool().fetchrow(
+        """SELECT stt_provider, tts_provider FROM agent_config
+            WHERE campaign_id = $1 ORDER BY id LIMIT 1""",
+        campaign_id,
+    )
+    if row is None:
+        return {"openai"}
+    return {row["stt_provider"], row["tts_provider"], "openai"}
+
+
 async def missing_for_campaign(campaign_id: int) -> list[str]:
-    """Providers a campaign has no usable key for.
+    """Providers a campaign needs and has no usable key for.
 
     Used to block enabling a campaign. Catching this at config time is the whole
     point: the alternative is catching it at call time, where the symptom is a
     caller being handed to a human and nobody being told why.
     """
+    needed = await required_for_campaign(campaign_id)
     rows = await db.pool().fetch(
         """SELECT DISTINCT pk.provider
              FROM campaigns c
@@ -237,4 +288,4 @@ async def missing_for_campaign(campaign_id: int) -> list[str]:
         campaign_id,
     )
     have = {r["provider"] for r in rows}
-    return [p for p in PROVIDERS if p not in have]
+    return sorted(needed - have)

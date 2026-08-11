@@ -147,6 +147,11 @@ export interface AgentConfig {
   transfer_to: string
   transfer_message: string | null
   recording_disclosure: string
+  stt_provider: string
+  tts_provider: string
+  // null = no fallback for that layer
+  stt_fallback_provider: string | null
+  tts_fallback_provider: string | null
 
   updated_at: string
 }

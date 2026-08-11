@@ -50,30 +50,64 @@ const LLM_MODELS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
 ]
 
+const PROVIDERS = [
+  { value: 'sarvam', label: 'Sarvam' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'soniox', label: 'Soniox' },
+]
+
 // Only models and speakers known to exist are listed. Every one of these fails
 // at call time rather than on save if it is wrong, so the list is the safe path
 // and "Custom…" is the escape hatch for anything the provider adds later.
-const STT_MODELS = [
-  { value: 'saarika:v2.5', label: 'saarika:v2.5 — in use' },
-  { value: 'saarika:v2', label: 'saarika:v2' },
-  { value: 'saarika:v1', label: 'saarika:v1' },
-]
+const STT_MODELS: Record<string, { value: string; label: string }[]> = {
+  sarvam: [
+    { value: 'saarika:v2.5', label: 'saarika:v2.5 — measured' },
+    { value: 'saarika:v2', label: 'saarika:v2' },
+    { value: 'saarika:v1', label: 'saarika:v1' },
+  ],
+  openai: [{ value: 'gpt-4o-mini-transcribe', label: 'gpt-4o-mini-transcribe' }],
+  soniox: [{ value: 'stt-rt-v5', label: 'stt-rt-v5 — realtime' }],
+}
 
-const TTS_MODELS = [
-  { value: 'bulbul:v3', label: 'bulbul:v3 — in use' },
-  { value: 'bulbul:v2', label: 'bulbul:v2' },
-]
+const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
+  sarvam: [
+    { value: 'bulbul:v3', label: 'bulbul:v3 — measured ~240ms TTFB' },
+    { value: 'bulbul:v2', label: 'bulbul:v2' },
+  ],
+  openai: [{ value: 'gpt-4o-mini-tts', label: 'gpt-4o-mini-tts — ~889ms measured' }],
+  soniox: [{ value: 'tts-rt-v1-preview', label: 'tts-rt-v1-preview' }],
+}
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
 // than from documentation. The first version of this list was written from
 // memory and was bulbul:v2's - every one of those names makes TTS.__init__
 // raise, so the job dies before the call is even answered.
-const VOICES = [
-  'shubh', 'ritu', 'rahul', 'pooja', 'simran', 'kavya', 'amit', 'ratan',
-  'rohan', 'dev', 'ishita', 'shreya', 'manan', 'sumit', 'priya', 'aditya',
-  'kabir', 'neha', 'varun', 'roopa', 'aayan', 'ashutosh', 'advait', 'amelia',
-  'sophia', 'suhani', 'rupali', 'tanya', 'shruti', 'kavitha',
-].map((v) => ({ value: v, label: v }))
+//
+// ⚠️ The Soniox list came from their docs, NOT from the provider. They expose
+// GET /v1/voices; once there is a funded account, read it from there and delete
+// this literal. Every hardcoded voice list in this project has been wrong once.
+const VOICES: Record<string, { value: string; label: string }[]> = {
+  sarvam: [
+    'shubh', 'ritu', 'rahul', 'pooja', 'simran', 'kavya', 'amit', 'ratan',
+    'rohan', 'dev', 'ishita', 'shreya', 'manan', 'sumit', 'priya', 'aditya',
+    'kabir', 'neha', 'varun', 'roopa', 'aayan', 'ashutosh', 'advait', 'amelia',
+    'sophia', 'suhani', 'rupali', 'tanya', 'shruti', 'kavitha',
+  ].map((v) => ({ value: v, label: v })),
+  soniox: [
+    'Priya', 'Meera', 'Arjun', 'Rohan', 'Maya', 'Nina', 'Emma', 'Claire',
+    'Grace', 'Mina', 'Lucia', 'Sofia', 'Isla', 'Victoria', 'Ruby', 'Elise',
+    'Daniel', 'Noah', 'Jack', 'Adrian', 'Owen', 'Kenji', 'Rafael', 'Mateo',
+    'Oliver', 'Arthur', 'Cooper', 'Mason',
+  ].map((v) => ({ value: v, label: v })),
+  openai: [
+    'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer',
+  ].map((v) => ({ value: v, label: v })),
+}
+
+// Soniox does not list Odia among its 60+ languages; Sarvam does. A campaign on
+// od-IN cannot use Soniox, and finding that out from a silent mis-synthesis
+// would be miserable.
+const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
   | 'conversation' | 'voice' | 'knowledge' | 'routing' | 'keys' | 'limits' | 'history'
@@ -366,39 +400,102 @@ export function CampaignConfig() {
               <code>grep -c 'SARVAM_TTS_VOICE\|SARVAM_STT_MODEL' /opt/aivoice/.env</code>.
             </Note>
 
+            {[value.stt_provider, value.tts_provider].includes('soniox') &&
+              SONIOX_UNSUPPORTED.includes(value.language) && (
+                <Note tone="warn">
+                  Soniox does not support {value.language}. Pick another provider
+                  for this language, or the call will be synthesised in the wrong
+                  one — the API does not reject it, it just speaks something else.
+                </Note>
+              )}
+
             <div className="grid gap-5 sm:grid-cols-2">
-              <ComboField
-                label="Speech-to-text model"
-                value={value.stt_model ?? ''}
-                onChange={(v) => set('stt_model', v.trim() || null)}
-                options={STT_MODELS}
-                placeholder="saarika:…"
-                allowEmpty
-                emptyLabel="Default (saarika:v2.5)"
-                hint="Sarvam."
+              <SelectField
+                label="Speech-to-text provider"
+                value={value.stt_provider}
+                onChange={(v) => {
+                  // Clear the model: it names one belonging to the old provider,
+                  // and a stale value fails on the first utterance, not on save.
+                  set('stt_provider', v)
+                  set('stt_model', null)
+                  if (value.stt_fallback_provider === v) set('stt_fallback_provider', null)
+                }}
+                options={PROVIDERS}
+                hint="Whose speech recognition this campaign runs on. Billed to that provider's key."
               />
-              <ComboField
-                label="Text-to-speech model"
-                value={value.tts_model ?? ''}
-                onChange={(v) => set('tts_model', v.trim() || null)}
-                options={TTS_MODELS}
-                placeholder="bulbul:…"
-                allowEmpty
-                emptyLabel="Default (bulbul:v3)"
-                hint="Sarvam."
+              <SelectField
+                label="…falls back to"
+                value={value.stt_fallback_provider ?? ''}
+                onChange={(v) => set('stt_fallback_provider', v || null)}
+                options={[
+                  { value: '', label: 'No fallback' },
+                  ...PROVIDERS.filter((p) => p.value !== value.stt_provider),
+                ]}
+                hint="Used only if the primary fails mid-call. Needs its own key, or it is skipped."
               />
             </div>
 
             <ComboField
-              label="Voice"
-              value={value.tts_voice ?? ''}
-              onChange={(v) => set('tts_voice', v.trim() || null)}
-              options={VOICES}
-              placeholder="speaker name"
+              label="Speech-to-text model"
+              value={value.stt_model ?? ''}
+              onChange={(v) => set('stt_model', v.trim() || null)}
+              options={STT_MODELS[value.stt_provider] ?? []}
+              placeholder="model name"
               allowEmpty
-              emptyLabel="Model default"
-              hint="These are bulbul:v3 speakers. A speaker the chosen model does not have makes the call fail before it is answered, not on save."
+              emptyLabel="Provider default"
+              hint="Applies to the primary only — a fallback always uses its own provider's default."
             />
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <SelectField
+                label="Text-to-speech provider"
+                value={value.tts_provider}
+                onChange={(v) => {
+                  // The voice list is per provider too: Sarvam's "shubh" means
+                  // nothing to Soniox, and TTS.__init__ raises rather than the
+                  // call merely sounding wrong.
+                  set('tts_provider', v)
+                  set('tts_model', null)
+                  set('tts_voice', null)
+                  if (value.tts_fallback_provider === v) set('tts_fallback_provider', null)
+                }}
+                options={PROVIDERS}
+                hint="Whose voice this campaign speaks with."
+              />
+              <SelectField
+                label="…falls back to"
+                value={value.tts_fallback_provider ?? ''}
+                onChange={(v) => set('tts_fallback_provider', v || null)}
+                options={[
+                  { value: '', label: 'No fallback' },
+                  ...PROVIDERS.filter((p) => p.value !== value.tts_provider),
+                ]}
+                hint="This chain carried every call the day Sarvam ran out of credits."
+              />
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <ComboField
+                label="Text-to-speech model"
+                value={value.tts_model ?? ''}
+                onChange={(v) => set('tts_model', v.trim() || null)}
+                options={TTS_MODELS[value.tts_provider] ?? []}
+                placeholder="model name"
+                allowEmpty
+                emptyLabel="Provider default"
+                hint="Primary only."
+              />
+              <ComboField
+                label="Voice"
+                value={value.tts_voice ?? ''}
+                onChange={(v) => set('tts_voice', v.trim() || null)}
+                options={VOICES[value.tts_provider] ?? []}
+                placeholder="voice name"
+                allowEmpty
+                emptyLabel="Provider default"
+                hint="A voice the chosen model does not have fails before the call is answered, not on save."
+              />
+            </div>
 
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField
@@ -542,7 +639,15 @@ export function CampaignConfig() {
               still connects, but the agent cannot answer and the caller is handed
               to a human, which looks like a fault rather than a missing setting.
             </Note>
-            <ProviderKeys scope="campaign" id={campaignId} />
+            {/* Only the providers this campaign is configured to use. Warning
+                about an unset Soniox key on a campaign that runs on Sarvam
+                would be noise, and noise in a blocking warning is how real
+                warnings stop being read. */}
+            <ProviderKeys
+              scope="campaign"
+              id={campaignId}
+              inUse={[...new Set([value.stt_provider, value.tts_provider, 'openai'])]}
+            />
           </CardBody>
         </Card>
       )}

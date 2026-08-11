@@ -13,6 +13,7 @@ type Scope = 'client' | 'campaign'
 const PROVIDERS: Record<string, { label: string; used: string }> = {
   openai: { label: 'OpenAI', used: 'Language model, and knowledge-base embeddings' },
   sarvam: { label: 'Sarvam', used: 'Speech to text, and the voice' },
+  soniox: { label: 'Soniox', used: 'Speech to text, and the voice' },
 }
 
 function when(iso: string | null) {
@@ -30,7 +31,13 @@ function when(iso: string | null) {
  * is enough to answer "is this the key I pasted?" and nothing else. That is why
  * there is no "show key" affordance: there is nothing to show.
  */
-export function ProviderKeys({ scope, id }: { scope: Scope; id: number }) {
+export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
+  scope: Scope
+  id: number
+  // Which providers this scope actually needs. openai is always in it - the LLM
+  // and knowledge-base retrieval run on it whatever STT and TTS are set to.
+  inUse?: string[]
+}) {
   const qc = useQueryClient()
   const toast = useToast()
   const base = scope === 'client' ? `/clients/${id}` : `/campaigns/${id}`
@@ -97,7 +104,10 @@ export function ProviderKeys({ scope, id }: { scope: Scope; id: number }) {
   if (keys.isLoading) return <Skeleton className="h-32" />
 
   const rows = keys.data ?? []
-  const missing = rows.filter((r) => r.source === 'none')
+  // Only the providers actually in use are worth warning about. Listing every
+  // unset provider would tell a client who never touches Soniox that their
+  // campaigns cannot be enabled, which is untrue and unhelpful.
+  const missing = rows.filter((r) => r.source === 'none' && inUse.includes(r.provider))
 
   return (
     <div className="space-y-4">

@@ -22,8 +22,10 @@ editor = require_roles("tenant_admin")
 
 FIELDS = (
     "language", "greeting", "instructions",
-    "stt_model", "llm_model", "llm_temperature",
-    "tts_model", "tts_voice", "allow_interrupt",
+    "stt_provider", "stt_model", "stt_fallback_provider",
+    "llm_model", "llm_temperature",
+    "tts_provider", "tts_model", "tts_voice", "tts_fallback_provider",
+    "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     "transfer_enabled", "transfer_to", "transfer_message",

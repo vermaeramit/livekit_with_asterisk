@@ -7,6 +7,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 Role = Literal["superadmin", "tenant_admin", "agent", "viewer"]
+# Kept in step with provider_keys.PROVIDERS and the CHECK constraints in
+# migration 011. All three move together or a save fails at the database.
+Provider = Literal["openai", "sarvam", "soniox"]
 
 # 12 characters is the floor everywhere a password is set, so the rule cannot be
 # bypassed by picking a different endpoint.
@@ -174,6 +177,13 @@ class AgentConfigOut(BaseModel):
 
     recording_disclosure: str
 
+    stt_provider: str
+    tts_provider: str
+    # NULL = no fallback for that layer. See migration 011 for why this is a
+    # stored choice rather than something inferred from which keys exist.
+    stt_fallback_provider: str | None
+    tts_fallback_provider: str | None
+
     updated_at: datetime
 
     @field_validator("llm_temperature", "kb_min_score", mode="before")
@@ -220,6 +230,11 @@ class AgentConfigUpdate(BaseModel):
     # without telling them. The database carries the same CHECK.
     recording_disclosure: str | None = Field(default=None, min_length=1,
                                              max_length=400)
+
+    stt_provider: Provider | None = None
+    tts_provider: Provider | None = None
+    stt_fallback_provider: Provider | None = None
+    tts_fallback_provider: Provider | None = None
 
     @field_validator("recording_disclosure")
     @classmethod
