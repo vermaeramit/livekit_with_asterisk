@@ -15,6 +15,10 @@ livekit-plugins-google==1.6.7
 livekit-plugins-openai==1.6.7
 livekit-plugins-sarvam==1.6.7
 livekit-plugins-silero==1.6.7
+# Selectable per campaign alongside sarvam and openai. Pinned to 1.6.7 to
+# match everything else - the plugin's own latest (1.6.9) requires
+# livekit-agents>=1.6.9, which would drag the whole stack forward.
+livekit-plugins-soniox==1.6.7
 livekit-plugins-turn-detector==1.6.7
 livekit-protocol==1.1.21
 numpy==2.5.1
