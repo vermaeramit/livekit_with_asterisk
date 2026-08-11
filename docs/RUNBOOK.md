@@ -970,11 +970,27 @@ audible as a stutter, and that is exactly why `gpt-4.1-mini` beat `gpt-4o-mini`.
 > 🚩 **OPEN DECISION — `firewalld` is currently DISABLED.**
 >
 > Turned off to unblock the dialler integration, on the basis that this box only
-> lives on internal infrastructure. Deliberate, and to be revisited.
+> lives on internal infrastructure. Deliberate, reaffirmed after the facts below
+> came to light, and to be revisited.
 >
-> What it means today: **the SIP password is the only thing standing in front of
-> the PBX.** Internal networks are exactly where lateral movement happens, and
-> SIP scanners looking for toll fraud run inside them too.
+> **What it means today — corrected.** This note first said "the SIP password is
+> the only thing standing in front of the PBX". That was wrong, and generously
+> so. The dialler arrives over **IAX2**, not SIP, on a peer configured directly
+> on this box (`/etc/asterisk/iax.conf`, peer `243SERVER`) with:
+>
+> ```
+> permit=0.0.0.0/0.0.0.0     ; any source address
+> requirecalltoken=no        ; call-token anti-spoofing off
+> insecure=port,invite       ; incoming INVITEs are not authenticated
+> context=from-internal      ; straight into the dialplan
+> ```
+>
+> Together, and with no firewall: anything that can reach UDP **4569** can place
+> calls into `from-internal` without a password. From there `_7XX` reaches
+> LiveKit and burns a client's OpenAI/Sarvam credits, and `800` dials out.
+>
+> There is no SIP password in that path at all. Tightening the peer is the real
+> fix; the firewall is one layer on top of it.
 >
 > The zone config is not lost — disabling stops the rules being applied, it does
 > not delete them. Re-enabling restores `voip` exactly as below:

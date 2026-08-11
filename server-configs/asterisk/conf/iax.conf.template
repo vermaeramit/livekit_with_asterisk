@@ -1,0 +1,57 @@
+; TEMPLATE. The live file is /etc/asterisk/iax.conf and is NOT tracked - it
+; holds the peer secret and the outbound register line.
+;
+; This template exists because the live config was found by accident. The
+; dialler team added an IAX2 peer directly on this box, calls had been arriving
+; over it for hours, and nothing in the repo or the runbook mentioned IAX at
+; all - a SIP trunk was built and debugged for the same integration before
+; anyone looked at the channel name and saw `IAX2/243SERVER-1774`.
+;
+; If it is not written down it does not survive a rebuild, and it cannot be
+; reviewed.
+
+[general]
+bindport=4569
+bindaddr=0.0.0.0
+
+; The dialler is Asterisk on the far side, so ulaw keeps the whole path
+; transcode-free.
+disallow=all
+allow=ulaw
+
+; Default context for anything that gets this far.
+context=from-internal
+
+; Outbound registration to the dialler.
+;   register => user:secret@host:port
+; ⚠️ The live file currently uses the same string for user and secret. Rotate
+; it with the dialler team; a credential that is its own username is one
+; dictionary entry.
+;register => USER:SECRET@10.130.8.76:4569
+
+;=================== The production dialler ===================
+; ⚠️ The live peer is MORE PERMISSIVE than what is written here. As found:
+;
+;     permit=0.0.0.0/0.0.0.0     any source address
+;     requirecalltoken=no        call-token anti-spoofing disabled
+;     insecure=port,invite       incoming INVITEs not authenticated
+;
+; With firewalld off, that is an unauthenticated path into `from-internal` for
+; anything that can reach UDP 4569 - which reaches LiveKit (a client's provider
+; credits) and extension 800. The settings below are what it should be. Changing
+; the live file needs the dialler team, because `insecure=invite` may be what
+; their side currently depends on.
+;
+;[dialler]
+;type=friend
+;host=10.130.8.76           ; not dynamic - the address is known and fixed
+;permit=10.130.8.76/32      ; not 0.0.0.0/0
+;deny=0.0.0.0/0.0.0.0
+;secret=SET-ON-THE-SERVER
+;requirecalltoken=yes       ; not no
+;context=from-dialler       ; its own context, not from-internal
+;disallow=all
+;allow=ulaw
+;allow=alaw
+;qualify=yes
+;dtmfmode=rfc2833

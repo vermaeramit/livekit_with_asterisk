@@ -13,6 +13,9 @@ secrets*
 # This is not hypothetical - it clobbered the softphone password once.
 server-configs/sip/config.yaml
 server-configs/asterisk/conf/pjsip.conf
+# iax.conf holds the peer secret and the outbound register credential.
+# Only iax.conf.template is tracked - same rule as pjsip.conf.
+server-configs/asterisk/conf/iax.conf
 
 # ---- python ----
 __pycache__/
