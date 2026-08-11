@@ -967,7 +967,42 @@ audible as a stutter, and that is exactly why `gpt-4.1-mini` beat `gpt-4o-mini`.
 
 ### Firewall
 
+> 🚩 **OPEN DECISION — `firewalld` is currently DISABLED.**
+>
+> Turned off to unblock the dialler integration, on the basis that this box only
+> lives on internal infrastructure. Deliberate, and to be revisited.
+>
+> What it means today: **the SIP password is the only thing standing in front of
+> the PBX.** Internal networks are exactly where lateral movement happens, and
+> SIP scanners looking for toll fraud run inside them too.
+>
+> The zone config is not lost — disabling stops the rules being applied, it does
+> not delete them. Re-enabling restores `voip` exactly as below:
+>
+> ```bash
+> systemctl enable --now firewalld
+> firewall-cmd --zone=voip --list-all      # sources, ports and ssh all still there
+> ```
+>
+> The narrower alternative, if it comes back: keep firewalld on and widen the
+> source instead of removing the wall.
+>
+> ```bash
+> firewall-cmd --permanent --zone=voip --add-source=10.130.8.0/24
+> firewall-cmd --reload
+> ```
+
+State as it was configured (still stored, not currently enforced):
+
+```
+voip   sources: 10.130.23.37/32
+       services: ssh
+       ports: 5060/udp 5060/tcp 10000-20000/udp 7880/tcp 7881/tcp 7882/udp 8080/tcp
+public interface: ens33
+```
+
 ```bash
+firewall-cmd --state                       # "not running" while disabled
 firewall-cmd --zone=voip --list-all
 firewall-cmd --get-active-zones
 
@@ -978,6 +1013,11 @@ firewall-cmd --reload
 
 > 🚨 A source-based zone **overrides** the interface zone for that source. Any host added
 > to `voip` must also have `ssh` in that zone, or it loses SSH access to this box.
+
+> ⚠️ Opening the firewall is **not** enough on its own. Asterisk still refuses a
+> call from an IP it does not recognise (`401`/`403`, "No matching endpoint") —
+> that host needs an `identify` section in `pjsip.conf`. The two are separate
+> gates and it is easy to spend an afternoon on the wrong one.
 
 ### Files
 
