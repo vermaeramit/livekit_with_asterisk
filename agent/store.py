@@ -212,7 +212,8 @@ async def end_call(call_id: int, reason: str, outcome: str | None = None):
 
 
 async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
-                         turn_count: int, usage: dict):
+                         turn_count: int, usage: dict,
+                         providers: dict[str, str] | None = None):
     """Store per-call usage so expensive calls can be found afterwards.
 
     Usage is stored, NOT cost - rates change, usage does not. Multiply at query
@@ -230,7 +231,10 @@ async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
                llm_completion_tokens    = $7,
                tts_characters           = $8,
                tts_audio_seconds        = $9,
-               stt_audio_seconds        = $10
+               stt_audio_seconds        = $10,
+               stt_provider_used        = $11,
+               llm_provider_used        = $12,
+               tts_provider_used        = $13
          WHERE id = $1""",
         call_id, reason, limit_hit, turn_count,
         int(usage.get("llm_prompt_tokens", 0)),
@@ -239,6 +243,9 @@ async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
         int(usage.get("tts_characters_count", 0)),
         float(usage.get("tts_audio_duration", 0)),
         float(usage.get("stt_audio_duration", 0)),
+        (providers or {}).get("stt"),
+        (providers or {}).get("llm"),
+        (providers or {}).get("tts"),
     )
 
 async def log_turn(call_id: int, seq: int, role: str, text: str | None, **t):

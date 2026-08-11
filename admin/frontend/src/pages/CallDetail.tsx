@@ -309,6 +309,37 @@ export function CallDetail() {
         </Card>
       )}
 
+      {/* A comma in any of these means the primary provider failed mid-call and
+          the fallback took over. Before this existed, the only evidence was a
+          resampling line in the worker journal - twenty minutes to find, and
+          only because we already suspected it. */}
+      {[
+        ['Speech to text', c.stt_provider_used],
+        ['Language model', c.llm_provider_used],
+        ['Voice', c.tts_provider_used],
+      ].some(([, v]) => typeof v === 'string' && v.includes(',')) && (
+        <Card className="border-warning/30 bg-warning/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div>
+              <p className="font-medium">A provider fallback fired during this call</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {([
+                  ['Speech to text', c.stt_provider_used],
+                  ['Language model', c.llm_provider_used],
+                  ['Voice', c.tts_provider_used],
+                ] as [string, string | null][])
+                  .filter(([, v]) => v?.includes(','))
+                  .map(([label, v]) => `${label}: ${v!.split(',').join(' → ')}`)
+                  .join(' · ')}
+                . The call carried on, but the primary was failing — check that
+                provider's key and credits.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {c.limit_hit && (
         <Card className="border-warning/30 bg-warning/5 p-4">
           <div className="flex items-start gap-2 text-sm">

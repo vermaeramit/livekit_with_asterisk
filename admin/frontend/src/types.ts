@@ -97,6 +97,10 @@ export interface CallDetail extends CallListItem {
   sip_call_id: string | null
   outcome: string | null
   transfer_reason: string | null
+  // What served the call. A comma means a fallback fired: "sarvam,openai".
+  stt_provider_used: string | null
+  llm_provider_used: string | null
+  tts_provider_used: string | null
   recording_path: string | null
   recording_available: boolean
   recording_bytes: number | null

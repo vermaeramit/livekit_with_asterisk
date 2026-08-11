@@ -514,6 +514,11 @@ class CallDetail(CallListItem):
     sip_call_id: str | None
     outcome: str | None
     transfer_reason: str | None
+    # What actually served the call, not what the config asked for. A comma
+    # means a fallback fired partway: "sarvam,openai".
+    stt_provider_used: str | None = None
+    llm_provider_used: str | None = None
+    tts_provider_used: str | None = None
     recording_path: str | None
     # Resolved from the filesystem on every read. Retention deletes files
     # without touching the database, so a stored flag would go stale.

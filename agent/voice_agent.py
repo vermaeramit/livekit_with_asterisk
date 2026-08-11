@@ -449,6 +449,23 @@ async def entrypoint(ctx: JobContext):
 
     asyncio.create_task(duration_watchdog())
 
+    # Which provider actually served this call, as opposed to which one the
+    # config asked for. A set, because a call can start on the primary and fall
+    # back partway - "sarvam" means the fallback never fired, "sarvam,openai"
+    # means it did. Without this the only evidence a fallback ever ran is a
+    # resampling line in the worker journal.
+    providers_used: dict[str, set[str]] = {"stt": set(), "llm": set(), "tts": set()}
+
+    def _note_provider(layer: str, label: str | None):
+        if not label:
+            return
+        # "livekit.plugins.sarvam.tts.TTS" -> "sarvam". Anything that does not
+        # match keeps its raw label rather than being dropped: an unrecognised
+        # provider is exactly the case worth seeing.
+        parts = label.split(".")
+        name = parts[2] if len(parts) > 3 and parts[1] == "plugins" else label[:40]
+        providers_used[layer].add(name)
+
     @session.on("metrics_collected")
     def _on_metrics(ev):
         try:
@@ -458,7 +475,10 @@ async def entrypoint(ctx: JobContext):
             if n == "EOUMetrics":
                 pending["eou_ms"] = int(m.end_of_utterance_delay * 1000)
                 pending["stt_ms"] = int(m.transcription_delay * 1000)
+            elif n == "STTMetrics":
+                _note_provider("stt", getattr(m, "label", None))
             elif n == "LLMMetrics":
+                _note_provider("llm", getattr(m, "label", None))
                 # a tool call produces two LLM turns; keep the first TTFT
                 pending.setdefault("llm_ttft_ms", int(m.ttft * 1000))
                 pending["prompt_tokens"] = getattr(m, "prompt_tokens", 0)
@@ -469,6 +489,7 @@ async def entrypoint(ctx: JobContext):
                         f"max_prompt_tokens={cfg.max_prompt_tokens} "
                         f"(used {agent.prompt_tokens})"))
             elif n == "TTSMetrics":
+                _note_provider("tts", getattr(m, "label", None))
                 pending["tts_ttfb_ms"] = int(m.ttfb * 1000)
         except Exception:
             logger.exception("metrics handler failed")
@@ -542,8 +563,9 @@ async def entrypoint(ctx: JobContext):
                       else "limit" if agent.limit_hit
                       else "error" if session_error
                       else "completed")
-            await store.end_call_usage(call_id, reason, agent.limit_hit,
-                                       agent.turn_count, u)
+            await store.end_call_usage(
+                call_id, reason, agent.limit_hit, agent.turn_count, u,
+                providers={k: ",".join(sorted(v)) for k, v in providers_used.items() if v})
             if agent.transferred:
                 dest, why = agent.transferred
                 await (await store.pool()).execute(
