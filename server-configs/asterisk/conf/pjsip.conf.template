@@ -73,16 +73,16 @@ endpoint=livekit
 match=10.130.9.243
 
 ;=================== Trunk <- the production dialler ===================
-; NOT CONFIGURED YET - fill in MATCH and uncomment.
-;
 ; Identified by IP, with no auth section: both boxes are ours and on the same
 ; internal network, so a shared password would be one more secret to rotate and
-; leak for no gain. `identify` is what makes this work at all - opening the
-; firewall is a SEPARATE gate, and a host with no identify still gets 403
-; "No matching endpoint found" however open the network is.
+; leak for no gain.
 ;
-; To find their address, have them place one call and read it straight out of
-; the rejection:
+; `identify` is what makes this work at all. Opening the firewall is a SEPARATE
+; gate - this address reached Asterisk perfectly well and still got
+; "No matching endpoint found", because nothing here claimed it. The two are
+; easy to confuse and cost an afternoon each.
+;
+; The address was read out of that rejection rather than taken on trust:
 ;
 ;   asterisk -rx "pjsip set logger on"
 ;   tail -f /var/log/asterisk/debug.log | grep -iE "INVITE sip:|No matching endpoint"
@@ -90,20 +90,18 @@ match=10.130.9.243
 ; Its own context, not from-internal. Their calls and the softphone's should be
 ; distinguishable in the dialplan - so a rule can be applied to one and not the
 ; other later, without unpicking which is which after the fact.
-;
-;[dialler]
-;type=endpoint
-;context=from-dialler
-;disallow=all
-;allow=ulaw
-;allow=alaw
-;direct_media=no
-;rtp_symmetric=yes
-;force_rport=yes
-;rewrite_contact=yes
-;
-;[dialler]
-;type=identify
-;endpoint=dialler
-;match=10.130.8.76          ; <- CONFIRM THIS. A guessed IP silently accepts
-;                           ;    nothing, and the symptom is a 403 nobody can place.
+[dialler]
+type=endpoint
+context=from-dialler
+disallow=all
+allow=ulaw
+allow=alaw
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+
+[dialler]
+type=identify
+endpoint=dialler
+match=10.130.8.76
