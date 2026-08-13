@@ -89,6 +89,72 @@ def _tts_kwargs(cfg):
     return kw
 
 
+# ── dialler context ─────────────────────────────────────────────────────────
+# The dialler sends these as IAX2 variables; Asterisk puts them on the INVITE
+# (see [recsetup]) and livekit-sip maps them to participant attributes via the
+# trunk's headers_to_attributes.
+#
+# Split deliberately. Only the conversational half reaches the model: a model
+# handed a lead id will, sooner or later, read it out to the caller. The
+# identifiers exist for correlation with the dialler's CRM and go to the
+# database only.
+_PROMPT_ATTRS = {
+    "dialer.cus_name": "Caller name",
+    "dialer.modalname": "Product they own",
+    "dialer.calltype": "Call type",
+}
+_RECORD_ONLY_ATTRS = ("dialer.lead_id", "dialer.sr_id", "dialer.call_unique",
+                      "dialer.language")
+
+
+def _dialler_attrs(participant) -> dict[str, str]:
+    """Everything the dialler sent, empties dropped.
+
+    ⚠️ LiveKit's docs say headers_to_attributes populates asynchronously, so
+    these may not be present the moment the participant joins. This is read late
+    - after the config load and the first database writes - which in practice
+    leaves them time to arrive. It is NOT waited for: adding a delay to every
+    call to cover a case that has not yet been seen would cost more than it
+    saves. The log line below is how we would find out; if it starts reporting
+    nothing on calls that should have context, the fix is
+    lk.sip.GetRemoteHeaders rather than a longer sleep.
+    """
+    if participant is None:
+        return {}
+    attrs = participant.attributes or {}
+    wanted = list(_PROMPT_ATTRS) + list(_RECORD_ONLY_ATTRS)
+    return {k: v for k in wanted if (v := (attrs.get(k) or "").strip())}
+
+
+def _caller_context(dialler: dict[str, str]):
+    """-> a ChatContext carrying the caller context, or None.
+
+    A SEPARATE message, never appended to `instructions`. The instructions are
+    the cacheable prefix - byte-identical across every call on a campaign, which
+    is what earns OpenAI's prompt cache (measured 1198 ms cold against 805 ms
+    warm). Putting a caller's name into them would make every call's prefix
+    unique and the cache would never hit again, silently.
+    """
+    lines = [f"- {label}: {dialler[key]}"
+             for key, label in _PROMPT_ATTRS.items() if dialler.get(key)]
+    if not lines:
+        return None
+    body = "\n".join(lines)
+    c = lk_llm.ChatContext.empty()
+    c.add_message(
+        role="system",
+        content=(
+            "CALLER CONTEXT, provided by the dialling system before the call "
+            "connected. It is reliable - use it rather than asking the caller "
+            "to repeat what we already know.\n"
+            f"{body}\n\n"
+            "Greet them by name once, naturally, and do not read any of this "
+            "back as a list."
+        ),
+    )
+    return c
+
+
 def _sip_attr(participant, *keys):
     for k in keys:
         v = (participant.attributes or {}).get(k)
@@ -104,8 +170,13 @@ def _api_url() -> str:
 
 
 class KBAgent(Agent):
-    def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict):
-        super().__init__(instructions=instructions)
+    def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict,
+                 chat_ctx=None):
+        # instructions stay byte-identical per campaign - that is what OpenAI's
+        # prompt cache keys on. Per-call context arrives as chat_ctx, AFTER the
+        # cacheable prefix, never inside it.
+        super().__init__(instructions=instructions,
+                         **({"chat_ctx": chat_ctx} if chat_ctx else {}))
         self.cfg = cfg
         # Carried so the KB tool embeds its query on the client's key too. The
         # search path is easy to forget - it is billed per turn, not per upload.
@@ -406,7 +477,10 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
 
     caller = callee = sip_call_id = None
+    sip_participant = None
     for p in ctx.room.remote_participants.values():
+        if _sip_attr(p, "sip.callIDFull") or p.identity.startswith("sip_"):
+            sip_participant = p
         caller = caller or _sip_attr(p, "sip.phoneNumber", "sip.from_user")
         callee = callee or _sip_attr(p, "sip.trunkPhoneNumber", "sip.to_user")
         # sip.callIDFull, NOT sip.callID. The latter is LiveKit's own identifier
@@ -496,7 +570,21 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(_safety_net)
 
-    agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys)
+    # Read LAST, not with the other attributes above. headers_to_attributes is
+    # populated asynchronously by livekit-sip, and everything between the two
+    # points - the config load, the prompt build, start_call - has given it time
+    # to land. Logged either way, so a campaign that should have context and does
+    # not is visible rather than merely quieter.
+    dialler = _dialler_attrs(sip_participant)
+    if dialler:
+        logger.info("dialler context: %s",
+                    " ".join(f"{k.split('.', 1)[1]}={v}" for k, v in dialler.items()))
+        await store.set_dialler_context(call_id, dialler)
+    else:
+        logger.info("dialler context: none on this call")
+
+    agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys,
+                    chat_ctx=_caller_context(dialler))
 
     vad = ctx.proc.userdata["vad"]
     session = AgentSession(

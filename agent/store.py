@@ -183,6 +183,21 @@ async def start_call(room_name, caller, callee, config_name, language,
     )
 
 
+async def set_dialler_context(call_id: int, ctx: dict) -> None:
+    """What the dialling system said about this call, verbatim.
+
+    Kept whole rather than split into columns: the dialler owns this set and
+    added seven fields without telling anyone. `dialer.lead_id` is the one that
+    matters - it joins a call here to a lead in their CRM.
+    """
+    import json
+
+    await (await pool()).execute(
+        "UPDATE calls SET dialer_context = $2::jsonb WHERE id = $1",
+        call_id, json.dumps(ctx),
+    )
+
+
 async def end_call_if_open(call_id: int, reason: str, outcome: str) -> None:
     """Close a call only if nothing else already did.
 
