@@ -42,6 +42,8 @@ _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 # worth it.
 BLOCK_PRIVATE = os.getenv("TOOL_BLOCK_PRIVATE_HOSTS", "0") == "1"
 
+USER_AGENT = os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")
+
 _session: aiohttp.ClientSession | None = None
 
 
@@ -151,7 +153,14 @@ def build(spec: dict, call_id: int | None, record: Callable):
                 "That lookup is not available. Tell the caller you cannot check "
                 "it right now.")
 
-        headers = {k: str(v) for k, v in (spec.get("headers") or {}).items()}
+        # A real User-Agent, not aiohttp's default. Cloudflare and most WAFs
+        # answer "Python/3.12 aiohttp/..." with 403 and error code 1010 - which
+        # is how this was found, against three separate public APIs that all
+        # worked from curl on the same host. A client API behind a WAF would
+        # have failed the same way, mid-call.
+        # Overridable: spec headers are applied after this.
+        headers = {"User-Agent": USER_AGENT}
+        headers.update({k: str(v) for k, v in (spec.get("headers") or {}).items()})
         if spec.get("auth_header") and spec.get("auth_value"):
             headers[spec["auth_header"]] = spec["auth_value"]
         if method != "GET" and call_id is not None:

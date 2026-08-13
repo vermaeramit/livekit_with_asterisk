@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -193,7 +194,10 @@ async def test_tool(campaign_id: int, tool_id: int, arguments: dict,
         return ph.sub(lambda m: str(arguments.get(m.group(1), "")), tpl)
 
     url = fill(row["url"])
-    headers = dict(json.loads(row["headers"]) if isinstance(row["headers"], str)
+    # Same User-Agent the agent sends, so the test cannot pass where the real
+    # call would fail. urllib's default is a WAF magnet - see agent/tools.py.
+    headers = {"User-Agent": os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")}
+    headers.update(json.loads(row["headers"]) if isinstance(row["headers"], str)
                    else (row["headers"] or {}))
     if row["auth_header"] and row["auth_value_enc"]:
         headers[row["auth_header"]] = secretlib.crypto().decrypt(row["auth_value_enc"])
