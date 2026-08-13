@@ -1,28 +1,4 @@
 {
-  "_comment": [
-    "Deployed at /opt/aivoice/sip/objects/inbound-trunk.json.",
-    "",
-    "This lived only on the server until now, like iax.conf did - and a reboot",
-    "already proved once what that costs: Redis lost the trunk and every call",
-    "rang and died with nothing in any log explaining why.",
-    "",
-    "`numbers` is deliberately empty so the trunk matches any called number.",
-    "Security comes from allowed_addresses: only our own Asterisk can use it.",
-    "",
-    "headers_to_attributes carries the dialler's per-call context through to the",
-    "agent. Asterisk puts these on the INVITE (see [recsetup] in",
-    "extensions.conf); livekit-sip turns them into participant attributes; the",
-    "agent reads them and gives the model a caller-context block.",
-    "",
-    "The attribute names are prefixed `dialer.` on purpose. LiveKit owns the",
-    "`sip.` namespace - sip.callIDFull, sip.trunkPhoneNumber - and colliding with",
-    "it would be a bug that only appears when LiveKit adds a field.",
-    "",
-    "NOTE: LiveKit's docs warn these attributes are populated ASYNCHRONOUSLY, so",
-    "they may not be present the instant the participant joins. The agent waits a",
-    "bounded moment for them and logs when they never arrive, rather than",
-    "silently greeting a named caller as a stranger."
-  ],
   "trunk": {
     "name": "asterisk-lab",
     "allowed_addresses": ["10.130.9.243/32"],
