@@ -12,11 +12,13 @@ import {
   PhoneIncoming,
   ShieldCheck,
   TriangleAlert,
+  Wrench,
   Undo2,
   Waves,
 } from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
+import { CampaignTools } from '@/components/CampaignTools'
 import { ProviderKeys } from '@/components/ProviderKeys'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
@@ -110,12 +112,14 @@ const VOICES: Record<string, { value: string; label: string }[]> = {
 const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
-  | 'conversation' | 'voice' | 'knowledge' | 'routing' | 'keys' | 'limits' | 'history'
+  | 'conversation' | 'voice' | 'knowledge' | 'tools' | 'routing' | 'keys'
+  | 'limits' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
   { key: 'voice', label: 'Voice & model', icon: Waves },
   { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
+  { key: 'tools', label: 'Tools', icon: Wrench },
   { key: 'routing', label: 'Routing', icon: PhoneIncoming },
   // Its own tab rather than a section under "Voice & model": these decide whose
   // account the calls are billed to, and that is not a voice setting.
@@ -606,6 +610,30 @@ export function CampaignConfig() {
             </CardBody>
           </Card>
         </div>
+      )}
+
+      {tab === 'tools' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tools</CardTitle>
+          </CardHeader>
+          <CardBody className="space-y-5">
+            <Note>
+              A tool lets the agent call your API in the middle of a conversation
+              — look up a service, check a warranty, book a slot. The agent
+              decides when to use one from the description you write, the same
+              way it decides to search the knowledge base or hand over to a
+              human.
+            </Note>
+            <Note tone="warn">
+              A tool call happens <em>while the caller is listening</em>. Anything
+              past a second or so is heard as silence, which is why the timeout
+              is capped — and why the test button reports how long it took, not
+              just whether it worked.
+            </Note>
+            <CampaignTools campaignId={campaignId} />
+          </CardBody>
+        </Card>
       )}
 
       {tab === 'routing' && (

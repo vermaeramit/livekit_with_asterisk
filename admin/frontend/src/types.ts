@@ -339,3 +339,31 @@ export interface ProviderKeyWritten {
   // call answered until they top up.
   no_credits: boolean
 }
+
+export interface CampaignTool {
+  id: number
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  url: string
+  headers: Record<string, string> | null
+  auth_header: string | null
+  // Last four characters. The value itself never leaves the server.
+  auth_value_hint: string | null
+  body_template: string | null
+  timeout_ms: number
+  max_response_bytes: number
+  response_path: string | null
+  enabled: boolean
+  updated_at: string
+}
+
+export interface ToolTestResult {
+  ok: boolean
+  status_code: number | null
+  duration_ms: number
+  body: string | null
+  error: string | null
+  url: string
+}
