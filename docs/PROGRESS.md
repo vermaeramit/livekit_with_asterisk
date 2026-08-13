@@ -2043,6 +2043,146 @@ native install it is assumed. Run `loadtest.sh 20` before relying on it.
 
 ---
 
+## Per-client keys, providers and context (11–13 Aug 2026)
+
+Four features that share one theme: **things that used to live in `.env` and
+apply to everyone now live in the database and apply per campaign.** Each
+client brings their own keys, their own providers, and their own data.
+
+### Provider keys per campaign (migration 008)
+
+Keys were in `/opt/aivoice/.env` — one OpenAI key, one Sarvam key, every client
+billed to the same account. Now they are rows in `provider_keys`, encrypted
+with Fernet (`agent/crypto.py`, `SECRETS_KEY`), resolved at job start.
+
+Three rules, all deliberate:
+
+- **The API never returns a key.** Not masked, not partially — the response
+  carries a four-character hint and nothing else. A field that *can* return a
+  secret eventually does, through a log, a cache, or a browser extension.
+- **The agent and the panel share one crypto module**, mounted at `/app/kblib`
+  rather than copied. Two copies is how a panel encrypts one way and an agent
+  cannot read it back — and that failure is invisible until a call drops,
+  because the console shows the key as configured either way.
+- **A campaign without a required key fails at start**, not mid-call
+  (`ProviderKeyMissing`). By the user's decision, keys are mandatory per
+  campaign; falling back to a shared key would silently bill the wrong account.
+
+### STT and TTS chosen per campaign (migration 011)
+
+`stt_provider` / `tts_provider` plus an explicit fallback column each. The
+agent builds its stack from the campaign row, not from a constant.
+
+**Soniox was added, measured, and not adopted.** It works, and it is wired in —
+but the voice was judged poor and the latency was not better. It stays
+selectable so the judgement can be revisited with a real comparison rather than
+a rebuild.
+
+Resampling is the trap here: TTS native rates differ (`sarvam` 22050,
+`openai` 24000, `soniox` 24000) and a mismatch is not an error, it is a quiet
+resample that costs latency on every turn.
+
+### What the dialler sends (migration 012)
+
+Their system passes per-call context as IAX2 variables → SIP headers →
+participant attributes: name, product, call type, and their own lead / SR /
+call identifiers.
+
+The split is the important part:
+
+| | |
+|---|---|
+| **To the model** | name, product, call type — as a *separate* chat message |
+| **Stored only** | `lead_id`, `sr_id`, `call_unique`, `language` |
+
+Two reasons it is a separate message and not part of `instructions`: the
+instructions are the cacheable prefix, byte-identical across every call, which
+is what earns OpenAI's prompt cache (**1198 ms cold against 805 ms warm**).
+Putting a caller's name in them makes every prefix unique and the cache never
+hits again — silently. And a model handed a lead ID will eventually read it out
+to the caller.
+
+Greetings take `{{cus_name}}`, `{{modalname}}` etc. with `|fallback` defaults,
+substituted only into spoken strings.
+
+### HTTP tools per campaign (migration 013)
+
+The agent can call the client's API mid-conversation. Defined in the console,
+built at job start, executed by `agent/tools.py`.
+
+Everything in that module exists because **a tool call happens while someone is
+listening**: a 2500 ms default timeout because past that the caller hears
+silence, an 8 KB response cap because the whole body otherwise lands in the
+next prompt, and `ToolError` rather than an exception so the model has
+something it can say out loud.
+
+Two findings worth keeping:
+
+- **The default User-Agent is a WAF magnet.** Three separate public APIs
+  answered aiohttp and urllib with Cloudflare error 1010 while `curl` succeeded
+  from the same host. A client API behind a WAF would have failed identically,
+  mid-call. Both the agent and the console's test button now send
+  `AIVoice-Agent/1.0`.
+- **The test button lied once.** It applied neither `response_path` nor the
+  same substitution as the agent, so it showed a whole document where the model
+  would have seen one field. A test that does not match reality is worse than
+  no test, because it is believed. Both now import `agent/toolfmt.py` — shared,
+  not reimplemented.
+
+`TOOL_BLOCK_PRIVATE_HOSTS` is **off** by decision: clients host their APIs
+wherever they like. Worth knowing what off means — the URL is fetched by this
+server, from inside the network, and the model decides when.
+
+### Not verified
+
+**The timeout path has never been heard on a real call.** `/slow?ms=4000`
+against a 2500 ms tool proves the panel records it; it does not prove what the
+caller hears. That is still the one test that matters.
+
+---
+
+## Call diagnostics in the console (13 Aug 2026)
+
+Every question asked while debugging this week — which voice served that call,
+did the dialler context arrive, did the tool fire, what did the model send —
+was answered by SSH and `journalctl`. All of it was already in the database and
+none of it was on screen.
+
+Three additions to the call detail page, no new plumbing:
+
+- **Tool calls interleaved into the transcript**, ordered by time. In line, not
+  in a table of their own: the question is never "what tools ran", it is "the
+  caller asked X, why did the agent answer Y" — and that is only answerable
+  next to the turns either side. The **arguments the model chose** are shown,
+  because a tool that "did not work" is usually a tool called with a wrong or
+  empty argument, and the transcript never shows that.
+- **From the dialler** — every attribute they sent, marked with whether it
+  reached the model. "The model knew the name but was never told the lead ID"
+  is the difference between a prompt bug and a dialler bug, and both look
+  identical in a transcript.
+- **Handled by** — the STT / LLM / TTS that actually served the call, *always*,
+  not only when a fallback fired. Recorded per call, so it stays true after the
+  campaign is edited.
+
+A failed tool now raises a banner alongside the fallback and guardrail ones,
+because it has the same shape: the call completed and nothing looks wrong from
+outside, but the caller got an apology instead of an answer.
+
+**Response bodies are deliberately not stored.** A client API answers with
+customer records, and keeping them would put personal data in a table nobody
+thinks of as holding it.
+
+### What this is not
+
+Raw agent logs. Those are in `journalctl` on the host, and `admin-api` runs in
+a container that cannot see the host journal — surfacing them means shipping
+logs somewhere, with retention and another service to run. Deferred on purpose:
+these three cover the recurring questions, and raw logs are only needed when
+something *crashes*. If the server still gets SSH'd into regularly after this,
+that is the measurement that justifies the log pipeline.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at

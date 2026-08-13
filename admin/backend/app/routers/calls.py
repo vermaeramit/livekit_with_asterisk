@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime
@@ -11,7 +12,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from .. import db
 from ..deps import CurrentUser, active_user, tenant_scope
 from ..schemas import (CallDetail, CallListItem, CallListResponse, CallUsage,
-                       TurnOut)
+                       ToolInvocationOut, TurnOut)
 
 router = APIRouter(prefix="/calls", tags=["calls"])
 
@@ -115,7 +116,8 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
                    c.recording_path, c.llm_prompt_tokens,
                    c.llm_prompt_cached_tokens, c.llm_completion_tokens,
                    c.tts_characters, c.tts_audio_seconds, c.stt_audio_seconds,
-                   c.stt_provider_used, c.llm_provider_used, c.tts_provider_used
+                   c.stt_provider_used, c.llm_provider_used, c.tts_provider_used,
+                   c.dialer_context
               FROM calls c LEFT JOIN campaigns cam ON cam.id = c.campaign_id
              WHERE c.id = $1""", call_id)
 
@@ -131,7 +133,25 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
                   tts_ttfb_ms, total_ms, interrupted, kb_chunk_ids, kb_scores
              FROM turns WHERE call_id = $1 ORDER BY seq""", call_id)
 
+    # Ordered by time so the console can interleave them with the transcript:
+    # the useful view is "caller asked → this tool fired → agent answered", and
+    # a tool call read on its own says nothing about what prompted it.
+    #
+    # Note created_at is when the call FINISHED, not when it started - that is
+    # what the agent records - so a slow tool sits slightly late against the
+    # turn that triggered it. Deliberate: it is the finish that the caller
+    # waited for.
+    invocations = await db.pool().fetch(
+        """SELECT id, name, arguments, status_code, duration_ms, error,
+                  created_at
+             FROM tool_invocations WHERE call_id = $1 ORDER BY created_at, id""",
+        call_id)
+
     d = dict(row)
+    # asyncpg returns JSONB as text unless a codec is registered, and none is.
+    if isinstance(d.get("dialer_context"), str):
+        d["dialer_context"] = json.loads(d["dialer_context"])
+
     usage = CallUsage(**{k: d.pop(k) for k in (
         "llm_prompt_tokens", "llm_prompt_cached_tokens", "llm_completion_tokens",
         "tts_characters", "tts_audio_seconds", "stt_audio_seconds")})
@@ -140,10 +160,17 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     # without touching the database, so a stored flag would go stale.
     audio = recording_file(d["sip_call_id"])
 
+    def _inv(r) -> ToolInvocationOut:
+        t = dict(r)
+        if isinstance(t.get("arguments"), str):
+            t["arguments"] = json.loads(t["arguments"])
+        return ToolInvocationOut(**t)
+
     return CallDetail(**d, usage=usage,
                       recording_available=audio is not None,
                       recording_bytes=audio.stat().st_size if audio else None,
-                      turns=[TurnOut(**dict(t)) for t in turns])
+                      turns=[TurnOut(**dict(t)) for t in turns],
+                      tools=[_inv(r) for r in invocations])
 
 
 @router.get("/{call_id}/recording")

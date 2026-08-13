@@ -515,6 +515,27 @@ class TurnOut(BaseModel):
     kb_scores: list[float] | None = None
 
 
+class ToolInvocationOut(BaseModel):
+    """One HTTP tool call the agent made during a call.
+
+    `arguments` is what the MODEL decided to send, which is the field worth
+    reading: a tool that "did not work" is usually a tool the model called with
+    the wrong argument, and that is invisible from the transcript alone.
+
+    The response body is deliberately absent - it is not stored. A client API
+    answers with customer data, and keeping it here would put personal records
+    in a table nobody thinks of as holding them.
+    """
+    id: int
+    name: str
+    arguments: dict | None = None
+    status_code: int | None = None
+    duration_ms: int | None = None
+    # NULL on success. "timeout" is the one that cost the caller silence.
+    error: str | None = None
+    created_at: datetime
+
+
 class CallUsage(BaseModel):
     llm_prompt_tokens: int | None
     llm_prompt_cached_tokens: int | None
@@ -539,8 +560,13 @@ class CallDetail(CallListItem):
     # without touching the database, so a stored flag would go stale.
     recording_available: bool = False
     recording_bytes: int | None = None
+    # What the dialler told us about this call: name, product, and its own lead
+    # and service-request ids. JSONB because the set is theirs to change - they
+    # added seven fields once without telling anyone.
+    dialer_context: dict | None = None
     usage: CallUsage
     turns: list[TurnOut]
+    tools: list[ToolInvocationOut] = []
 
 
 # --- provider keys -----------------------------------------------------------

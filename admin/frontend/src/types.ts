@@ -104,8 +104,24 @@ export interface CallDetail extends CallListItem {
   recording_path: string | null
   recording_available: boolean
   recording_bytes: number | null
+  // What the dialler sent with the call: name, product, their lead/SR ids.
+  // Free-form on purpose — the key set is theirs to change.
+  dialer_context: Record<string, string> | null
   usage: CallUsage
   turns: Turn[]
+  tools: ToolInvocation[]
+}
+
+export interface ToolInvocation {
+  id: number
+  name: string
+  // What the MODEL chose to send. A tool that "did not work" is usually a tool
+  // called with the wrong argument, and the transcript never shows that.
+  arguments: Record<string, unknown> | null
+  status_code: number | null
+  duration_ms: number | null
+  error: string | null
+  created_at: string
 }
 
 export interface KbChunk {

@@ -8,17 +8,20 @@ import {
   Bot,
   Clock,
   Coins,
+  Cpu,
   MessageSquareOff,
+  PhoneIncoming,
   Scissors,
   TriangleAlert,
   User,
+  Wrench,
 } from 'lucide-react'
 import { RecordingPlayer } from '@/components/RecordingPlayer'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
-import type { CallDetail as CallDetailType, KbChunk, Turn } from '@/types'
+import type { CallDetail as CallDetailType, KbChunk, ToolInvocation, Turn } from '@/types'
 import { EndReasonBadge } from './Calls'
 
 function Stat({
@@ -148,6 +151,86 @@ function Citations({ turn, chunks }: { turn: Turn; chunks: Record<string, KbChun
   )
 }
 
+/**
+ * One HTTP tool call, shown in line with the transcript.
+ *
+ * In line rather than in a table of its own, because the question is never
+ * "what tools ran" — it is "the caller asked X, why did the agent answer Y".
+ * That is only answerable next to the turns either side of it.
+ *
+ * The arguments are the part worth reading. A tool that "did not work" is
+ * usually a tool the model called with a wrong or empty argument, and the
+ * transcript alone never shows that.
+ */
+function ToolRow({ tool }: { tool: ToolInvocation }) {
+  const [open, setOpen] = useState(false)
+  const failed = Boolean(tool.error) || (tool.status_code ?? 0) >= 400
+  const timedOut = tool.error === 'timeout'
+  const args = Object.entries(tool.arguments ?? {})
+
+  return (
+    <div className="flex gap-3 bg-muted/25 px-4 py-2.5">
+      <div
+        className={cn(
+          'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full',
+          failed ? 'bg-danger/15 text-danger' : 'bg-muted text-muted-foreground',
+        )}
+      >
+        <Wrench className="h-3.5 w-3.5" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+          <span className="font-mono text-xs font-medium text-foreground/80">{tool.name}</span>
+          <span className="tnum">{formatDateTime(tool.created_at)}</span>
+
+          {timedOut ? (
+            <Badge tone="danger">timed out</Badge>
+          ) : tool.error ? (
+            <Badge tone="danger">failed</Badge>
+          ) : (
+            <Badge tone={failed ? 'danger' : 'success'} className="tnum">
+              HTTP {tool.status_code ?? '—'}
+            </Badge>
+          )}
+
+          <span className="tnum">{formatMs(tool.duration_ms)}</span>
+        </div>
+
+        {args.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {args.map(([k, v]) => (
+              <span
+                key={k}
+                className="inline-flex max-w-full items-center gap-1 rounded-md bg-background px-1.5 py-0.5 text-2xs ring-1 ring-inset ring-border"
+              >
+                <span className="text-muted-foreground">{k}</span>
+                <span className="truncate font-mono text-foreground/90">
+                  {typeof v === 'string' ? v || '(empty)' : JSON.stringify(v)}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {timedOut && (
+          <p className="mt-1.5 text-2xs text-danger">
+            The caller heard silence for this long, and the agent had to answer without the data.
+          </p>
+        )}
+        {tool.error && !timedOut && (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="mt-1.5 block max-w-full truncate text-left text-2xs text-danger hover:underline"
+          >
+            {open ? tool.error : tool.error.slice(0, 120)}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function TurnRow({
   turn,
   chunks,
@@ -189,6 +272,116 @@ function TurnRow({
         <Citations turn={turn} chunks={chunks} />
       </div>
     </div>
+  )
+}
+
+/**
+ * Mirrors the agent's own split — agent/voice_agent.py, _PROMPT_ATTRS against
+ * _RECORD_ONLY_ATTRS. Worth showing, because "the model knew the caller's name
+ * but was never told the lead id" is the difference between a prompt bug and a
+ * dialler bug, and both look identical in a transcript.
+ */
+const DIALLER_FIELDS: Record<string, { label: string; toModel: boolean }> = {
+  'dialer.cus_name': { label: 'Caller name', toModel: true },
+  'dialer.modalname': { label: 'Product they own', toModel: true },
+  'dialer.calltype': { label: 'Call type', toModel: true },
+  'dialer.lead_id': { label: 'Lead ID', toModel: false },
+  'dialer.sr_id': { label: 'Service request', toModel: false },
+  'dialer.call_unique': { label: 'Dialler call ID', toModel: false },
+  'dialer.language': { label: 'Language requested', toModel: false },
+}
+
+function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
+  const rows = Object.entries(ctx).map(([k, v]) => ({
+    // An unknown key still renders: the dialler added seven fields once without
+    // telling anyone, and the next one should be visible without a deploy.
+    ...(DIALLER_FIELDS[k] ?? { label: k.replace(/^dialer\./, '').replace(/_/g, ' '), toModel: false }),
+    key: k,
+    value: v,
+  }))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-1.5">
+          <PhoneIncoming className="h-3.5 w-3.5 text-muted-foreground" />
+          From the dialler
+        </CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-1.5 text-sm">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              {r.label}
+              {r.toModel && (
+                <span
+                  className="rounded bg-primary/10 px-1 py-px text-2xs font-medium text-primary"
+                  title="Given to the model, so the agent could use it in conversation"
+                >
+                  in prompt
+                </span>
+              )}
+            </span>
+            <span className="truncate text-right font-medium">{r.value}</span>
+          </div>
+        ))}
+        <p className="pt-1 text-2xs text-muted-foreground">
+          Identifiers are stored but never shown to the model — a model given a lead ID will
+          eventually read it out to the caller.
+        </p>
+      </CardBody>
+    </Card>
+  )
+}
+
+/**
+ * What actually served the call, always — not only when a fallback fired.
+ *
+ * "Which voice was this call?" was previously answered by finding the campaign,
+ * checking what it was set to today, and hoping nobody had changed it since.
+ */
+function ProvidersCard({ c }: { c: CallDetailType }) {
+  const rows: [string, string | null][] = [
+    ['Speech to text', c.stt_provider_used],
+    ['Language model', c.llm_provider_used],
+    ['Voice', c.tts_provider_used],
+  ]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-1.5">
+          <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+          Handled by
+        </CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-1.5 text-sm">
+        {rows.map(([label, v]) => {
+          // A comma means the primary failed partway and the fallback took over.
+          const chain = v ? v.split(',').filter(Boolean) : []
+          return (
+            <div key={label} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5">
+              <span className="text-muted-foreground">{label}</span>
+              {chain.length === 0 ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <span className="flex items-center gap-1 font-medium">
+                  {chain.map((p, i) => (
+                    <span key={`${p}-${i}`} className="flex items-center gap-1">
+                      {i > 0 && <span className="text-warning">→</span>}
+                      <span className={cn(i > 0 && 'text-warning')}>{p}</span>
+                    </span>
+                  ))}
+                </span>
+              )}
+            </div>
+          )
+        })}
+        <p className="pt-1 text-2xs text-muted-foreground">
+          Recorded per call, so this stays true even after the campaign is changed.
+        </p>
+      </CardBody>
+    </Card>
   )
 }
 
@@ -258,6 +451,15 @@ export function CallDetail() {
   const cached = c.usage.llm_prompt_cached_tokens ?? 0
   const prompt = c.usage.llm_prompt_tokens ?? 0
   const cacheRate = prompt > 0 ? (cached / prompt) * 100 : null
+
+  // Turns and tool calls in one list, ordered by time. Ties go to the turn: a
+  // tool recorded in the same millisecond as a turn was triggered BY it.
+  const tools = c.tools ?? []
+  const timeline = [
+    ...c.turns.map((t) => ({ kind: 'turn' as const, at: Date.parse(t.ts), turn: t })),
+    ...tools.map((t) => ({ kind: 'tool' as const, at: Date.parse(t.created_at), tool: t })),
+  ].sort((a, b) => a.at - b.at || (a.kind === 'turn' ? -1 : 1))
+  const toolsFailed = tools.filter((t) => t.error || (t.status_code ?? 0) >= 400).length
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
@@ -340,6 +542,30 @@ export function CallDetail() {
         </Card>
       )}
 
+      {/* Treated like the fallback and guardrail banners because it has the
+          same shape: the call completed, so nothing looks wrong from the
+          outside, but the caller was given an apology instead of an answer. */}
+      {toolsFailed > 0 && (
+        <Card className="border-danger/30 bg-danger/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+            <div>
+              <p className="font-medium">
+                {toolsFailed} tool call{toolsFailed === 1 ? '' : 's'} failed during this call
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {tools
+                  .filter((t) => t.error || (t.status_code ?? 0) >= 400)
+                  .map((t) => `${t.name}: ${t.error ?? `HTTP ${t.status_code}`}`)
+                  .join(' · ')}
+                . The agent had to answer without that data — see the transcript below for what it
+                said instead.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {c.limit_hit && (
         <Card className="border-warning/30 bg-warning/5 p-4">
           <div className="flex items-start gap-2 text-sm">
@@ -390,14 +616,28 @@ export function CallDetail() {
         <RecordingPlayer callId={c.id} sizeBytes={c.recording_bytes} />
       )}
 
+      <div className={cn('grid gap-3', c.dialer_context && 'lg:grid-cols-2')}>
+        {c.dialer_context && <DiallerCard ctx={c.dialer_context} />}
+        <ProvidersCard c={c} />
+      </div>
+
       <Card>
-        <CardHeader className="flex items-center justify-between">
+        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>Transcript</CardTitle>
-          <span className="text-2xs text-muted-foreground">
-            {timed.length} timed turn{timed.length === 1 ? '' : 's'}
+          <span className="flex items-center gap-2 text-2xs text-muted-foreground">
+            <span>
+              {timed.length} timed turn{timed.length === 1 ? '' : 's'}
+            </span>
+            {tools.length > 0 && (
+              <Badge tone={toolsFailed ? 'danger' : 'muted'}>
+                <Wrench className="h-3 w-3" />
+                {tools.length} tool call{tools.length === 1 ? '' : 's'}
+                {toolsFailed ? ` · ${toolsFailed} failed` : ''}
+              </Badge>
+            )}
           </span>
         </CardHeader>
-        {c.turns.length === 0 ? (
+        {timeline.length === 0 ? (
           <EmptyState
             icon={MessageSquareOff}
             title="No transcript"
@@ -405,9 +645,13 @@ export function CallDetail() {
           />
         ) : (
           <div className="divide-y divide-border/60">
-            {c.turns.map((t) => (
-              <TurnRow key={t.seq} turn={t} chunks={chunks.data} max={barMax} />
-            ))}
+            {timeline.map((e) =>
+              e.kind === 'turn' ? (
+                <TurnRow key={`t${e.turn.seq}`} turn={e.turn} chunks={chunks.data} max={barMax} />
+              ) : (
+                <ToolRow key={`x${e.tool.id}`} tool={e.tool} />
+              ),
+            )}
           </div>
         )}
       </Card>
