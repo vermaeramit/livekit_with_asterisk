@@ -15,6 +15,7 @@ the wrong chunk.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import re
@@ -30,6 +31,7 @@ from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
 from livekit.plugins import google, openai, sarvam, silero, soniox
 
 import prompt as prompt_mod
+import tools as tools_mod
 
 # NOTE: livekit.agents.inference.TurnDetector is the newer API, but its signature
 # (base_url/api_key/conn_options) shows it can call a remote gateway. Turn
@@ -200,12 +202,19 @@ def _api_url() -> str:
 
 class KBAgent(Agent):
     def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict,
-                 chat_ctx=None):
+                 chat_ctx=None, extra_tools=None):
         # instructions stay byte-identical per campaign - that is what OpenAI's
         # prompt cache keys on. Per-call context arrives as chat_ctx, AFTER the
         # cacheable prefix, never inside it.
-        super().__init__(instructions=instructions,
-                         **({"chat_ctx": chat_ctx} if chat_ctx else {}))
+        #
+        # Tool DEFINITIONS are fine in the cached part: they are per-campaign and
+        # identical across calls. Only their arguments differ, and those are not
+        # in the prefix.
+        super().__init__(
+            instructions=instructions,
+            **({"chat_ctx": chat_ctx} if chat_ctx else {}),
+            **({"tools": list(extra_tools)} if extra_tools else {}),
+        )
         self.cfg = cfg
         # Carried so the KB tool embeds its query on the client's key too. The
         # search path is easy to forget - it is billed per turn, not per upload.
@@ -612,8 +621,23 @@ async def entrypoint(ctx: JobContext):
     else:
         logger.info("dialler context: none on this call")
 
+    # Tools the campaign defined in the console, on top of the two built in
+    # here. Built AFTER start_call so every invocation can be recorded against a
+    # call id - writes are in scope, and "which call booked this?" has to be
+    # answerable.
+    extra_tools = []
+    if cfg.campaign_id is not None:
+        specs = await store.load_tools(cfg.campaign_id)
+        if specs:
+            extra_tools = tools_mod.build_all(
+                specs, call_id,
+                functools.partial(store.record_tool_call, call_id))
+            logger.info("campaign tools: %s",
+                        ", ".join(s["name"] for s in specs))
+
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys,
-                    chat_ctx=_caller_context(dialler))
+                    chat_ctx=_caller_context(dialler),
+                    extra_tools=extra_tools)
 
     vad = ctx.proc.userdata["vad"]
     session = AgentSession(

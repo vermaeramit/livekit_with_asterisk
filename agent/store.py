@@ -158,6 +158,63 @@ async def load_provider_keys(campaign_id: int) -> dict[str, str]:
     return out
 
 
+async def load_tools(campaign_id: int) -> list[dict]:
+    """Enabled tools for this campaign, auth values decrypted.
+
+    Decrypted here for the same reason provider keys are: the plaintext should
+    exist only where it is used, and the only user is the HTTP request itself.
+    """
+    import crypto
+
+    rows = await (await pool()).fetch(
+        """SELECT id, name, description, parameters, method, url, headers,
+                  auth_header, auth_value_enc, body_template, timeout_ms,
+                  max_response_bytes, response_path
+             FROM campaign_tools
+            WHERE campaign_id = $1 AND enabled
+            ORDER BY name""",
+        campaign_id,
+    )
+    out = []
+    for r in rows:
+        spec = dict(r)
+        enc = spec.pop("auth_value_enc", None)
+        # A tool whose secret cannot be decrypted is offered WITHOUT it rather
+        # than dropped: the request then fails with a 401 that lands in
+        # tool_invocations, which says far more than a tool that silently
+        # stopped existing.
+        if enc:
+            try:
+                spec["auth_value"] = crypto.decrypt(enc)
+            except Exception:
+                spec["auth_value"] = None
+        for k in ("parameters", "headers"):
+            if isinstance(spec.get(k), str):
+                import json
+                spec[k] = json.loads(spec[k])
+        out.append(spec)
+    return out
+
+
+async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
+                           status_code=None, error=None, duration_ms=None) -> None:
+    """Never let recording a tool call break the call it describes."""
+    import json
+
+    try:
+        await (await pool()).execute(
+            """INSERT INTO tool_invocations
+                   (call_id, tool_id, name, arguments, status_code, error,
+                    duration_ms)
+               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7)""",
+            call_id, tool_id, name, json.dumps(arguments, default=str),
+            status_code, error, duration_ms,
+        )
+    except Exception:
+        import logging
+        logging.getLogger("voice-agent").exception("tool_invocations write failed")
+
+
 async def start_call(room_name, caller, callee, config_name, language,
                      campaign_id: Optional[int] = None,
                      sip_call_id: Optional[str] = None) -> int:
