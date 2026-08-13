@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 from livekit import api
@@ -153,6 +154,34 @@ def _caller_context(dialler: dict[str, str]):
         ),
     )
     return c
+
+
+# {{cus_name}} / {{modalname|आपकी गाड़ी}} in anything spoken to the caller.
+#
+# A default after the pipe is not decoration. The dialler does not always send
+# every field - X-language arrives empty today - and a greeting that renders as
+# "क्या मेरी बात  जी से हो रही है?" is worse than one that never used the name.
+# Without a default the placeholder becomes empty and the double space is
+# collapsed, which is the least bad of the remaining options.
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_]+)\s*(?:\|([^}]*))?\}\}")
+
+
+def _render(template: str | None, dialler: dict[str, str]) -> str | None:
+    """Substitute dialler context into a spoken string.
+
+    Only ever applied to things SAID to the caller - greeting, transfer and
+    limit messages. Never to `instructions`: those are the cacheable prompt
+    prefix, and a caller's name inside them would make every call's prefix
+    unique and silently kill the prompt cache.
+    """
+    if not template or "{{" not in template:
+        return template
+
+    def one(m: re.Match) -> str:
+        key, default = m.group(1), (m.group(2) or "")
+        return (dialler.get(f"dialer.{key}") or default).strip()
+
+    return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(one, template)).strip()
 
 
 def _sip_attr(participant, *keys):
@@ -772,7 +801,8 @@ async def entrypoint(ctx: JobContext):
     # One utterance, not two. Said separately, a caller who speaks over the
     # greeting cancels what follows - and what follows is the recording notice.
     # Joined here it is either both or neither.
-    opening = " ".join(x for x in (cfg.greeting, cfg.recording_disclosure) if x)
+    opening = " ".join(x for x in (_render(cfg.greeting, dialler),
+                                   cfg.recording_disclosure) if x)
     if opening:
         await session.say(opening, allow_interruptions=cfg.allow_interrupt)
 

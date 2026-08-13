@@ -352,6 +352,17 @@ export function CampaignConfig() {
               placeholder="Namaste! Main aapki kaise madad kar sakta hoon?"
               hint="Spoken the moment the call connects. Leave empty to let the caller speak first."
             />
+            <Note>
+              The dialler sends who is calling and what they own. Use{' '}
+              <code>{'{{cus_name}}'}</code>, <code>{'{{modalname}}'}</code> or{' '}
+              <code>{'{{calltype}}'}</code> instead of typing one caller's details
+              in — a hardcoded name is correct for exactly one person.
+              <br />
+              <strong>Give each one a fallback</strong> after a pipe:{' '}
+              <code>{'{{cus_name|आप}}'}</code>. The dialler does not always send
+              every field, and without a fallback the sentence is spoken with a
+              gap in it — “क्या मेरी बात जी से हो रही है?”
+            </Note>
 
             <TextField
               label="Recording notice"
