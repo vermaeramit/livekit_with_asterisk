@@ -185,13 +185,14 @@ async def test_tool(campaign_id: int, tool_id: int, arguments: dict,
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "tool not found")
 
-    import re
-    ph = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+    # The SAME substitution and extraction the agent uses, imported rather than
+    # reimplemented - see agent/toolfmt.py. The first version of this endpoint
+    # had its own copy of one and none of the other, so the test showed a whole
+    # document where the model would have seen a single field.
+    fmt = secretlib.toolfmt()
 
     def fill(tpl):
-        if not tpl or "{{" not in tpl:
-            return tpl
-        return ph.sub(lambda m: str(arguments.get(m.group(1), "")), tpl)
+        return fmt.fill(tpl, arguments)
 
     url = fill(row["url"])
     # Same User-Agent the agent sends, so the test cannot pass where the real
@@ -216,5 +217,18 @@ async def test_tool(campaign_id: int, tool_id: int, arguments: dict,
         err = (f"took {ms}ms against a {row['timeout_ms']}ms timeout - a real "
                "caller hears this as silence")
 
+    # Apply response_path exactly as the agent does, or the promise under this
+    # result ("same truncation, same response path") is not true.
+    shown = body
+    if body and row["response_path"]:
+        try:
+            picked = fmt.extract(json.loads(body), row["response_path"])
+            shown = (json.dumps(picked, ensure_ascii=False)
+                     if picked is not None
+                     else f"(response_path '{row['response_path']}' matched "
+                          f"nothing - the model would get the whole body)")
+        except json.JSONDecodeError:
+            shown = body  # not JSON; the path cannot apply
+
     return ToolTestResult(ok=bool(code and code < 400), status_code=code,
-                          duration_ms=ms, body=body or None, error=err, url=url)
+                          duration_ms=ms, body=shown or None, error=err, url=url)

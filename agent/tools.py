@@ -17,7 +17,6 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import socket
 import time
 from typing import Any, Callable
@@ -26,9 +25,9 @@ from urllib.parse import urlsplit
 import aiohttp
 from livekit.agents import llm as lk_llm
 
-log = logging.getLogger("voice-agent")
+import toolfmt
 
-_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+log = logging.getLogger("voice-agent")
 
 # Off by default, by decision: clients host their APIs wherever they like and an
 # allowlist was judged too much friction. Turn it on with
@@ -64,35 +63,6 @@ async def aclose() -> None:
     if _session is not None and not _session.closed:
         await _session.close()
     _session = None
-
-
-def _fill(template: str | None, args: dict[str, Any]) -> str | None:
-    """Substitute {{arg}} from the model's arguments.
-
-    A missing argument becomes empty rather than raising. The model decides what
-    it sends, and a half-filled URL that 404s is easier to diagnose from
-    tool_invocations than an exception with no record.
-    """
-    if not template or "{{" not in template:
-        return template
-    return _PLACEHOLDER.sub(lambda m: str(args.get(m.group(1), "")), template)
-
-
-def _extract(body: Any, path: str | None) -> Any:
-    """Dotted path into the response, e.g. "data.customer"."""
-    if not path:
-        return body
-    cur = body
-    for part in path.split("."):
-        if isinstance(cur, dict):
-            cur = cur.get(part)
-        elif isinstance(cur, list) and part.isdigit():
-            cur = cur[int(part)] if int(part) < len(cur) else None
-        else:
-            return None
-        if cur is None:
-            return None
-    return cur
 
 
 def _host_is_private(url: str) -> bool:
@@ -139,7 +109,7 @@ def build(spec: dict, call_id: int | None, record: Callable):
     async def run(raw_arguments: dict[str, object]) -> str:
         args = dict(raw_arguments or {})
         t0 = time.perf_counter()
-        url = _fill(spec["url"], args) or ""
+        url = toolfmt.fill(spec["url"], args) or ""
 
         async def done(status=None, err=None):
             await record(tool_id=spec.get("id"), name=name, arguments=args,
@@ -168,7 +138,7 @@ def build(spec: dict, call_id: int | None, record: Callable):
 
         data = None
         if method != "GET" and spec.get("body_template"):
-            data = _fill(spec["body_template"], args)
+            data = toolfmt.fill(spec["body_template"], args)
             headers.setdefault("Content-Type", "application/json")
 
         try:
@@ -206,7 +176,7 @@ def build(spec: dict, call_id: int | None, record: Callable):
                 "could not retrieve it.")
 
         try:
-            body = _extract(json.loads(text), spec.get("response_path"))
+            body = toolfmt.extract(json.loads(text), spec.get("response_path"))
             out = json.dumps(body, ensure_ascii=False, default=str)
         except (json.JSONDecodeError, TypeError):
             # Not JSON, or the path missed. The raw text is still the most

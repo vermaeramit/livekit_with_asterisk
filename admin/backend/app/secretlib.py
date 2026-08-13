@@ -38,6 +38,19 @@ def crypto():
     return _crypto
 
 
+def toolfmt():
+    """agent/toolfmt.py, from the same mount.
+
+    Placeholder substitution and response extraction, shared with the agent so
+    the console's "this is what the model would receive" cannot drift from what
+    the model actually receives.
+    """
+    _load()  # no-op if already loaded; ensures AGENT_LIB is on sys.path
+    import toolfmt as _mod  # type: ignore[import-not-found]
+
+    return _mod
+
+
 def _load():
     global _crypto, _import_error
     if not AGENT_LIB.is_dir():
