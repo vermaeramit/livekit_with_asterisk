@@ -571,3 +571,68 @@ class ProviderKeyWritten(BaseModel):
     # is correct - but the console has to say so, or the first anyone hears of
     # it is a caller being handed to a human.
     no_credits: bool = False
+
+
+# --- campaign tools ----------------------------------------------------------
+# auth_value is write-only, like a provider key: it goes in through create or
+# update and never comes back out. ToolOut carries a hint instead.
+
+ToolMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
+class ToolBase(BaseModel):
+    # Matches the model's function-name rules and the CHECK in migration 013.
+    # Rejecting it here means a readable 422 instead of a provider refusing the
+    # whole request mid-call.
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{2,47}$")
+    # The only thing the model reads when deciding whether to call this. A vague
+    # one is the usual reason a tool fires at the wrong moment, or never.
+    description: str = Field(min_length=10, max_length=1000)
+    parameters: dict = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    method: ToolMethod = "GET"
+    url: str = Field(pattern=r"^https?://", max_length=2000)
+    headers: dict[str, str] | None = None
+    auth_header: str | None = Field(default=None, max_length=100)
+    body_template: str | None = Field(default=None, max_length=4000)
+    # A tool call happens inside a ~2s turn budget. Past that the caller is
+    # listening to silence, which is worse than a tool that failed.
+    timeout_ms: int = Field(default=2500, ge=200, le=8000)
+    max_response_bytes: int = Field(default=8192, ge=256, le=65536)
+    response_path: str | None = Field(default=None, max_length=200)
+    enabled: bool = True
+
+    @field_validator("parameters")
+    @classmethod
+    def _looks_like_schema(cls, v: dict) -> dict:
+        # Not full JSON Schema validation - just the shape every provider
+        # requires, so a malformed one fails here rather than on a live call.
+        if v.get("type") != "object" or not isinstance(v.get("properties"), dict):
+            raise ValueError('parameters must be a JSON Schema object with '
+                             '"type": "object" and a "properties" map')
+        return v
+
+
+class ToolCreate(ToolBase):
+    auth_value: str | None = Field(default=None, max_length=2000)
+
+
+class ToolUpdate(ToolBase):
+    # Omitted means "leave the stored secret alone"; sending "" clears it.
+    auth_value: str | None = Field(default=None, max_length=2000)
+
+
+class ToolOut(ToolBase):
+    id: int
+    auth_value_hint: str | None
+    updated_at: datetime
+
+
+class ToolTestResult(BaseModel):
+    ok: bool
+    status_code: int | None
+    duration_ms: int
+    # Truncated exactly as the agent would truncate it, so what is shown here is
+    # what the model would actually receive.
+    body: str | None
+    error: str | None
+    url: str
