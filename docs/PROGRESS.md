@@ -2303,6 +2303,58 @@ guess.
 
 ---
 
+## Soniox, measured (14 Aug 2026)
+
+Tried once before and rejected on the voice, which was not a fair test - the
+voice was `Priya` on `tts-rt-v1-preview`, and neither had been chosen: the model
+was the plugin's default and the voice was a guess. Retested properly.
+
+### The numbers
+
+Per-turn averages, from `turns` joined to `calls.stt_provider_used` /
+`tts_provider_used`:
+
+| | turns | STT | TTS TTFB | eou | total |
+|---|---|---|---|---|---|
+| **Sarvam** | 661 | ~300 ms | ~280 ms | ~1050 ms | **~1950 ms** |
+| **Soniox** | 144 | 1067 ms | 946 ms | 1454 ms | **~3080 ms** |
+
+Three to four times slower on every layer, about **1.2 s per turn**. Moving to
+`tts-rt-v2` changed nothing: the two calls made on it measured `tts_ttfb` 952
+and 991 ms.
+
+**Not adopted.** The earlier verdict was right for the wrong reason.
+
+### Two things worth having found
+
+- **`tts-rt-v1` is removed on 31 Aug 2026**, and `tts-rt-v1-preview` is an alias
+  of it. That was the agent's hardcoded default. A campaign on Soniox would
+  have gone silent mid-call on a date nothing here would have warned about.
+- **The console's voice list was wrong and could not know it.** It was hardcoded
+  as the union of two models, so it offered Meera, Maya, Noah, Jack, Claire,
+  Sofia and Elise - none of which exist on `tts-rt-v2` - and a voice the model
+  does not have raises inside `TTS.__init__`, killing the job before the call
+  is answered. The list is now read from the provider per model.
+
+Finding the voices took three wrong endpoints: `/v1/voices` returns **cloned**
+voices only and is empty on an account that has never made one; `/v1/models`
+returns **STT** models only; the built-in voices hang off `/v1/tts-models`.
+`server-configs/provider-catalog.py` asks any of them without the key touching
+the terminal.
+
+### The mistake that made the latency hunt harder
+
+The campaign had been left on Soniox after the first trial. Every call analysed
+during the ringback investigation - including the 1912 ms greeting and the
+2873 ms STT - was **Soniox**, while being described as Sarvam throughout. The
+per-call `providers_used` columns say so plainly and were not consulted until
+the end.
+
+The correction changes the remaining work: the ~1.6 s of silence after answer
+was not a TTS cold start to be engineered around. It was the provider.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
