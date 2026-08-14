@@ -686,6 +686,24 @@ class ToolBase(BaseModel):
                 f"{', '.join(sorted(declared)) or 'nothing'}. An undeclared "
                 "placeholder is replaced with an empty string, so the request "
                 "goes out with the value missing.")
+
+        # Single braces around a declared argument name. Nothing substitutes
+        # {pin}, so it is sent to the API verbatim - and the API answers with
+        # something plausible ("no dealer found for the given pincode") that
+        # reads as a data problem rather than a typo. Found exactly that way.
+        #
+        # Only flagged when the name is a DECLARED argument: a JSON body is full
+        # of legitimate braces, and guessing at intent there would reject valid
+        # templates.
+        for tpl, where in ((self.url, "URL"), (self.body_template, "body")):
+            if not tpl:
+                continue
+            for m in re.finditer(r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})", tpl):
+                if m.group(1) in declared:
+                    raise ValueError(
+                        f"the {where} has {{{m.group(1)}}} with single braces. "
+                        f"Placeholders need two: {{{{{m.group(1)}}}}}. As "
+                        "written it is sent to the API literally.")
         return self
 
 

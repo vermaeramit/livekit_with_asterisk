@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -211,6 +212,17 @@ async def test_tool(campaign_id: int, tool_id: int, arguments: dict,
         _run_once, row["method"], url, headers, data,
         row["timeout_ms"] / 1000, row["max_response_bytes"])
     ms = int((time.perf_counter() - t0) * 1000)
+
+    # Nothing substituted into it, so it went to the API literally. New tools
+    # cannot be saved this way any more, but ones stored before that check
+    # existed can - and the symptom is an API answering sensibly about a value
+    # it never received, which reads as a data problem rather than a typo.
+    leftover = re.findall(r"\{+\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}+", url)
+    if leftover and err is None:
+        err = (f"the URL still contains {{{leftover[0]}}} - it was sent to the "
+               "API literally. Placeholders need two braces "
+               f"({{{{{leftover[0]}}}}}) and the name must match an argument "
+               "declared in Parameters.")
 
     if ms > row["timeout_ms"] * 0.8 and err is None:
         # Not a failure, but the caller would have been listening to it.
