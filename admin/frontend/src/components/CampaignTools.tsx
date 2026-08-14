@@ -28,6 +28,21 @@ const BLANK = {
 
 type Draft = typeof BLANK
 
+/**
+ * API field names in the order they appear in the dialog.
+ *
+ * Each input carries `id="f-<api field name>"` so a 422 can be traced straight
+ * to the control that caused it. Deriving the id from the label instead — which
+ * is what the field wrappers do by default — means "Parameters (JSON Schema)"
+ * becomes `f-parameters-json-schema-`, and renaming a label silently breaks
+ * the link.
+ */
+const FIELD_ORDER = [
+  'name', 'description', 'method', 'url', 'parameters', 'body_template',
+  'auth_header', 'auth_value', 'timeout_ms', 'max_response_bytes',
+  'response_path',
+]
+
 function toDraft(t: CampaignTool): Draft {
   return {
     name: t.name,
@@ -53,7 +68,10 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
 
   const [editing, setEditing] = useState<CampaignTool | 'new' | null>(null)
   const [draft, setDraft] = useState<Draft>(BLANK)
+  // `error` is only what belongs to no single field; anything the server tied
+  // to a field goes in `fieldErrors` and is rendered against that input.
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [testing, setTesting] = useState<CampaignTool | null>(null)
   const [testArgs, setTestArgs] = useState('{}')
   const [testResult, setTestResult] = useState<ToolTestResult | null>(null)
@@ -64,12 +82,39 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
   })
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['campaign-tools', campaignId] })
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }))
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    setDraft((d) => ({ ...d, [k]: v }))
+    // Clear this field's rejection as it is edited. Red left on a field you
+    // have just corrected reads as "still wrong" and sends people hunting.
+    // Only this field: the banner holds whole-object rules that editing one
+    // input does not necessarily resolve.
+    setFieldErrors((e) => (k in e ? { ...e, [k]: '' } : e))
+  }
 
   function open(t: CampaignTool | 'new') {
     setEditing(t)
     setDraft(t === 'new' ? BLANK : toDraft(t))
     setError(null)
+    setFieldErrors({})
+  }
+
+  /**
+   * Bring the first rejected field into view.
+   *
+   * Without this the dialog scrolls wherever it was left — usually at the Save
+   * button, fourteen fields below a Name input that is the thing being
+   * complained about.
+   */
+  function revealFirstError(fields: Record<string, string>) {
+    const first = FIELD_ORDER.find((f) => fields[f])
+    if (!first) return
+    // After paint, so the message is already rendered and the field has its
+    // final height and position.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`f-${first}`)
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus()
+    })
   }
 
   const save = useMutation({
@@ -102,7 +147,15 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
       setEditing(null)
       toast.success('Tool saved', 'Applies from the next call.')
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : (e as Error).message),
+    onError: (e) => {
+      // Anything that names a field is shown at that field. What is left over —
+      // "parameters is not valid JSON", a 409, a whole-object rule — has no
+      // field to sit against, so it keeps the banner.
+      const fields = e instanceof ApiError ? e.fields : {}
+      setFieldErrors(fields)
+      setError(e instanceof ApiError ? e.general || null : (e as Error).message)
+      revealFirstError(fields)
+    },
   })
 
   const remove = useMutation({
@@ -211,16 +264,20 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
       >
         <div className="space-y-4">
           <TextField
+            id="f-name"
             label="Name"
             value={draft.name}
             onChange={(v) => set('name', v)}
+            error={fieldErrors.name}
             placeholder="check_service_status"
             hint="Lowercase, letters, digits and underscores. This is what the model calls."
           />
           <TextArea
+            id="f-description"
             label="When to use it"
             value={draft.description}
             onChange={(v) => set('description', v)}
+            error={fieldErrors.description}
             rows={3}
             placeholder="Look up the service status for a vehicle by its registration number. Use this when the caller asks about a service, repair or job card."
             hint="The model reads ONLY this when deciding whether to call the tool. Vague wording is why a tool fires at the wrong moment, or never."
@@ -230,27 +287,33 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
             <SelectField label="Method" value={draft.method}
                          onChange={(v) => set('method', v)} options={METHODS} />
             <TextField
+              id="f-url"
               label="URL"
               value={draft.url}
               onChange={(v) => set('url', v)}
+              error={fieldErrors.url}
               placeholder="https://api.example.com/service?reg={{registration}}"
               hint="{{arg}} is replaced with the model's argument of that name."
             />
           </div>
 
           <TextArea
+            id="f-parameters"
             label="Parameters (JSON Schema)"
             value={draft.parameters}
             onChange={(v) => set('parameters', v)}
+            error={fieldErrors.parameters}
             rows={8}
             hint="What arguments the model may send. Describe each one — the model uses those descriptions to fill them in, and a vague one produces a reformatted value your API may not match."
           />
 
           {draft.method !== 'GET' && (
             <TextArea
+              id="f-body_template"
               label="Request body"
               value={draft.body_template}
               onChange={(v) => set('body_template', v)}
+              error={fieldErrors.body_template}
               rows={4}
               placeholder={'{"registration": "{{registration}}", "slot": "{{slot}}"}'}
               hint="Same {{arg}} substitution. Sent as application/json unless you set a Content-Type header."
@@ -259,15 +322,19 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField
+              id="f-auth_header"
               label="Auth header name"
               value={draft.auth_header}
               onChange={(v) => set('auth_header', v)}
+              error={fieldErrors.auth_header}
               placeholder="Authorization"
             />
             <TextField
+              id="f-auth_value"
               label="Auth header value"
               value={draft.auth_value}
               onChange={(v) => set('auth_value', v)}
+              error={fieldErrors.auth_value}
               type="password"
               placeholder={
                 editing !== 'new' && (editing as CampaignTool)?.auth_value_hint
@@ -279,12 +346,16 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
-            <NumberField label="Timeout (ms)" value={draft.timeout_ms}
-                         onChange={(v) => set('timeout_ms', v)} min={200} max={8000} />
-            <NumberField label="Max response (bytes)" value={draft.max_response_bytes}
-                         onChange={(v) => set('max_response_bytes', v)} min={256} max={65536} />
-            <TextField label="Response path" value={draft.response_path}
-                       onChange={(v) => set('response_path', v)} placeholder="data.customer" />
+            <NumberField id="f-timeout_ms" label="Timeout (ms)" value={draft.timeout_ms}
+                         onChange={(v) => set('timeout_ms', v)} min={200} max={8000}
+                         error={fieldErrors.timeout_ms} />
+            <NumberField id="f-max_response_bytes" label="Max response (bytes)"
+                         value={draft.max_response_bytes}
+                         onChange={(v) => set('max_response_bytes', v)} min={256} max={65536}
+                         error={fieldErrors.max_response_bytes} />
+            <TextField id="f-response_path" label="Response path" value={draft.response_path}
+                       onChange={(v) => set('response_path', v)} placeholder="data.customer"
+                       error={fieldErrors.response_path} />
           </div>
 
           <Toggle

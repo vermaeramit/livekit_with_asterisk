@@ -43,10 +43,51 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * Field name -> what is wrong with it, from a 422's `detail`.
+     *
+     * Kept structured as well as flattened into `message` so a form can put
+     * each message against its own input. A single banner is unusable on a long
+     * dialog: the field it names is usually scrolled off the screen.
+     *
+     * Empty for errors that belong to no single field.
+     */
+    readonly fields: Record<string, string> = {},
+    /**
+     * The part of the message that belongs to no field — a whole-object rule, a
+     * 409, a plain string detail. Still needs a banner somewhere; a form that
+     * only renders `fields` would drop it silently.
+     */
+    readonly general: string = '',
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+/** Split a FastAPI 422 into per-field messages and everything else. */
+function splitDetail(body: any): { fields: Record<string, string>; general: string } {
+  if (!Array.isArray(body?.detail)) return { fields: {}, general: '' }
+  const fields: Record<string, string> = {}
+  const loose: string[] = []
+  for (const d of body.detail) {
+    if (!d.msg) continue
+    const msg = cleanMsg(d.msg)
+    const loc = (Array.isArray(d.loc) ? d.loc : []).filter(
+      (p: unknown) => typeof p === 'string' && p !== 'body' && p !== 'query',
+    )
+    // Only the first segment: "headers.X-Key" belongs to the "headers" input.
+    // A model-level validator reports an empty loc and has no field to sit by.
+    const field = loc[0]
+    if (!field) loose.push(msg)
+    else fields[field] = fields[field] ? `${fields[field]} ${msg}` : msg
+  }
+  return { fields, general: loose.join('; ') }
+}
+
+/** Pydantic prefixes custom validator messages with "Value error, ". */
+function cleanMsg(msg: unknown): string {
+  return String(msg).replace(/^Value error,\s*/, '')
 }
 
 async function parse(res: Response): Promise<any> {
@@ -77,9 +118,7 @@ function messageOf(status: number, body: any): string {
             .filter((p: unknown) => typeof p === 'string' && p !== 'body' && p !== 'query')
             .join('.')
           if (!d.msg) return null
-          // Pydantic prefixes custom validator messages with "Value error, ".
-          const msg = String(d.msg).replace(/^Value error,\s*/, '')
-          return field ? `${field}: ${msg}` : msg
+          return field ? `${field}: ${cleanMsg(d.msg)}` : cleanMsg(d.msg)
         })
         .filter(Boolean)
         .join('; ') || 'invalid request'
@@ -163,7 +202,13 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     throw new ApiError(401, 'session expired - please sign in again')
   }
 
-  if (!res.ok) throw new ApiError(res.status, messageOf(res.status, await parse(res)))
+  if (!res.ok) {
+    // parse() reads the body, so it can only be called once.
+    const body = await parse(res)
+    const { fields, general } = splitDetail(body)
+    throw new ApiError(res.status, messageOf(res.status, body), fields,
+                       general || (Object.keys(fields).length ? '' : messageOf(res.status, body)))
+  }
   return (await parse(res)) as T
 }
 

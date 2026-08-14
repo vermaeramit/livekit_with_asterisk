@@ -4,21 +4,37 @@ import { cn } from '@/lib/utils'
 export function Field({
   label,
   hint,
+  error,
   htmlFor,
   children,
   className,
 }: {
   label: string
   hint?: React.ReactNode
+  /**
+   * Server-side rejection of THIS field.
+   *
+   * It replaces the hint rather than sitting beside it: the messages the API
+   * sends already say what to type, and stacking two paragraphs under one input
+   * is how people stop reading either.
+   *
+   * Shown here, at the field, because the alternative was one banner at the
+   * foot of a fourteen-field dialog naming a field scrolled off the top.
+   */
+  error?: string | null
   htmlFor?: string
   children: React.ReactNode
   className?: string
 }) {
   return (
-    <div className={cn('space-y-1.5', className)}>
+    <div className={cn('space-y-1.5', className)} data-field={htmlFor}>
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
-      {hint && <p className="text-2xs leading-relaxed text-muted-foreground">{hint}</p>}
+      {error ? (
+        <p className="text-2xs leading-relaxed text-danger">{error}</p>
+      ) : (
+        hint && <p className="text-2xs leading-relaxed text-muted-foreground">{hint}</p>
+      )}
     </div>
   )
 }
@@ -26,19 +42,22 @@ export function Field({
 export function TextField({
   label,
   hint,
+  error,
   value,
   onChange,
   ...props
 }: {
   label: string
   hint?: React.ReactNode
+  error?: string | null
   value: string
   onChange: (v: string) => void
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
   const id = props.id ?? `f-${label.replace(/\W+/g, '-').toLowerCase()}`
   return (
-    <Field label={label} hint={hint} htmlFor={id}>
-      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} {...props} />
+    <Field label={label} hint={hint} error={error} htmlFor={id}>
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)}
+             aria-invalid={error ? true : undefined} {...props} />
     </Field>
   )
 }
@@ -46,6 +65,7 @@ export function TextField({
 export function NumberField({
   label,
   hint,
+  error,
   value,
   onChange,
   suffix,
@@ -53,17 +73,19 @@ export function NumberField({
 }: {
   label: string
   hint?: React.ReactNode
+  error?: string | null
   value: number
   onChange: (v: number) => void
   suffix?: string
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
   const id = props.id ?? `f-${label.replace(/\W+/g, '-').toLowerCase()}`
   return (
-    <Field label={label} hint={hint} htmlFor={id}>
+    <Field label={label} hint={hint} error={error} htmlFor={id}>
       <div className="relative">
         <Input
           id={id}
           type="number"
+          aria-invalid={error ? true : undefined}
           value={Number.isFinite(value) ? value : ''}
           // An empty box parses as NaN; keep the last good value rather than
           // sending NaN to the API and getting an opaque 422.
@@ -114,6 +136,7 @@ export function SelectField({
 export function TextArea({
   label,
   hint,
+  error,
   value,
   onChange,
   rows = 6,
@@ -122,6 +145,7 @@ export function TextArea({
 }: {
   label: string
   hint?: React.ReactNode
+  error?: string | null
   value: string
   onChange: (v: string) => void
   rows?: number
@@ -129,16 +153,18 @@ export function TextArea({
 } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange' | 'rows'>) {
   const id = props.id ?? `f-${label.replace(/\W+/g, '-').toLowerCase()}`
   return (
-    <Field label={label} hint={hint} htmlFor={id}>
+    <Field label={label} hint={hint} error={error} htmlFor={id}>
       <textarea
         id={id}
         rows={rows}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error ? true : undefined}
         className={cn(
           'scrollbar-thin w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs',
           'placeholder:text-muted-foreground',
           'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
+          'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/20',
           mono && 'font-mono text-xs leading-relaxed',
         )}
         {...props}

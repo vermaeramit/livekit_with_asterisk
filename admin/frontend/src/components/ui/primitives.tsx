@@ -12,6 +12,9 @@ export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTML
         'transition-shadow placeholder:text-muted-foreground',
         'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
         'disabled:cursor-not-allowed disabled:opacity-50',
+        // Set by the field wrappers when the server rejects this one, so the
+        // bad field is findable in a long form without reading the message.
+        'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/20',
         className,
       )}
       {...props}
@@ -31,6 +34,7 @@ export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<H
         'transition-shadow',
         'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
         'disabled:cursor-not-allowed disabled:opacity-50',
+        'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/20',
         className,
       )}
       {...props}
