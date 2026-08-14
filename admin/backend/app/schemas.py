@@ -545,6 +545,13 @@ class ToolActivityItem(ToolInvocationOut):
     call_id: int | None = None
 
 
+class ToolActivityResponse(BaseModel):
+    items: list[ToolActivityItem]
+    total: int
+    page: int
+    page_size: int
+
+
 class CallUsage(BaseModel):
     llm_prompt_tokens: int | None
     llm_prompt_cached_tokens: int | None

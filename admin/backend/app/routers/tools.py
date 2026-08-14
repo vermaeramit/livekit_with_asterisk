@@ -19,12 +19,12 @@ import urllib.error
 import urllib.request
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
-from ..schemas import (ToolActivityItem, ToolCreate, ToolOut, ToolTestResult,
-                       ToolUpdate)
+from ..schemas import (ToolActivityItem, ToolActivityResponse, ToolCreate,
+                       ToolOut, ToolTestResult, ToolUpdate)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}/tools", tags=["tools"])
 
@@ -147,15 +147,20 @@ async def delete_tool(campaign_id: int, tool_id: int,
                        campaign_id=campaign_id)
 
 
-@router.get("/activity", response_model=list[ToolActivityItem])
-async def tool_activity(campaign_id: int, limit: int = 50,
+@router.get("/activity", response_model=ToolActivityResponse)
+async def tool_activity(campaign_id: int,
+                        page: int = Query(1, ge=1),
+                        page_size: int = Query(20, ge=1, le=100),
                         failed_only: bool = False,
                         user: CurrentUser = Depends(active_user)):
-    """Recent invocations of this campaign's tools, newest first.
+    """Invocations of this campaign's tools, newest first.
 
     Deliberately scoped to the campaign rather than being a global log. This is
-    read while looking at a tool, to answer "is it working" — and the answer is
-    a handful of recent calls, not a firehose.
+    read while looking at a tool, to answer "is it working".
+
+    Paged in the database, not in the browser. This table grows with every call
+    that uses a tool — a busy campaign puts thousands of rows a day in it — so
+    the alternative is sending the whole history to render twenty lines of it.
 
     Joined on campaign_id rather than filtered by tool_id so an invocation
     outlives the tool that made it: tool_id is ON DELETE SET NULL, and the
@@ -163,25 +168,34 @@ async def tool_activity(campaign_id: int, limit: int = 50,
     it by mistake.
     """
     await assert_campaign_visible(user, campaign_id)
+
+    # One clause, used by both the count and the page, so they can never
+    # disagree about what is being counted.
+    failed = "AND (ti.error IS NOT NULL OR ti.status_code >= 400)" if failed_only else ""
+    where = f"WHERE c.campaign_id = $1 {failed}"
+
+    total = await db.pool().fetchval(
+        f"""SELECT count(*) FROM tool_invocations ti
+              JOIN calls c ON c.id = ti.call_id {where}""", campaign_id)
+
     rows = await db.pool().fetch(
         f"""SELECT ti.id, ti.call_id, ti.name, ti.arguments, ti.url,
                    ti.status_code, ti.duration_ms, ti.error, ti.created_at
               FROM tool_invocations ti
               JOIN calls c ON c.id = ti.call_id
-             WHERE c.campaign_id = $1
-                   {"AND (ti.error IS NOT NULL OR ti.status_code >= 400)"
-                    if failed_only else ""}
-             ORDER BY ti.created_at DESC
-             LIMIT $2""",
-        campaign_id, min(max(limit, 1), 200))
+              {where}
+             ORDER BY ti.created_at DESC, ti.id DESC
+             LIMIT $2 OFFSET $3""",
+        campaign_id, page_size, (page - 1) * page_size)
 
-    out = []
+    items = []
     for r in rows:
         d = dict(r)
         if isinstance(d.get("arguments"), str):
             d["arguments"] = json.loads(d["arguments"])
-        out.append(ToolActivityItem(**d))
-    return out
+        items.append(ToolActivityItem(**d))
+    return ToolActivityResponse(items=items, total=total, page=page,
+                                page_size=page_size)
 
 
 # ---------------------------------------------------------------------------

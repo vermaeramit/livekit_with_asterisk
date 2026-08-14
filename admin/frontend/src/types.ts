@@ -132,6 +132,13 @@ export interface ToolActivityItem extends ToolInvocation {
   call_id: number | null
 }
 
+export interface ToolActivityResponse {
+  items: ToolActivityItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export interface KbChunk {
   id: number
   seq: number

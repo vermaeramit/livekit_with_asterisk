@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical, Pencil, Plus, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import {
+  ChevronLeft, ChevronRight, FlaskConical, Pencil, Plus, Trash2, TriangleAlert, Wrench,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
-import type { CampaignTool, ToolActivityItem, ToolTestResult } from '@/types'
+import type { CampaignTool, ToolActivityResponse, ToolTestResult } from '@/types'
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))
 
@@ -28,6 +30,10 @@ const BLANK = {
 }
 
 type Draft = typeof BLANK
+
+// Paged in the database. tool_invocations gains a row for every tool call on
+// every call, so this list is unbounded by nature.
+const ACTIVITY_PAGE_SIZE = 20
 
 /**
  * API field names in the order they appear in the dialog.
@@ -74,6 +80,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [failedOnly, setFailedOnly] = useState(false)
+  const [page, setPage] = useState(1)
   const [testing, setTesting] = useState<CampaignTool | null>(null)
   const [testArgs, setTestArgs] = useState('{}')
   const [testResult, setTestResult] = useState<ToolTestResult | null>(null)
@@ -84,12 +91,19 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
   })
 
   const activity = useQuery({
-    queryKey: ['campaign-tool-activity', campaignId, failedOnly],
+    queryKey: ['campaign-tool-activity', campaignId, failedOnly, page],
     queryFn: () =>
-      api<ToolActivityItem[]>(
-        `/campaigns/${campaignId}/tools/activity?limit=50${failedOnly ? '&failed_only=true' : ''}`,
+      api<ToolActivityResponse>(
+        `/campaigns/${campaignId}/tools/activity?page=${page}&page_size=${ACTIVITY_PAGE_SIZE}` +
+          (failedOnly ? '&failed_only=true' : ''),
       ),
+    // Keeps the rows on screen while the next page loads, instead of collapsing
+    // to the empty state and back on every page turn.
+    placeholderData: (prev) => prev,
   })
+
+  const total = activity.data?.total ?? 0
+  const lastPage = Math.max(1, Math.ceil(total / ACTIVITY_PAGE_SIZE))
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['campaign-tools', campaignId] })
@@ -276,14 +290,14 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
               </p>
             </div>
             <Button size="sm" variant={failedOnly ? 'default' : 'outline'}
-                    onClick={() => setFailedOnly((f) => !f)}>
+                    onClick={() => { setFailedOnly((f) => !f); setPage(1) }}>
               {failedOnly ? 'Showing failures' : 'Failures only'}
             </Button>
           </div>
 
           {activity.isLoading ? (
             <p className="px-4 py-6 text-center text-xs text-muted-foreground">Loading…</p>
-          ) : !activity.data?.length ? (
+          ) : !activity.data?.items.length ? (
             <p className="px-4 py-6 text-center text-xs leading-relaxed text-muted-foreground">
               {failedOnly ? (
                 'No failed tool calls. That is the result you want.'
@@ -298,7 +312,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
             </p>
           ) : (
             <div className="divide-y divide-border/60">
-              {activity.data?.map((a) => {
+              {activity.data?.items.map((a) => {
                 const failed = Boolean(a.error) || (a.status_code ?? 0) >= 400
                 return (
                   <div key={a.id} className="px-4 py-2.5">
@@ -335,6 +349,30 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {total > ACTIVITY_PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-2xs">
+              <span className="tnum text-muted-foreground">
+                {(page - 1) * ACTIVITY_PAGE_SIZE + 1}–
+                {Math.min(page * ACTIVITY_PAGE_SIZE, total)} of {total}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1}
+                        onClick={() => setPage((p) => p - 1)}>
+                  <ChevronLeft className="size-3.5" />
+                  Previous
+                </Button>
+                <span className="tnum px-1 text-muted-foreground">
+                  Page {page} of {lastPage}
+                </span>
+                <Button variant="outline" size="sm" disabled={page >= lastPage}
+                        onClick={() => setPage((p) => p + 1)}>
+                  Next
+                  <ChevronRight className="size-3.5" />
+                </Button>
+              </div>
             </div>
           )}
         </div>
