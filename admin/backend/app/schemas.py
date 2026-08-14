@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 Role = Literal["superadmin", "tenant_admin", "agent", "viewer"]
 # Kept in step with provider_keys.PROVIDERS and the CHECK constraints in
@@ -608,9 +608,10 @@ ToolMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 class ToolBase(BaseModel):
     # Matches the model's function-name rules and the CHECK in migration 013.
-    # Rejecting it here means a readable 422 instead of a provider refusing the
-    # whole request mid-call.
-    name: str = Field(pattern=r"^[a-z][a-z0-9_]{2,47}$")
+    # Validated below rather than with Field(pattern=...): pydantic reports that
+    # as "String should match pattern '^[a-z][a-z0-9_]{2,47}$'", which says
+    # nothing about which field or what to type instead.
+    name: str
     # The only thing the model reads when deciding whether to call this. A vague
     # one is the usual reason a tool fires at the wrong moment, or never.
     description: str = Field(min_length=10, max_length=1000)
@@ -627,6 +628,17 @@ class ToolBase(BaseModel):
     response_path: str | None = Field(default=None, max_length=200)
     enabled: bool = True
 
+    @field_validator("name")
+    @classmethod
+    def _callable_name(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{2,47}", v):
+            raise ValueError(
+                f"tool name '{v}' is not usable as a function name. Use 3-48 "
+                "characters: lowercase letters, digits and underscores, "
+                "starting with a letter - e.g. 'dealers_by_pincode'. This is "
+                "the name the model calls, and the providers enforce it.")
+        return v
+
     @field_validator("parameters")
     @classmethod
     def _looks_like_schema(cls, v: dict) -> dict:
@@ -635,7 +647,46 @@ class ToolBase(BaseModel):
         if v.get("type") != "object" or not isinstance(v.get("properties"), dict):
             raise ValueError('parameters must be a JSON Schema object with '
                              '"type": "object" and a "properties" map')
+
+        # A name in "required" that is not in "properties" is a schema the model
+        # cannot satisfy: it is told the argument is mandatory and never told
+        # what it is. Some providers reject it outright, others accept it and
+        # the argument simply never arrives.
+        missing = [r for r in (v.get("required") or [])
+                   if r not in v["properties"]]
+        if missing:
+            raise ValueError(
+                f"'required' lists {', '.join(missing)}, but "
+                f"'properties' only defines "
+                f"{', '.join(v['properties']) or 'nothing'}. Every required "
+                "argument must be described in properties, or the model is "
+                "asked for something it was never told about.")
         return v
+
+    @model_validator(mode="after")
+    def _placeholders_are_declared(self):
+        """Every {{arg}} in the URL or body must be an argument the model has.
+
+        Without this the failure is silent and late: an undeclared placeholder
+        substitutes to empty, so the request goes out as `?pincode=` and the
+        API answers 400 mid-call. It looks like the client's API is broken.
+        """
+        declared = set((self.parameters or {}).get("properties") or {})
+        used = set()
+        for tpl in (self.url, self.body_template):
+            if tpl:
+                used |= set(re.findall(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}",
+                                       tpl))
+        unknown = sorted(used - declared)
+        if unknown:
+            raise ValueError(
+                f"the URL or body uses {{{{{unknown[0]}}}}}"
+                + (f" and {len(unknown) - 1} more" if len(unknown) > 1 else "")
+                + f", but parameters only declares "
+                f"{', '.join(sorted(declared)) or 'nothing'}. An undeclared "
+                "placeholder is replaced with an empty string, so the request "
+                "goes out with the value missing.")
+        return self
 
 
 class ToolCreate(ToolBase):

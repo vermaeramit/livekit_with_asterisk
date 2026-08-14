@@ -61,9 +61,29 @@ async function parse(res: Response): Promise<any> {
 
 function messageOf(status: number, body: any): string {
   if (typeof body?.detail === 'string') return body.detail
-  // FastAPI validation errors come back as a list of {loc, msg, type}
+  // FastAPI validation errors come back as a list of {loc, msg, type}.
+  //
+  // `loc` has to be kept. Dropping it produced messages like "String should
+  // match pattern '^[a-z][a-z0-9_]{2,47}$'" on a form with fourteen fields —
+  // technically accurate and impossible to act on, because it never said which
+  // field it meant.
   if (Array.isArray(body?.detail)) {
-    return body.detail.map((d: any) => d.msg).filter(Boolean).join('; ') || 'invalid request'
+    return (
+      body.detail
+        .map((d: any) => {
+          // loc is ["body", "name"] or ["body", "headers", "X-Key"]; the
+          // leading "body"/"query" is noise to anyone reading a form.
+          const field = (Array.isArray(d.loc) ? d.loc : [])
+            .filter((p: unknown) => typeof p === 'string' && p !== 'body' && p !== 'query')
+            .join('.')
+          if (!d.msg) return null
+          // Pydantic prefixes custom validator messages with "Value error, ".
+          const msg = String(d.msg).replace(/^Value error,\s*/, '')
+          return field ? `${field}: ${msg}` : msg
+        })
+        .filter(Boolean)
+        .join('; ') || 'invalid request'
+    )
   }
   // Statuses the reverse proxy can produce itself. Those responses are HTML, so
   // there is no detail to show and the bare code tells the user nothing.
