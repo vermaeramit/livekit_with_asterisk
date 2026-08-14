@@ -2230,6 +2230,79 @@ that is the measurement that justifies the log pipeline.
 
 ---
 
+## The ringing before an answer (14 Aug 2026)
+
+The dialler team asked for the ringback to be removed: they hand over calls
+that are **already connected to a human**, so every ring is a person listening
+to nothing. Their suggestion was to move the connection off LiveKit, based on
+another project where that had been the fix.
+
+Ringback is not the cause. `Dial(PJSIP/700@livekit,...)` leaves our inbound leg
+unanswered, so LiveKit's 180 Ringing passes straight through — and livekit-sip
+holds the INVITE at 180 until an agent subscribes to the caller's track. **The
+ring is a measurement of our own startup time.**
+
+### Where four seconds went
+
+| | |
+|---|---|
+| invite → 100 Trying | **0 ms** |
+| invite → 180 Ringing | **5 ms** |
+| invite → participant in room | **43 ms** |
+| `ctx.connect()` | **312 ms** |
+| config + keys + prompt | **1154 ms** |
+| session build | 159 ms |
+| greeting TTS first byte | **1817 ms** |
+
+LiveKit's share of a 4030 ms budget is 355 ms. Removing it would have cost a
+rewrite of the entire pipeline and bought a third of a second.
+
+### The 1154 ms was an import
+
+`build_instructions` did `import kb` lazily. `kb.py` pulls in **pymupdf4llm**
+(PyMuPDF, a large C extension used only for PDF *ingestion*), tiktoken, the
+OpenAI SDK, and loads the cl100k_base vocabulary at module scope. None of it is
+needed to answer a phone.
+
+A job process handles exactly one call and then exits, so this was paid **once
+per caller**, not once per process. Moved to `prewarm`, where it takes
+1284–3081 ms while the process sits idle in the warm pool.
+
+It also explains why a provider connection warm-up added an hour earlier
+reported `warm_done=False` after 1625 ms: a synchronous import blocks the event
+loop, so the task it was racing was never scheduled.
+
+| | Before | After |
+|---|---|---|
+| config + keys + prompt | 1466–1681 ms | **339 ms** |
+| session started (ring stops here) | 1625–1865 ms | **524 ms** |
+| ring heard by the caller | ~2.07 s | **~0.75 s** |
+| invite → first spoken word | ~4.03 s | **~2.4 s** |
+
+### Three wrong guesses, killed by measurement
+
+- *"Six sequential database round trips."* They take **8 ms** between them.
+- *"ICE/TURN discovery is slowing the connect."* `use_external_ip: false` and
+  TURN disabled were already correct; connect is 312 ms.
+- *"The greeting's TTS is a cold connection."* Warming DNS/TCP/TLS to all three
+  provider hosts changed `tts_ttfb` by nothing at all (1817 → 1614 ms, inside
+  normal variance).
+
+### What is left, and what it is not
+
+`tts_ttfb` on the greeting is ~1.6 s and **is not ringing** — it is silence
+after the call has been answered. Length explains part of it and not all: across
+801 recorded turns, 60–89 characters averages 309 ms and 243+ averages 806 ms,
+while our 119-character greeting consistently measures over 1500 ms. The
+shortest bucket (2–29 chars) is the slowest of all at 863 ms, which no
+length-proportional theory survives.
+
+Unresolved on purpose. The complaint was the ring, the ring is a third of what
+it was, and the next change should follow a fresh listen rather than another
+guess.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
