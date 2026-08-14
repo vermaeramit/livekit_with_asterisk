@@ -2172,6 +2172,53 @@ outside, but the caller got an apology instead of an answer.
 customer records, and keeping them would put personal data in a table nobody
 thinks of as holding it.
 
+### What a tool call records, and why the URL was added late
+
+`tool_invocations` stored the arguments the model chose. That was not enough.
+
+A tool went out with `pincode={pin}` — **single** braces, which nothing
+substitutes, so the literal string reached the API. It answered *"No dealer
+details found for the given pincode"*, and every stored field looked correct:
+the arguments were right (`pin: 124001`), the status was a plausible 404, and
+the same request from Postman worked. The fault existed only in the URL that
+was actually sent, and that was the one thing not recorded.
+
+Migration 014 adds it. Arguments **plus** the resolved URL are enough to replay
+any invocation through the test button, which is why the **response body is
+still not stored** — a failure can be reproduced without keeping a client API's
+customer records in our database.
+
+Rejected on save now, in both forms:
+
+| Written | Result before | Result now |
+|---|---|---|
+| `{pin}` | sent literally, API answers plausibly | rejected — "placeholders need two braces" |
+| `{{pin}}` with no `pin` in properties | substituted to empty, `?pincode=` | rejected — "declares nothing" |
+| `required: [pin]`, properties has `registration` | model never sends it | rejected |
+
+The Tools tab also gained **Recent activity**: real invocations across the
+campaign's calls, newest first, failures-only filter, link to each call. The
+test button proves a tool works when you press it; this says whether the model
+is calling it during real conversations, and with what.
+
+### A form whose errors could not be acted on
+
+Three faults stacked, each hiding the next:
+
+1. `messageOf()` dropped `loc` from every FastAPI validation error, so **no form
+   in the console had ever named its bad field**. A fourteen-field dialog
+   answered "String should match pattern `^[a-z][a-z0-9_]{2,47}$`".
+2. Fixing that named the field — and it still could not be acted on, because
+   the banner sits at the foot of the dialog and the field was above the fold.
+3. Scrolling to it did nothing, because **the dialog had no height cap**. It
+   grew past the viewport and the wrapper scrolled instead — and a flex item
+   taller than its `items-center` container overflows equally above and below,
+   with the top half unreachable. The first field was permanently off screen.
+
+Now: errors render against their own input, the first bad field is scrolled to
+and focused, and every dialog caps to the viewport with its body scrolling and
+its header and footer pinned.
+
 ### What this is not
 
 Raw agent logs. Those are in `journalctl` on the host, and `admin-api` runs in
