@@ -28,10 +28,21 @@ import sys
 import urllib.error
 import urllib.request
 
+BASES = {
+    "soniox": "https://api.soniox.com",
+    "sarvam": "https://api.sarvam.ai",
+    "openai": "https://api.openai.com",
+}
+
 ENDPOINTS = {
     "soniox": {
+        # /v1/voices lists CLONED voices only - it comes back empty on an
+        # account that has never made one. The built-in voices, with gender and
+        # character description, are attached to the TTS models instead, and
+        # /v1/models returns only the STT ones.
         "voices": "https://api.soniox.com/v1/voices",
         "models": "https://api.soniox.com/v1/models",
+        "tts-models": "https://api.soniox.com/v1/tts/models",
     },
     "sarvam": {
         # Sarvam publishes no voice list; speakers are documented, not served.
@@ -87,13 +98,19 @@ async def main() -> None:
     provider = (sys.argv[1] if len(sys.argv) > 1 else "soniox").lower()
     what = (sys.argv[2] if len(sys.argv) > 2 else "voices").lower()
 
-    if provider not in ENDPOINTS or what not in ENDPOINTS[provider]:
+    # A raw path is allowed so a wrong guess about an endpoint costs a re-run
+    # rather than a commit. Provider docs move; this tool should not have to.
+    if what.startswith("/"):
+        url = BASES[provider] + what
+    elif provider in ENDPOINTS and what in ENDPOINTS[provider]:
+        url = ENDPOINTS[provider][what]
+    else:
         raise SystemExit(
-            "usage: provider-catalog.py <provider> <what>\n  " +
+            "usage: provider-catalog.py <provider> <what|/raw/path>\n  " +
             "\n  ".join(f"{p} {w}" for p, ws in ENDPOINTS.items() for w in ws))
 
     key = await fetch_key(provider)
-    body = get(ENDPOINTS[provider][what], key)
+    body = get(url, key)
 
     try:
         print(json.dumps(json.loads(body), indent=2, ensure_ascii=False))
