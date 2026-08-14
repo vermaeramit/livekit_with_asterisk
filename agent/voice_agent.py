@@ -21,6 +21,8 @@ import os
 import re
 import time
 
+import aiohttp
+
 from livekit import api
 from livekit.agents import (
     Agent, AgentSession, JobContext, JobProcess, RoomInputOptions, RunContext,
@@ -505,14 +507,84 @@ async def _end_room(room_name: str) -> None:
         await lkapi.aclose()
 
 
+# Where each provider's plugin sends its requests. Used only to open the
+# connection early - see _warm_providers.
+_PROVIDER_HOSTS = {
+    "sarvam": "https://api.sarvam.ai",
+    "openai": "https://api.openai.com",
+    "soniox": "https://api.soniox.com",
+}
+
+
+async def _warm_providers() -> None:
+    """DNS, TCP and TLS to the provider hosts, before anything needs them.
+
+    The first thing a caller hears is a synthesised greeting, and it is
+    measurably slower than every utterance after it: 774 ms on average against
+    ~270 ms for later turns, and up to 2.5 s. The difference is the cost of
+    opening the connection, paid once per job process - and a job process
+    handles exactly one call, so every caller pays it.
+
+    This runs concurrently with ctx.connect() and the config load, which
+    together take well over a second during which the process is doing nothing
+    but waiting. The warm-up is free in wall-clock terms: it finishes inside
+    time that was already being spent.
+
+    All three hosts, not just the campaign's own - the campaign is not known
+    yet, and two extra TLS handshakes on a LAN cost nothing next to what they
+    might save. Failures are ignored: this is an optimisation, and a provider
+    that is unreachable here will report itself properly at the first real
+    request.
+
+    Whether the plugins reuse this connection depends on their using the shared
+    per-job http session, which is why the timing log below reports the greeting
+    latency either way rather than assuming an improvement.
+    """
+    try:
+        from livekit.agents.utils import http_context
+
+        session = http_context.http_session()
+    except Exception as e:
+        logger.debug("provider warm-up unavailable: %s", e)
+        return
+
+    async def one(host: str) -> None:
+        try:
+            # HEAD on the root: no auth, no body, and the response status is
+            # irrelevant. All that matters is that the socket is now open.
+            async with session.head(host, timeout=aiohttp.ClientTimeout(total=3)):
+                pass
+        except Exception:
+            pass
+
+    await asyncio.gather(*(one(h) for h in _PROVIDER_HOSTS.values()))
+
+
 async def entrypoint(ctx: JobContext):
     import store
+
+    # Every phase below is timed against this. Four separate debugging sessions
+    # have now had to reconstruct where a call's first two seconds go from
+    # adjacent log timestamps, and each time the answer was somewhere nobody had
+    # guessed - the six database round trips people assumed were the problem
+    # take 8 ms between them.
+    t0 = time.monotonic()
+
+    def since() -> int:
+        return int((time.monotonic() - t0) * 1000)
+
+    # Started before connect and never awaited: it must overlap the wait, not
+    # add to it. Safe to leave running - it swallows every exception and is
+    # bounded by its own 3 s timeout, so it cannot outlive the call meaningfully
+    # or surface as an unretrieved task exception.
+    warm = asyncio.create_task(_warm_providers())
 
     # Connect first: which campaign this call belongs to is decided by the
     # number that was dialled, and that only arrives with the SIP participant.
     # livekit-sip creates the participant before dispatching this job, so it is
     # already there.
     await ctx.connect()
+    logger.info("TIMING connect=%dms", since())
 
     caller = callee = sip_call_id = None
     sip_participant = None
@@ -589,6 +661,7 @@ async def entrypoint(ctx: JobContext):
     logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
                 cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
                 kb_tokens, cfg.transfer_enabled, cfg.transfer_to)
+    logger.info("TIMING config+keys+prompt=%dms", since())
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
                                      cfg.language, cfg.campaign_id, sip_call_id)
@@ -822,6 +895,13 @@ async def entrypoint(ctx: JobContext):
     ctx.add_shutdown_callback(_shutdown)
     await session.start(room=ctx.room, agent=agent,
                         room_input_options=RoomInputOptions())
+    # This is the moment livekit-sip has been waiting for. It holds the INVITE
+    # at 180 Ringing until an agent subscribes to the caller's track, which
+    # session.start is what does - so every millisecond above this line is
+    # ringing the caller hears, and it is not livekit's: its own signalling
+    # measures 5 ms invite-to-ringing and 43 ms to the room.
+    logger.info("TIMING session_started=%dms  warm_done=%s", since(), warm.done())
+
     # One utterance, not two. Said separately, a caller who speaks over the
     # greeting cancels what follows - and what follows is the recording notice.
     # Joined here it is either both or neither.
