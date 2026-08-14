@@ -262,7 +262,10 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
       )}
 
       {/* ── what the tools have actually been doing ────────────────────── */}
-      {(activity.data?.length || failedOnly) && (
+      {/* Shown whenever a tool exists, empty or not. Hiding it until the first
+          invocation meant someone told it was there could not find it, and had
+          no way to tell "no calls yet" from "not built" or "broken". */}
+      {rows.length > 0 && (
         <div className="rounded-lg border border-border">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
             <div>
@@ -278,11 +281,20 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
             </Button>
           </div>
 
-          {activity.data?.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-muted-foreground">
-              {failedOnly
-                ? 'No failed tool calls. That is the result you want.'
-                : 'No tool calls yet on any call for this campaign.'}
+          {activity.isLoading ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">Loading…</p>
+          ) : !activity.data?.length ? (
+            <p className="px-4 py-6 text-center text-xs leading-relaxed text-muted-foreground">
+              {failedOnly ? (
+                'No failed tool calls. That is the result you want.'
+              ) : (
+                <>
+                  No tool calls yet.
+                  <br />
+                  Make a call and ask something this tool answers — it appears here once the model
+                  decides to use it.
+                </>
+              )}
             </p>
           ) : (
             <div className="divide-y divide-border/60">
