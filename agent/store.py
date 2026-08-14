@@ -197,18 +197,25 @@ async def load_tools(campaign_id: int) -> list[dict]:
 
 
 async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
-                           status_code=None, error=None, duration_ms=None) -> None:
-    """Never let recording a tool call break the call it describes."""
+                           status_code=None, error=None, duration_ms=None,
+                           url=None) -> None:
+    """Never let recording a tool call break the call it describes.
+
+    `url` is the RESOLVED url, after placeholder substitution. Storing the
+    template instead would be pointless - it is already on the tool. What is
+    worth keeping is what actually went out, because that is where a
+    substitution that did not happen becomes visible.
+    """
     import json
 
     try:
         await (await pool()).execute(
             """INSERT INTO tool_invocations
                    (call_id, tool_id, name, arguments, status_code, error,
-                    duration_ms)
-               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7)""",
+                    duration_ms, url)
+               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8)""",
             call_id, tool_id, name, json.dumps(arguments, default=str),
-            status_code, error, duration_ms,
+            status_code, error, duration_ms, url,
         )
     except Exception:
         import logging

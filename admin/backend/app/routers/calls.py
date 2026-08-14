@@ -142,7 +142,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     # turn that triggered it. Deliberate: it is the finish that the caller
     # waited for.
     invocations = await db.pool().fetch(
-        """SELECT id, name, arguments, status_code, duration_ms, error,
+        """SELECT id, name, arguments, url, status_code, duration_ms, error,
                   created_at
              FROM tool_invocations WHERE call_id = $1 ORDER BY created_at, id""",
         call_id)

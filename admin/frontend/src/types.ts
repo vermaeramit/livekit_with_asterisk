@@ -118,10 +118,18 @@ export interface ToolInvocation {
   // What the MODEL chose to send. A tool that "did not work" is usually a tool
   // called with the wrong argument, and the transcript never shows that.
   arguments: Record<string, unknown> | null
+  // The resolved URL. Arguments alone were not enough — a placeholder written
+  // with single braces leaves them looking correct and sends `{pin}` verbatim.
+  url: string | null
   status_code: number | null
   duration_ms: number | null
   error: string | null
   created_at: string
+}
+
+/** An invocation seen from the tool's side: which call it belonged to. */
+export interface ToolActivityItem extends ToolInvocation {
+  call_id: number | null
 }
 
 export interface KbChunk {

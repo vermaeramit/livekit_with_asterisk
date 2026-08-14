@@ -112,8 +112,11 @@ def build(spec: dict, call_id: int | None, record: Callable):
         url = toolfmt.fill(spec["url"], args) or ""
 
         async def done(status=None, err=None):
+            # The resolved url, not the template. A placeholder that did not
+            # substitute is invisible in the arguments - they are correct - and
+            # only shows up here, in what was actually requested.
             await record(tool_id=spec.get("id"), name=name, arguments=args,
-                         status_code=status, error=err,
+                         status_code=status, error=err, url=url,
                          duration_ms=int((time.perf_counter() - t0) * 1000))
 
         if BLOCK_PRIVATE and _host_is_private(url):

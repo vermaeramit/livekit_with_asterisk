@@ -213,17 +213,27 @@ function ToolRow({ tool }: { tool: ToolInvocation }) {
           </div>
         )}
 
+        {/* The request as it actually went out. Shown for anything that failed
+            and on demand otherwise: a placeholder that did not substitute is
+            invisible in the arguments above and obvious here. */}
+        {tool.url && (failed || open) && (
+          <p className="mt-1.5 break-all font-mono text-2xs text-muted-foreground">{tool.url}</p>
+        )}
+
         {timedOut && (
           <p className="mt-1.5 text-2xs text-danger">
             The caller heard silence for this long, and the agent had to answer without the data.
           </p>
         )}
         {tool.error && !timedOut && (
+          <p className="mt-1.5 break-words text-2xs text-danger">{tool.error}</p>
+        )}
+        {tool.url && !failed && (
           <button
             onClick={() => setOpen((o) => !o)}
-            className="mt-1.5 block max-w-full truncate text-left text-2xs text-danger hover:underline"
+            className="mt-1.5 text-2xs text-muted-foreground hover:text-foreground hover:underline"
           >
-            {open ? tool.error : tool.error.slice(0, 120)}
+            {open ? 'hide request' : 'show request'}
           </button>
         )}
       </div>

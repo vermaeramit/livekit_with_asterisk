@@ -529,11 +529,20 @@ class ToolInvocationOut(BaseModel):
     id: int
     name: str
     arguments: dict | None = None
+    # The RESOLVED url. Arguments alone were not enough: a placeholder written
+    # with single braces leaves the arguments looking perfectly correct and
+    # sends `?pincode={pin}` to the API.
+    url: str | None = None
     status_code: int | None = None
     duration_ms: int | None = None
     # NULL on success. "timeout" is the one that cost the caller silence.
     error: str | None = None
     created_at: datetime
+
+
+class ToolActivityItem(ToolInvocationOut):
+    """An invocation seen from the tool's side rather than the call's."""
+    call_id: int | None = None
 
 
 class CallUsage(BaseModel):

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, Pencil, Plus, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,7 +8,7 @@ import { Badge, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
-import type { CampaignTool, ToolTestResult } from '@/types'
+import type { CampaignTool, ToolActivityItem, ToolTestResult } from '@/types'
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))
 
@@ -72,6 +73,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
   // to a field goes in `fieldErrors` and is rendered against that input.
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [failedOnly, setFailedOnly] = useState(false)
   const [testing, setTesting] = useState<CampaignTool | null>(null)
   const [testArgs, setTestArgs] = useState('{}')
   const [testResult, setTestResult] = useState<ToolTestResult | null>(null)
@@ -81,7 +83,18 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
     queryFn: () => api<CampaignTool[]>(`/campaigns/${campaignId}/tools`),
   })
 
-  const refresh = () => qc.invalidateQueries({ queryKey: ['campaign-tools', campaignId] })
+  const activity = useQuery({
+    queryKey: ['campaign-tool-activity', campaignId, failedOnly],
+    queryFn: () =>
+      api<ToolActivityItem[]>(
+        `/campaigns/${campaignId}/tools/activity?limit=50${failedOnly ? '&failed_only=true' : ''}`,
+      ),
+  })
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['campaign-tools', campaignId] })
+    qc.invalidateQueries({ queryKey: ['campaign-tool-activity', campaignId] })
+  }
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
     setDraft((d) => ({ ...d, [k]: v }))
     // Clear this field's rejection as it is edited. Red left on a field you
@@ -245,6 +258,73 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── what the tools have actually been doing ────────────────────── */}
+      {(activity.data?.length || failedOnly) && (
+        <div className="rounded-lg border border-border">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+            <div>
+              <h3 className="text-sm font-semibold tracking-tight">Recent activity</h3>
+              <p className="mt-0.5 text-2xs text-muted-foreground">
+                Real calls, newest first. The test button proves a tool works; this says whether
+                the model is using it — and with what.
+              </p>
+            </div>
+            <Button size="sm" variant={failedOnly ? 'default' : 'outline'}
+                    onClick={() => setFailedOnly((f) => !f)}>
+              {failedOnly ? 'Showing failures' : 'Failures only'}
+            </Button>
+          </div>
+
+          {activity.data?.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+              {failedOnly
+                ? 'No failed tool calls. That is the result you want.'
+                : 'No tool calls yet on any call for this campaign.'}
+            </p>
+          ) : (
+            <div className="divide-y divide-border/60">
+              {activity.data?.map((a) => {
+                const failed = Boolean(a.error) || (a.status_code ?? 0) >= 400
+                return (
+                  <div key={a.id} className="px-4 py-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+                      <span className="font-mono text-xs font-medium text-foreground/80">
+                        {a.name}
+                      </span>
+                      {a.error ? (
+                        <Badge tone="danger">{a.error === 'timeout' ? 'timed out' : 'failed'}</Badge>
+                      ) : (
+                        <Badge tone={failed ? 'danger' : 'success'} className="tnum">
+                          HTTP {a.status_code ?? '—'}
+                        </Badge>
+                      )}
+                      <span className="tnum">{a.duration_ms != null ? `${a.duration_ms}ms` : '—'}</span>
+                      <span className="tnum">{new Date(a.created_at).toLocaleString()}</span>
+                      {a.call_id != null && (
+                        <Link to={`/calls/${a.call_id}`}
+                              className="ml-auto text-primary hover:underline">
+                          open call →
+                        </Link>
+                      )}
+                    </div>
+                    {/* The resolved URL, not the template. This is the field
+                        that shows a placeholder which never substituted. */}
+                    {a.url && (
+                      <p className="mt-1 break-all font-mono text-2xs text-muted-foreground">
+                        {a.url}
+                      </p>
+                    )}
+                    {a.error && a.error !== 'timeout' && (
+                      <p className="mt-1 break-words text-2xs text-danger">{a.error}</p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 

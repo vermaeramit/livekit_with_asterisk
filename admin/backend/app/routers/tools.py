@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
-from ..schemas import ToolCreate, ToolOut, ToolTestResult, ToolUpdate
+from ..schemas import (ToolActivityItem, ToolCreate, ToolOut, ToolTestResult,
+                       ToolUpdate)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}/tools", tags=["tools"])
 
@@ -144,6 +145,43 @@ async def delete_tool(campaign_id: int, tool_id: int,
     await audit.record(actor, entity="tool", entity_id=row["name"],
                        action="delete", tenant_id=tenant_id,
                        campaign_id=campaign_id)
+
+
+@router.get("/activity", response_model=list[ToolActivityItem])
+async def tool_activity(campaign_id: int, limit: int = 50,
+                        failed_only: bool = False,
+                        user: CurrentUser = Depends(active_user)):
+    """Recent invocations of this campaign's tools, newest first.
+
+    Deliberately scoped to the campaign rather than being a global log. This is
+    read while looking at a tool, to answer "is it working" — and the answer is
+    a handful of recent calls, not a firehose.
+
+    Joined on campaign_id rather than filtered by tool_id so an invocation
+    outlives the tool that made it: tool_id is ON DELETE SET NULL, and the
+    record of what a deleted tool did is exactly what you want after deleting
+    it by mistake.
+    """
+    await assert_campaign_visible(user, campaign_id)
+    rows = await db.pool().fetch(
+        f"""SELECT ti.id, ti.call_id, ti.name, ti.arguments, ti.url,
+                   ti.status_code, ti.duration_ms, ti.error, ti.created_at
+              FROM tool_invocations ti
+              JOIN calls c ON c.id = ti.call_id
+             WHERE c.campaign_id = $1
+                   {"AND (ti.error IS NOT NULL OR ti.status_code >= 400)"
+                    if failed_only else ""}
+             ORDER BY ti.created_at DESC
+             LIMIT $2""",
+        campaign_id, min(max(limit, 1), 200))
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("arguments"), str):
+            d["arguments"] = json.loads(d["arguments"])
+        out.append(ToolActivityItem(**d))
+    return out
 
 
 # ---------------------------------------------------------------------------
