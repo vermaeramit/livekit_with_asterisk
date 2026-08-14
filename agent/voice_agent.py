@@ -52,11 +52,40 @@ MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
 
 
 def prewarm(proc: JobProcess):
-    """Only VAD belongs here. MultilingualModel needs a job context (it talks to
-    the inference executor process) and crashes the worker if loaded in prewarm."""
+    """Runs in a spawned process BEFORE it is given a call.
+
+    MultilingualModel does NOT belong here - it needs a job context to reach the
+    inference executor process, and loading it in prewarm crashes the worker.
+
+    Everything else that costs measurable time on first use does belong here,
+    because a job process handles exactly one call and then exits. Anything
+    imported lazily inside entrypoint is therefore imported while a caller is
+    listening to silence, once per caller, forever.
+
+    That is not hypothetical: `import kb` sat inside build_instructions and cost
+    1154 ms of every call's setup. kb pulls in pymupdf4llm (PyMuPDF, a large C
+    extension used only for PDF INGESTION - never during a call), tiktoken, the
+    OpenAI SDK, and at module scope loads the cl100k_base vocabulary. None of it
+    is needed to answer a phone; all of it was being loaded to do so.
+
+    Failures are logged and swallowed: a process that cannot pre-import still
+    works, it just pays the cost later - which is exactly where it was before.
+    """
     t = time.perf_counter()
     proc.userdata["vad"] = silero.VAD.load()
-    logger.info("prewarm (VAD) complete in %.0f ms", (time.perf_counter() - t) * 1000)
+    vad_ms = (time.perf_counter() - t) * 1000
+
+    t = time.perf_counter()
+    try:
+        import kb  # noqa: F401  - imported for its side effect: being imported
+        import store  # noqa: F401
+    except Exception:
+        logger.exception("prewarm imports failed - the first call in this "
+                         "process will pay for them instead")
+    imports_ms = (time.perf_counter() - t) * 1000
+
+    logger.info("prewarm complete: VAD %.0f ms, imports %.0f ms",
+                vad_ms, imports_ms)
 
 
 def _stt_kwargs(cfg):
@@ -557,7 +586,12 @@ async def _warm_providers() -> None:
         except Exception:
             pass
 
+    t = time.perf_counter()
     await asyncio.gather(*(one(h) for h in _PROVIDER_HOSTS.values()))
+    # Worth logging because the first version of this never finished in time:
+    # `import kb` was still being done lazily inside the job, and a synchronous
+    # import blocks the event loop, so this task got no chance to run at all.
+    logger.info("TIMING provider_warm=%dms", int((time.perf_counter() - t) * 1000))
 
 
 async def entrypoint(ctx: JobContext):
