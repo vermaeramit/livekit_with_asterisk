@@ -27,7 +27,7 @@ import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn, formatDateTime, formatRelative } from '@/lib/utils'
-import type { AgentConfig, AuditEntry, Campaign } from '@/types'
+import type { AgentConfig, AuditEntry, Campaign, TtsCatalog } from '@/types'
 
 // Sarvam's saarika/bulbul language codes. Anything outside this set is accepted
 // by the API but will fail at call time, so the editor does not offer it.
@@ -77,7 +77,10 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: 'bulbul:v2', label: 'bulbul:v2' },
   ],
   openai: [{ value: 'gpt-4o-mini-tts', label: 'gpt-4o-mini-tts — ~889ms measured' }],
-  soniox: [{ value: 'tts-rt-v1-preview', label: 'tts-rt-v1-preview' }],
+  // Only reached if the live catalogue cannot be read. tts-rt-v1 and its
+  // -preview alias are deliberately absent: Soniox removes them on 31 Aug 2026,
+  // and a fallback list is exactly where a dead model would go unnoticed.
+  soniox: [{ value: 'tts-rt-v2', label: 'tts-rt-v2' }],
 }
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
@@ -95,11 +98,13 @@ const VOICES: Record<string, { value: string; label: string }[]> = {
     'kabir', 'neha', 'varun', 'roopa', 'aayan', 'ashutosh', 'advait', 'amelia',
     'sophia', 'suhani', 'rupali', 'tanya', 'shruti', 'kavitha',
   ].map((v) => ({ value: v, label: v })),
+  // Fallback only - the real list is read from Soniox per model, because it
+  // differs per model. This one used to be the union of v1 and v2 and offered
+  // Meera, Maya, Noah, Jack, Claire, Sofia and Elise, none of which exist on
+  // tts-rt-v2. Trimmed to the four with an Indian accent on v2, which is what
+  // this deployment actually uses.
   soniox: [
-    'Priya', 'Meera', 'Arjun', 'Rohan', 'Maya', 'Nina', 'Emma', 'Claire',
-    'Grace', 'Mina', 'Lucia', 'Sofia', 'Isla', 'Victoria', 'Ruby', 'Elise',
-    'Daniel', 'Noah', 'Jack', 'Adrian', 'Owen', 'Kenji', 'Rafael', 'Mateo',
-    'Oliver', 'Arthur', 'Cooper', 'Mason',
+    'Priya', 'Arjun', 'Rohan', 'Karan',
   ].map((v) => ({ value: v, label: v })),
   openai: [
     'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer',
@@ -239,6 +244,32 @@ export function CampaignConfig() {
     [config.data, draft],
   )
   const dirty = Object.keys(draft).length > 0
+
+  // Models and voices read from the provider, not held as a list here.
+  //
+  // The static VOICES map below was the union of two Soniox models: it offered
+  // Meera, which exists on tts-rt-v1 and not on tts-rt-v2, and a voice the
+  // chosen model does not have raises inside TTS.__init__ - the job dies before
+  // the call is answered, and nothing on this form hints at it.
+  //
+  // Failure is not surfaced: no key, no network, an unsupported provider, all
+  // fall back to the static list, which is what this had before.
+  const ttsCatalog = useQuery({
+    queryKey: ['tts-catalog', campaignId, value.tts_provider],
+    queryFn: () =>
+      api<TtsCatalog>(`/campaigns/${campaignId}/tts-catalog/${value.tts_provider}`),
+    enabled: Boolean(value.tts_provider),
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  })
+
+  const liveModels = ttsCatalog.data?.models ?? []
+  const liveVoices =
+    liveModels.find((m) => m.id === value.tts_model)?.voices ??
+    // No model chosen yet: the agent's default is the first non-retiring one,
+    // so show that model's voices rather than every voice the provider has.
+    liveModels.find((m) => !m.retiring)?.voices ??
+    []
 
   function set<K extends keyof AgentConfig>(key: K, v: AgentConfig[K]) {
     setDraft((d) => {
@@ -493,8 +524,21 @@ export function CampaignConfig() {
               <ComboField
                 label="Text-to-speech model"
                 value={value.tts_model ?? ''}
-                onChange={(v) => set('tts_model', v.trim() || null)}
-                options={TTS_MODELS[value.tts_provider] ?? []}
+                onChange={(v) => {
+                  set('tts_model', v.trim() || null)
+                  // The voice list is per MODEL, not per provider. Keeping a
+                  // voice across a model change is how you select one that does
+                  // not exist there — tts-rt-v2 has no Meera.
+                  set('tts_voice', null)
+                }}
+                options={
+                  liveModels.length
+                    ? liveModels.map((m) => ({
+                        value: m.id,
+                        label: m.retiring ? `${m.id} — ${m.retiring}` : (m.name ?? m.id),
+                      }))
+                    : TTS_MODELS[value.tts_provider] ?? []
+                }
                 placeholder="model name"
                 allowEmpty
                 emptyLabel="Provider default"
@@ -504,11 +548,24 @@ export function CampaignConfig() {
                 label="Voice"
                 value={value.tts_voice ?? ''}
                 onChange={(v) => set('tts_voice', v.trim() || null)}
-                options={VOICES[value.tts_provider] ?? []}
+                options={
+                  liveVoices.length
+                    ? liveVoices.map((v) => ({
+                        value: v.id,
+                        label: [v.id, v.gender, v.description?.split(/[.,]/)[0]]
+                          .filter(Boolean)
+                          .join(' · '),
+                      }))
+                    : VOICES[value.tts_provider] ?? []
+                }
                 placeholder="voice name"
                 allowEmpty
                 emptyLabel="Provider default"
-                hint="A voice the chosen model does not have fails before the call is answered, not on save."
+                hint={
+                  liveVoices.length
+                    ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
+                    : 'A voice the chosen model does not have fails before the call is answered, not on save.'
+                }
               />
             </div>
 

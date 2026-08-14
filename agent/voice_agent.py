@@ -440,9 +440,19 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
         # Soniox one when Soniox is. The console validates that pairing; here we
         # only fall back to a default when it is empty.
+        #
+        # tts-rt-v2, NOT the plugin's own default of tts-rt-v1-preview. That is
+        # an alias of tts-rt-v1, which Soniox deprecated with a removal date of
+        # 31 Aug 2026 - a campaign left on it goes silent, mid-call, on a date
+        # nothing in this repo would have warned about.
+        #
+        # The voice list differs between the two: v2 dropped Meera, Maya, Noah,
+        # Jack, Claire, Sofia and Elise, and added Karan among many others. A
+        # voice the model does not have fails at construction, so the console
+        # reads the list from Soniox per model rather than holding its own copy.
         return soniox.TTS(
             api_key=key,
-            model=(cfg.tts_model if use_config_model else None) or "tts-rt-v1-preview",
+            model=(cfg.tts_model if use_config_model else None) or "tts-rt-v2",
             language=_soniox_lang(cfg.language),
             voice=(cfg.tts_voice if use_config_model else None) or "Priya",
             sample_rate=_TTS_NATIVE_RATE["soniox"],

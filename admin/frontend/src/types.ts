@@ -139,6 +139,18 @@ export interface ToolActivityResponse {
   page_size: number
 }
 
+/** Read from the provider with the campaign's key — never a list held here. */
+export interface TtsCatalog {
+  provider: string
+  models: {
+    id: string
+    name: string | null
+    // Set when the provider is retiring it, with the date.
+    retiring: string | null
+    voices: { id: string; gender: string | null; description: string | null }[]
+  }[]
+}
+
 export interface KbChunk {
   id: number
   seq: number

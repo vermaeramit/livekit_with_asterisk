@@ -552,6 +552,33 @@ class ToolActivityResponse(BaseModel):
     page_size: int
 
 
+# --- what a TTS provider actually offers -------------------------------------
+# Read from the provider, never held as a list here. A hardcoded copy of
+# Soniox's voices had drifted badly: it was the union of two models, so it
+# offered Meera - which exists on tts-rt-v1 and not on tts-rt-v2 - and a voice
+# the model does not have makes TTS.__init__ raise before the call is answered.
+
+class TtsVoice(BaseModel):
+    id: str
+    gender: str | None = None
+    description: str | None = None
+
+
+class TtsModel(BaseModel):
+    id: str
+    name: str | None = None
+    # True when the provider is retiring it. Sourced from their documentation,
+    # not the API - see routers/provider_keys.py.
+    retiring: str | None = None
+    voices: list[TtsVoice] = []
+    supports_language: bool = True
+
+
+class TtsCatalog(BaseModel):
+    provider: str
+    models: list[TtsModel]
+
+
 class CallUsage(BaseModel):
     llm_prompt_tokens: int | None
     llm_prompt_cached_tokens: int | None

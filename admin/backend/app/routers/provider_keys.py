@@ -8,12 +8,19 @@ who gets hold of the response.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import time
+import urllib.request
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db, provider_keys as pk, secretlib
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
                     require_roles, tenant_scope)
-from ..schemas import ProviderKeyOut, ProviderKeySet, ProviderKeyWritten
+from ..schemas import (ProviderKeyOut, ProviderKeySet, ProviderKeyWritten,
+                       TtsCatalog, TtsModel, TtsVoice)
 
 router = APIRouter(tags=["provider keys"])
 
@@ -145,3 +152,90 @@ async def delete_campaign_key(campaign_id: int, provider: str,
     await audit.record(actor, entity="provider_key", entity_id=provider,
                        action="delete", tenant_id=tenant_id,
                        campaign_id=campaign_id, changes={"scope": "campaign"})
+
+
+# --------------------------------------------------------------------------
+# what the provider offers, asked of the provider
+# --------------------------------------------------------------------------
+# The only read here that USES a key. It still never returns one: the key goes
+# into an Authorization header, the response is voices and models.
+#
+# It exists because the console's hardcoded Soniox voice list was wrong and had
+# no way of knowing. It held the union of two models, so it offered Meera -
+# which is on tts-rt-v1 and not on tts-rt-v2 - and a voice the model does not
+# have raises inside TTS.__init__, killing the job before the call is answered.
+# Nothing about that is visible on the campaign form.
+
+# Sourced from Soniox's own documentation on 14 Aug 2026, because the API does
+# not report it. Advisory text only - nothing branches on this.
+_RETIRING = {"tts-rt-v1": "Soniox removes this on 31 Aug 2026",
+             "tts-rt-v1-preview": "an alias of tts-rt-v1, removed 31 Aug 2026"}
+
+_CATALOG_URLS = {"soniox": "https://api.soniox.com/v1/tts-models"}
+
+# Opening the campaign form should not hit Soniox every time, and the list
+# changes about as often as they ship a model.
+_cache: dict[str, tuple[float, TtsCatalog]] = {}
+_CACHE_TTL = 600
+
+
+def _fetch_soniox_models(key: str) -> dict:
+    req = urllib.request.Request(
+        _CATALOG_URLS["soniox"],
+        headers={"Authorization": f"Bearer {key}",
+                 # urllib's default is a WAF magnet - see agent/tools.py.
+                 "User-Agent": os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+@router.get("/campaigns/{campaign_id}/tts-catalog/{provider}",
+            response_model=TtsCatalog)
+async def tts_catalog(campaign_id: int, provider: str,
+                      user: CurrentUser = Depends(active_user)):
+    """Models and voices the campaign's own key can actually use."""
+    _check_provider(provider)
+    if provider not in _CATALOG_URLS:
+        # Sarvam publishes no such endpoint; its speakers are documented only.
+        # Empty rather than 404, so the console can ask unconditionally and fall
+        # back to its static list without special-casing per provider.
+        return TtsCatalog(provider=provider, models=[])
+
+    tenant_id = await assert_campaign_visible(user, campaign_id)
+    _require_crypto()
+
+    cache_key = f"{provider}:{tenant_id}:{campaign_id}"
+    hit = _cache.get(cache_key)
+    if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+        return hit[1]
+
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get(provider):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"no {provider} key on this campaign or client - add one first, "
+            "the voice list comes from the provider")
+
+    try:
+        raw = await asyncio.to_thread(_fetch_soniox_models, keys[provider])
+    except Exception as e:
+        # The provider, not the key. Never let a failure here carry the secret.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"could not read the {provider} catalogue: "
+                            f"{type(e).__name__}")
+
+    models = [
+        TtsModel(id=m["id"], name=m.get("name"),
+                 retiring=_RETIRING.get(m["id"]),
+                 voices=[TtsVoice(id=v["id"], gender=v.get("gender"),
+                                  description=v.get("description"))
+                         for v in m.get("voices") or []])
+        for m in raw.get("models") or []
+    ]
+    # Retiring models last: the newest should be the obvious pick, and the one
+    # with a removal date should take deliberate effort to select.
+    models.sort(key=lambda m: (m.retiring is not None, m.id), reverse=False)
+
+    out = TtsCatalog(provider=provider, models=models)
+    _cache[cache_key] = (time.monotonic(), out)
+    return out
