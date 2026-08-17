@@ -209,7 +209,11 @@ async def load_tools(campaign_id: int) -> list[dict]:
                 spec["auth_value"] = crypto.decrypt(enc)
             except Exception:
                 spec["auth_value"] = None
-        for k in ("parameters", "headers"):
+        # asyncpg hands JSONB back as text unless a codec is registered, and
+        # none is. Forgetting a column here does not fail loudly - the value
+        # arrives as a string and whatever reads it quietly does the wrong
+        # thing, which is exactly what happened to error_messages.
+        for k in ("parameters", "headers", "error_messages"):
             if isinstance(spec.get(k), str):
                 import json
                 spec[k] = json.loads(spec[k])

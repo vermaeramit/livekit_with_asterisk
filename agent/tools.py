@@ -121,7 +121,18 @@ def build(spec: dict, call_id: int | None, record: Callable,
     timeout = aiohttp.ClientTimeout(total=(spec.get("timeout_ms") or 2500) / 1000)
     max_bytes: int = spec.get("max_response_bytes") or 8192
     filler: str | None = (spec.get("filler_message") or "").strip() or None
-    errors: dict = spec.get("error_messages") or {}
+    # Parsed by store.load_tools. Guarded anyway: this arrives from a JSONB
+    # column, asyncpg returns those as text without a codec, and a string here
+    # would raise AttributeError mid-call rather than fall back to the built-in
+    # wording. Once was a bug; twice would be carelessness.
+    errors = spec.get("error_messages") or {}
+    if isinstance(errors, str):
+        try:
+            errors = json.loads(errors)
+        except json.JSONDecodeError:
+            errors = {}
+    if not isinstance(errors, dict):
+        errors = {}
 
     def what_to_say(key: str, fallback: str) -> str:
         """The campaign's words for this outcome, or the built-in ones.
