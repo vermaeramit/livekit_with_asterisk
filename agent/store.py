@@ -58,6 +58,13 @@ class AgentConfig:
     # migration 017 for why these are per-campaign and not constants.
     stt_endpoint_level: Optional[int]
     stt_endpoint_sensitivity: Optional[float]
+    # Where the call's result goes afterwards. Only what the AGENT needs is
+    # here: it extracts and stores, it never delivers. The url, auth and retry
+    # settings are read by admin-api at send time, so changing them fixes calls
+    # that are still queued.
+    postback_enabled: bool
+    postback_fields: Optional[list]
+    postback_include_transcript: bool
     # NULL = no marker-driven handoff on this campaign. The tool still works.
     transfer_marker: Optional[str]
     # Spoken with the greeting on every call. Recording is unconditional in the
@@ -366,3 +373,43 @@ async def log_turn(call_id: int, seq: int, role: str, text: str | None, **t):
         t.get("tts_ttfb_ms"), t.get("total_ms"), bool(t.get("interrupted", False)),
         t.get("kb_chunk_ids"), t.get("kb_scores"),
     )
+
+
+async def load_turns(call_id: int) -> list[dict]:
+    """The conversation, for extraction after the call has ended.
+
+    Read back from the database rather than kept in memory during the call. The
+    turns are already written there, and holding a second copy for the whole
+    call to use once at the end is memory spent on every concurrent call to save
+    one query on each.
+    """
+    rows = await (await pool()).fetch(
+        "SELECT seq, role, text, ts FROM turns WHERE call_id = $1 ORDER BY seq",
+        call_id)
+    return [dict(r) for r in rows]
+
+
+async def save_postback(call_id: int, campaign_id: Optional[int],
+                        payload: dict) -> None:
+    """Queue the call's result for delivery. Never raises.
+
+    ON CONFLICT DO NOTHING because call_id is unique: a job that somehow runs
+    its shutdown twice must not queue the same call twice, or a client's system
+    sees one call as two.
+
+    Delivery is NOT attempted here. This process exits when the call ends, so it
+    cannot retry anything - admin-api sweeps the table. Writing the row is the
+    part that must not be lost; sending it is the part that can wait.
+    """
+    import json
+    import logging
+
+    try:
+        await (await pool()).execute(
+            """INSERT INTO call_postbacks (call_id, campaign_id, payload)
+               VALUES ($1, $2, $3::jsonb)
+               ON CONFLICT (call_id) DO NOTHING""",
+            call_id, campaign_id, json.dumps(payload, default=str))
+    except Exception:
+        logging.getLogger("voice-agent").exception(
+            "could not queue the postback for call %s", call_id)

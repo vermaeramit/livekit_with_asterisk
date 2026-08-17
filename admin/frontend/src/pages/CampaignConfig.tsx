@@ -12,6 +12,7 @@ import {
   PhoneForwarded,
   PhoneIncoming,
   Plus,
+  Send,
   ShieldCheck,
   TriangleAlert,
   Wrench,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
+import { CampaignPostback } from '@/components/CampaignPostback'
 import { CampaignTools } from '@/components/CampaignTools'
 import { ProviderKeys } from '@/components/ProviderKeys'
 import { Button } from '@/components/ui/button'
@@ -121,7 +123,7 @@ const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
   | 'conversation' | 'voice' | 'knowledge' | 'tools' | 'routing' | 'keys'
-  | 'limits' | 'history'
+  | 'limits' | 'postback' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
@@ -133,6 +135,9 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   // account the calls are billed to, and that is not a voice setting.
   { key: 'keys', label: 'API keys', icon: KeyRound },
   { key: 'limits', label: 'Limits & handoff', icon: ShieldCheck },
+  // Its own tab: what leaves this system afterwards is a different concern
+  // from how the call is run, and it has a log of its own to show.
+  { key: 'postback', label: 'Send to API', icon: Send },
   { key: 'history', label: 'History', icon: History },
 ]
 
@@ -997,6 +1002,10 @@ export function CampaignConfig() {
             </CardBody>
           </Card>
         </div>
+      )}
+
+      {tab === 'postback' && (
+        <CampaignPostback campaignId={campaignId} value={value} set={set} />
       )}
 
       {tab === 'history' && (

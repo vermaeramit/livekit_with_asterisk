@@ -1,0 +1,170 @@
+"""Turn a finished conversation into the fields the client's API wants.
+
+Runs AFTER the call has ended, never during it. That is the whole design:
+
+  * A tool the model calls mid-call would put an LLM round trip inside a turn
+    budget that took a full day of measurement to get down to ~2.4 s. Nothing
+    here is worth a second of a caller's time.
+  * Doing it afterwards means the schema can change and old calls can be
+    re-processed, which a mid-call tool can never offer.
+
+What this module does NOT do is deliver. The job process exits when the call
+ends, so it cannot retry anything; it writes a row and stops. admin-api sweeps
+and delivers - see admin/backend/app/postback.py. One place owns delivery, and
+it is the one that is still running a minute later.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+log = logging.getLogger("voice-agent")
+
+# Only what a client API can sensibly receive. Anything richer belongs in a
+# tool that runs during the call, where the model can be corrected.
+_TYPES = {"string": "string", "number": "number", "boolean": "boolean"}
+
+
+def build_schema(fields: list[dict]) -> dict | None:
+    """The campaign's field list -> a JSON Schema for structured output.
+
+    Every field is optional and nullable. A required field would make the model
+    invent a value rather than admit the conversation never covered it, and an
+    invented pincode is worse than a missing one.
+    """
+    props: dict[str, Any] = {}
+    for f in fields or []:
+        key = (f.get("key") or "").strip()
+        if not key:
+            continue
+        kind = _TYPES.get((f.get("type") or "string").lower(), "string")
+        props[key] = {
+            "type": [kind, "null"],
+            "description": (f.get("description") or "").strip() or key,
+        }
+    if not props:
+        return None
+    return {"type": "object", "properties": props,
+            "required": list(props), "additionalProperties": False}
+
+
+_SYSTEM = (
+    "You read a finished phone conversation and record what it established.\n"
+    "\n"
+    "Rules, in order of importance:\n"
+    "1. Only record what was actually said. If the conversation does not "
+    "establish a field, return null for it. Never guess, never infer from what "
+    "usually happens, never fill a field to be helpful.\n"
+    "2. Record what the CALLER said, not what the agent offered. An agent "
+    "asking about finance is not the caller choosing it.\n"
+    "3. If the caller changed their mind, record the last thing they said.\n"
+    "4. Values go in the language and form the field description asks for."
+)
+
+
+def transcript_text(turns: list[dict], limit: int = 120) -> str:
+    """The conversation as plain text, newest kept if it is very long.
+
+    A cap because a long call is billed by the token on every extraction, and
+    the fields worth recording are almost always settled by the end.
+    """
+    lines = []
+    for t in turns[-limit:]:
+        who = "Agent" if t.get("role") == "agent" else "Caller"
+        text = (t.get("text") or "").strip()
+        if text:
+            lines.append(f"{who}: {text}")
+    return "\n".join(lines)
+
+
+async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
+                  model: str = "gpt-4.1-mini") -> dict:
+    """-> {field: value}, or {} when there is nothing to extract.
+
+    Failure is not raised. A call whose extraction fails should still deliver
+    everything factual - the identifiers, the outcome, the duration - because
+    that is often all the client's system actually keys on. Losing the whole
+    postback because a summary could not be written would be the wrong trade.
+    """
+    schema = build_schema(fields)
+    if not schema:
+        return {}
+
+    text = transcript_text(turns)
+    if not text.strip():
+        log.info("postback: nothing said on this call, skipping extraction")
+        return {}
+
+    try:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=api_key)
+        resp = await client.chat.completions.create(
+            model=model,
+            # Deterministic: the same conversation must produce the same record
+            # twice, or re-running an extraction becomes a coin toss.
+            temperature=0,
+            messages=[{"role": "system", "content": _SYSTEM},
+                      {"role": "user", "content": text}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "call_record", "strict": True,
+                                "schema": schema},
+            },
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        # Drop nulls rather than sending them. A field the conversation never
+        # reached is absent, which most APIs treat differently from an explicit
+        # null - and "absent" is the honest description.
+        out = {k: v for k, v in data.items() if v is not None and v != ""}
+        log.info("postback: extracted %d of %d fields", len(out),
+                 len(schema["properties"]))
+        return out
+    except Exception:
+        log.exception("postback extraction failed - sending the facts anyway")
+        return {}
+
+
+def envelope(*, call_row: dict, dialler: dict, extracted: dict,
+             turns: list[dict] | None) -> dict:
+    """The payload.
+
+    Split into three parts on purpose, because they have three different levels
+    of trust and whoever consumes this needs to know which is which:
+
+      call      - measured by us, always correct
+      dialer    - passed through untouched from their own system
+      extracted - read out of a conversation by a model, and therefore the only
+                  part that can be wrong
+    """
+    body: dict[str, Any] = {
+        "call": {
+            "id": call_row.get("id"),
+            "started_at": _iso(call_row.get("started_at")),
+            "ended_at": _iso(call_row.get("ended_at")),
+            "duration_ms": call_row.get("duration_ms"),
+            "caller": call_row.get("caller"),
+            "callee": call_row.get("callee"),
+            "end_reason": call_row.get("end_reason"),
+            "outcome": call_row.get("outcome"),
+            "transferred_to": call_row.get("transferred_to"),
+            "turn_count": call_row.get("turn_count"),
+            "recording_id": call_row.get("sip_call_id"),
+        },
+        # Keys stripped of the "dialer." prefix: it means something to us and
+        # nothing to them.
+        "dialer": {k.split(".", 1)[-1]: v for k, v in (dialler or {}).items()},
+        "extracted": extracted or {},
+    }
+    if turns is not None:
+        body["transcript"] = [
+            {"role": t.get("role"), "text": t.get("text"),
+             "at": _iso(t.get("ts"))}
+            for t in turns if (t.get("text") or "").strip()
+        ]
+    return body
+
+
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else v

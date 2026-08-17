@@ -11,10 +11,10 @@ import json
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import audit, db
+from .. import audit, db, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
-                       CampaignRoute, CampaignRouteCreate)
+                       CampaignRoute, CampaignRouteCreate, PostbackOut)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -33,6 +33,10 @@ FIELDS = (
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "transfer_marker",
     "stt_endpoint_level", "stt_endpoint_sensitivity",
+    "postback_enabled", "postback_url", "postback_auth_header",
+    "postback_auth_value_hint", "postback_fields",
+    "postback_include_transcript", "postback_max_attempts",
+    "postback_retry_after_sec",
     "recording_disclosure",
 )
 
@@ -49,7 +53,13 @@ async def _get(campaign_id: int) -> dict:
         # a config predates the panel, and cannot take a call.
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "this campaign has no agent config")
-    return dict(row)
+    d = dict(row)
+    # asyncpg returns JSONB as text without a codec. Named explicitly, because
+    # forgetting one does not fail - the value arrives as a string and whatever
+    # reads it quietly does the wrong thing.
+    if isinstance(d.get("postback_fields"), str):
+        d["postback_fields"] = json.loads(d["postback_fields"])
+    return d
 
 
 @router.get("/config", response_model=AgentConfigOut)
@@ -65,16 +75,39 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     before = await _get(campaign_id)
 
     fields = body.model_dump(exclude_unset=True)
+
+    # Write-only, exactly like a provider key or a tool's auth value: it goes in
+    # encrypted, and nothing ever hands it back. None = leave the stored secret
+    # alone; "" = clear it. Conflating those means editing a URL silently wipes
+    # the credential.
+    secret = fields.pop("postback_auth_value", None)
+    if secret is not None:
+        if secret == "":
+            fields["postback_auth_value_enc"] = None
+            fields["postback_auth_value_hint"] = None
+        else:
+            c = secretlib.crypto()
+            fields["postback_auth_value_enc"] = c.encrypt(secret)
+            fields["postback_auth_value_hint"] = c.hint(secret)
+
     if not fields:
         return AgentConfigOut(**before)
 
-    unknown = set(fields) - set(FIELDS)
+    unknown = set(fields) - set(FIELDS) - {"postback_auth_value_enc"}
     assert not unknown, f"schema and FIELDS disagree: {unknown}"
 
-    sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(fields, start=2))
+    # postback_fields is JSONB and asyncpg will not accept a Python list for
+    # it without the cast. Missing this is the same silent-wrong-type bug that
+    # has now bitten three times in the tools path.
+    JSON_COLS = ("postback_fields",)
+    values = [json.dumps(v) if k in JSON_COLS and v is not None else v
+              for k, v in fields.items()]
+    sets = ", ".join(
+        f"{k} = ${i}" + ("::jsonb" if k in JSON_COLS else "")
+        for i, k in enumerate(fields, start=2))
     await db.pool().execute(
         f"UPDATE agent_config SET {sets}, updated_at = now() WHERE campaign_id = $1",
-        campaign_id, *fields.values())
+        campaign_id, *values)
 
     await audit.record(actor, entity="agent_config", entity_id=before["name"],
                        action="update", tenant_id=tenant_id, campaign_id=campaign_id,
@@ -162,3 +195,56 @@ async def campaign_audit(campaign_id: int,
             d["changes"] = json.loads(d["changes"])
         out.append(AuditEntry(**d))
     return out
+
+
+@router.get("/postbacks", response_model=list[PostbackOut])
+async def list_postbacks(campaign_id: int, limit: int = Query(25, ge=1, le=200),
+                         failed_only: bool = False,
+                         user: CurrentUser = Depends(active_user)):
+    """Recent deliveries for this campaign, newest first.
+
+    The log the console shows. A postback that never arrived is invisible from
+    everywhere else: the call looks perfectly normal, and only the client
+    noticing a gap would ever surface it.
+    """
+    await assert_campaign_visible(user, campaign_id)
+    where = "WHERE campaign_id = $1"
+    if failed_only:
+        where += " AND status = 'failed'"
+    rows = await db.pool().fetch(
+        f"""SELECT id, call_id, status, attempts, last_status_code, last_error,
+                   next_attempt_at, created_at, sent_at, payload
+              FROM call_postbacks {where}
+             ORDER BY created_at DESC LIMIT $2""", campaign_id, limit)
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("payload"), str):
+            d["payload"] = json.loads(d["payload"])
+        out.append(PostbackOut(**d))
+    return out
+
+
+@router.post("/postbacks/{postback_id}/retry", response_model=PostbackOut)
+async def retry_postback(campaign_id: int, postback_id: int,
+                         actor: CurrentUser = Depends(editor)):
+    """Put a finished row back in the queue.
+
+    Attempts are reset, because someone pressing this has usually just fixed
+    the thing that was wrong - keeping the old count would exhaust the retries
+    again within seconds and hide whether the fix worked.
+    """
+    row = await db.pool().fetchrow(
+        """UPDATE call_postbacks
+              SET status='pending', attempts=0, next_attempt_at=now()
+            WHERE id=$1 AND campaign_id=$2
+        RETURNING id, call_id, status, attempts, last_status_code, last_error,
+                  next_attempt_at, created_at, sent_at, payload""",
+        postback_id, campaign_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "postback not found")
+    d = dict(row)
+    if isinstance(d.get("payload"), str):
+        d["payload"] = json.loads(d["payload"])
+    return PostbackOut(**d)

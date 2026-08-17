@@ -188,6 +188,17 @@ class AgentConfigOut(BaseModel):
     stt_endpoint_level: int | None
     stt_endpoint_sensitivity: float | None
 
+    # Where the call's result is sent afterwards. The auth VALUE is never
+    # returned - only the four-character hint, exactly like a provider key.
+    postback_enabled: bool
+    postback_url: str | None
+    postback_auth_header: str | None
+    postback_auth_value_hint: str | None
+    postback_fields: list[dict] | None
+    postback_include_transcript: bool
+    postback_max_attempts: int
+    postback_retry_after_sec: int
+
     recording_disclosure: str
 
     stt_provider: str
@@ -254,6 +265,16 @@ class AgentConfigUpdate(BaseModel):
     # utterance of a live call.
     stt_endpoint_level: int | None = Field(default=None, ge=0, le=3)
     stt_endpoint_sensitivity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+    postback_enabled: bool | None = None
+    postback_url: str | None = Field(default=None, max_length=2000)
+    postback_auth_header: str | None = Field(default=None, max_length=100)
+    # Write-only. None = leave the stored secret alone, "" = clear it.
+    postback_auth_value: str | None = Field(default=None, max_length=2000)
+    postback_fields: list[dict] | None = None
+    postback_include_transcript: bool | None = None
+    postback_max_attempts: int | None = Field(default=None, ge=1, le=20)
+    postback_retry_after_sec: int | None = Field(default=None, ge=10, le=3600)
 
     # min_length=1, not Optional. Every call is recorded unconditionally by the
     # dialplan, so a campaign with nothing to say here would be recording callers
@@ -854,3 +875,24 @@ class ToolTestResult(BaseModel):
     body: str | None
     error: str | None
     url: str
+
+
+class PostbackOut(BaseModel):
+    """One call's delivery to the client's API.
+
+    `payload` is kept and returned in full: "what did we tell them about this
+    call" gets asked months later, and re-deriving it from a transcript is not
+    an answer. It carries no secret - the auth header is applied at send time
+    and never stored in the body.
+    """
+    id: int
+    call_id: int
+    # pending | sent | failed | skipped
+    status: str
+    attempts: int
+    last_status_code: int | None = None
+    last_error: str | None = None
+    next_attempt_at: datetime | None = None
+    created_at: datetime
+    sent_at: datetime | None = None
+    payload: dict

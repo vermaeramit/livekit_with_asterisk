@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import alerting, db
+from . import alerting, db, postback
 from .config import settings
 from .routers import (agent_config, alerts, analytics, auth, calls, campaigns,
                       kb, live, provider_keys, tenants, tools, users)
@@ -29,12 +29,18 @@ async def lifespan(app: FastAPI):
     # NOTE: assumes a single API instance. Two replicas would evaluate the same
     # rules twice and double-fire every webhook.
     evaluator = asyncio.create_task(alerting.run_forever())
+
+    # Same reasoning, and the same caveat. Delivery cannot live in the agent:
+    # its job process exits when the call ends, so it can write the row but
+    # never retry it. This service is still here a minute later.
+    postback.start()
     try:
         yield
     finally:
         evaluator.cancel()
         with suppress(asyncio.CancelledError):
             await evaluator
+        await postback.stop()
         await db.disconnect()
 
 

@@ -204,6 +204,20 @@ export interface AgentConfig {
   stt_endpoint_level: number | null
   stt_endpoint_sensitivity: number | null
 
+  // Where the call's result is sent afterwards. The auth value never comes
+  // back — only the last four characters.
+  postback_enabled: boolean
+  postback_url: string | null
+  postback_auth_header: string | null
+  postback_auth_value_hint: string | null
+  postback_fields: { key: string; type: string; description: string }[] | null
+  postback_include_transcript: boolean
+  postback_max_attempts: number
+  postback_retry_after_sec: number
+  // Write-only: sent on save, never returned. Present on the type so the
+  // editor can hold it in the same draft as everything else.
+  postback_auth_value?: string
+
   recording_disclosure: string
   stt_provider: string
   tts_provider: string
@@ -428,4 +442,18 @@ export interface ToolTestResult {
   body: string | null
   error: string | null
   url: string
+}
+
+export interface Postback {
+  id: number
+  call_id: number
+  // pending | sent | failed | skipped
+  status: string
+  attempts: number
+  last_status_code: number | null
+  last_error: string | null
+  next_attempt_at: string | null
+  created_at: string
+  sent_at: string | null
+  payload: Record<string, unknown>
 }

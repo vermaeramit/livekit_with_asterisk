@@ -797,6 +797,53 @@ async def _warm_providers() -> None:
     logger.info("TIMING provider_warm=%dms", int((time.perf_counter() - t) * 1000))
 
 
+async def _queue_postback(store, cfg, call_id: int, keys: dict,
+                          dialler: dict) -> None:
+    """Extract what the conversation established and queue it for the client.
+
+    Everything here is best effort and nothing raises. A call that has already
+    happened must not be damaged by trouble sending a report about it.
+    """
+    if not getattr(cfg, "postback_enabled", False):
+        return
+    try:
+        import postback as pb
+
+        turns = await store.load_turns(call_id)
+        row = await (await store.pool()).fetchrow(
+            """SELECT id, started_at, ended_at, duration_ms, caller, callee,
+                      end_reason, outcome, transferred_to, turn_count,
+                      sip_call_id
+                 FROM calls WHERE id = $1""", call_id)
+
+        fields = cfg.postback_fields or []
+        if isinstance(fields, str):
+            # JSONB as text again - see store.load_tools. Guarded rather than
+            # trusted, because this one is read once per call at shutdown and a
+            # silent empty list would look exactly like "nothing configured".
+            import json as _json
+            try:
+                fields = _json.loads(fields)
+            except Exception:
+                fields = []
+
+        extracted = await pb.extract(
+            turns=turns, fields=fields, api_key=keys.get("openai", ""),
+            model=cfg.llm_model)
+
+        payload = pb.envelope(
+            call_row=dict(row) if row else {"id": call_id},
+            dialler=dialler,
+            extracted=extracted,
+            turns=turns if cfg.postback_include_transcript else None)
+
+        await store.save_postback(call_id, cfg.campaign_id, payload)
+        logger.info("postback queued for call %s (%d extracted fields)",
+                    call_id, len(extracted))
+    except Exception:
+        logger.exception("postback could not be prepared for call %s", call_id)
+
+
 async def entrypoint(ctx: JobContext):
     import store
 
@@ -1284,6 +1331,16 @@ async def entrypoint(ctx: JobContext):
                 await (await store.pool()).execute(
                     "UPDATE calls SET outcome=$2 WHERE id=$1", call_id,
                     f"{session_error['source']}: {session_error['message']}")
+
+            # Queued here, at the very end, and never during the call: the
+            # extraction is an LLM round trip and nothing is worth adding to a
+            # turn budget that took a day of measurement to bring down.
+            #
+            # Before store.close(), obviously - and inside the same try, so a
+            # failure to queue is logged rather than taking the whole shutdown
+            # with it and losing the usage figures too.
+            await _queue_postback(store, cfg, call_id, keys, dialler)
+
             await store.close()
         except Exception:
             logger.exception("shutdown failed")
