@@ -1154,12 +1154,24 @@ async def entrypoint(ctx: JobContext):
     @session.on("conversation_item_added")
     def _on_item(ev):
         nonlocal seq
-        seq += 1
         try:
             item = ev.item
             role = getattr(item, "role", "?")
             text = getattr(item, "text_content", None) or str(getattr(item, "content", ""))
             t = dict(pending) if role == "assistant" else {}
+
+            # An empty item with nothing measured is not a turn. One arrives at
+            # the start of every session and was being written down anyway,
+            # putting a "(no transcript)" caller line at the top of every
+            # transcript in the console - visible on 290 calls before anyone
+            # asked what it was.
+            #
+            # Timings are checked too, not just the text: an agent turn cut off
+            # by a barge-in has no text and is worth keeping.
+            if not (text or "").strip() and not t:
+                return
+
+            seq += 1
             extra = ""
             if t:
                 # eou ALREADY includes stt; summing all four double-counts.

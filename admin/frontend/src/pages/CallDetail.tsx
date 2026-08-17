@@ -464,9 +464,23 @@ export function CallDetail() {
 
   // Turns and tool calls in one list, ordered by time. Ties go to the turn: a
   // tool recorded in the same millisecond as a turn was triggered BY it.
+  //
+  // Empty turns are dropped. An item with no text and nothing measured carries
+  // nothing, and one was written at the start of every call - so every
+  // transcript opened with a "(no transcript)" caller line. Fixed at source in
+  // the agent; this covers the calls already recorded.
   const tools = c.tools ?? []
+  const realTurns = c.turns.filter(
+    (t) =>
+      (t.text ?? '').trim() ||
+      t.total_ms != null ||
+      t.eou_ms != null ||
+      t.llm_ttft_ms != null ||
+      t.tts_ttfb_ms != null ||
+      t.kb_chunk_ids?.length,
+  )
   const timeline = [
-    ...c.turns.map((t) => ({ kind: 'turn' as const, at: Date.parse(t.ts), turn: t })),
+    ...realTurns.map((t) => ({ kind: 'turn' as const, at: Date.parse(t.ts), turn: t })),
     ...tools.map((t) => ({ kind: 'tool' as const, at: Date.parse(t.created_at), tool: t })),
   ].sort((a, b) => a.at - b.at || (a.kind === 'turn' ? -1 : 1))
   const toolsFailed = tools.filter((t) => t.error || (t.status_code ?? 0) >= 400).length
@@ -596,7 +610,7 @@ export function CallDetail() {
           icon={Clock}
           label="Duration"
           value={formatDuration(c.duration_ms)}
-          hint={`${c.turn_count ?? c.turns.length} turns`}
+          hint={`${c.turn_count ?? realTurns.length} turns`}
         />
         <Stat
           icon={Clock}
