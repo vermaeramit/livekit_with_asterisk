@@ -307,24 +307,32 @@ class KBAgent(Agent):
                 yield frame
             return
 
-        longest = max(len(m) for m in markers)
+        # Case-insensitive, because models do not respect the case they are
+        # given. Asked for [TRANSFER], one wrote [Transfer] - which matched
+        # nothing, so the marker was left in the text to be read aloud.
+        lowered = {m.lower(): flag for m, flag in markers.items()}
+        longest = max(len(m) for m in lowered)
 
         async def filtered():
             held = ""
             async for chunk in text:
                 buf = held + chunk
-                for marker, flag in markers.items():
-                    if marker in buf:
+                low = buf.lower()
+                for marker, flag in lowered.items():
+                    start = low.find(marker)
+                    while start != -1:
                         setattr(self, flag, True)
-                        buf = buf.replace(marker, "")
+                        buf = buf[:start] + buf[start + len(marker):]
+                        low = buf.lower()
+                        start = low.find(marker)
                 # Keep back anything that is still a possible prefix of ANY
                 # marker. Only the longest such suffix - holding more would
                 # delay speech for no reason.
                 held = ""
                 for i in range(1, min(longest, len(buf)) + 1):
-                    tail = buf[-i:]
-                    if any(m.startswith(tail) for m in markers):
-                        held = tail
+                    tail = buf[-i:].lower()
+                    if any(m.startswith(tail) for m in lowered):
+                        held = buf[-i:]
                 buf = buf[:len(buf) - len(held)] if held else buf
                 if buf:
                     yield buf
@@ -967,13 +975,27 @@ async def entrypoint(ctx: JobContext):
             # A marker was seen. Acted on HERE and not in tts_node, because that
             # runs while audio is still being produced - transferring or hanging
             # up there would cut off the sentence the marker was attached to.
+            # Transfer wins over end-of-call, and clears it.
+            #
+            # A model asked to hand over will cheerfully write BOTH markers in
+            # one exchange - observed live: "connecting you [TRANSFER]" and then
+            # "thank you, have a good day [EOC]". They are contradictory
+            # instructions, and honouring both made the caller hear a farewell
+            # and then a hold message. Handing the call to a person is the one
+            # that must survive: hanging up on someone who asked for a human is
+            # the worse failure by a distance.
             if agent.transfer_requested:
                 agent.transfer_requested = False
+                agent.end_requested = False
                 # Same path as the tool, so the confirmation gate applies to
                 # both. With confirmation on, the first marker only asks; the
                 # caller's reply and a second marker are what transfer.
                 await agent.request_transfer(session, "end-of-turn marker")
                 continue
+
+            # Once a handoff is under way the call belongs to the other end.
+            if agent.transferred is not None:
+                return
 
             if agent.end_requested:
                 logger.info("end-of-call marker seen - closing call %s", call_id)
