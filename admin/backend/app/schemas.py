@@ -184,6 +184,10 @@ class AgentConfigOut(BaseModel):
     end_call_marker: str
     transfer_marker: str | None
 
+    # Soniox only today. NULL = the provider's defaults.
+    stt_endpoint_level: int | None
+    stt_endpoint_sensitivity: float | None
+
     recording_disclosure: str
 
     stt_provider: str
@@ -195,7 +199,8 @@ class AgentConfigOut(BaseModel):
 
     updated_at: datetime
 
-    @field_validator("llm_temperature", "kb_min_score", mode="before")
+    @field_validator("llm_temperature", "kb_min_score", "stt_endpoint_sensitivity",
+                     mode="before")
     @classmethod
     def _round_real(cls, v):
         # These columns are float4. Postgres hands 0.6 back as
@@ -245,6 +250,10 @@ class AgentConfigUpdate(BaseModel):
     end_call_marker: str | None = Field(default=None, min_length=2,
                                         max_length=20)
     transfer_marker: str | None = Field(default=None, max_length=20)
+    # The provider's own limits - outside them is a 400 on the first
+    # utterance of a live call.
+    stt_endpoint_level: int | None = Field(default=None, ge=0, le=3)
+    stt_endpoint_sensitivity: float | None = Field(default=None, ge=-1.0, le=1.0)
 
     # min_length=1, not Optional. Every call is recorded unconditionally by the
     # dialplan, so a campaign with nothing to say here would be recording callers

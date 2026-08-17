@@ -586,19 +586,29 @@ def _build_stt(provider: str, cfg, key: str, use_config_model: bool):
         model = (cfg.stt_model if use_config_model else None) or "gpt-4o-mini-transcribe"
         return openai.STT(model=model, api_key=key)
     if provider == "soniox":
-        return soniox.STT(
-            api_key=key,
-            params=soniox.STTOptions(
-                model=(cfg.stt_model if use_config_model else None) or "stt-rt-v5",
-                # The caller's language first, English second: these calls are
-                # Hinglish, and the pair is what the hint field is for.
-                language_hints=[_soniox_lang(cfg.language), "en"],
-                # Soniox defaults this to 2000 ms - its own endpointing would
-                # then decide turns 500 ms after our local turn detector has
-                # already given up. Tied to the same budget instead.
-                max_endpoint_delay_ms=int(MAX_ENDPOINTING * 1000),
-            ),
-        )
+        opts = {
+            "model": (cfg.stt_model if use_config_model else None) or "stt-rt-v5",
+            # The caller's language first, English second: these calls are
+            # Hinglish, and the pair is what the hint field is for.
+            "language_hints": [_soniox_lang(cfg.language), "en"],
+            # Soniox defaults this to 2000 ms - its own endpointing would then
+            # decide turns 500 ms after our local turn detector has already
+            # given up. Tied to the same budget instead.
+            "max_endpoint_delay_ms": int(MAX_ENDPOINTING * 1000),
+        }
+        # Only sent when the campaign has an opinion; otherwise the provider's
+        # own defaults apply (level 0, sensitivity 0.0). Measured at those
+        # defaults, Soniox averaged stt_ms 1067 against Sarvam's 238 - the
+        # latency profile had simply never been chosen.
+        #
+        # Soniox's guidance: pick the level first, then fine-tune with
+        # sensitivity, and never pair a high level with negative sensitivity.
+        # The console says the same next to the fields.
+        if use_config_model and cfg.stt_endpoint_level is not None:
+            opts["endpoint_latency_adjustment_level"] = cfg.stt_endpoint_level
+        if use_config_model and cfg.stt_endpoint_sensitivity is not None:
+            opts["endpoint_sensitivity"] = float(cfg.stt_endpoint_sensitivity)
+        return soniox.STT(api_key=key, params=soniox.STTOptions(**opts))
     raise ValueError(f"unknown STT provider '{provider}'")
 
 

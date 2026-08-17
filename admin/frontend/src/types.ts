@@ -200,6 +200,10 @@ export interface AgentConfig {
   // null = no marker-driven handoff; the tool still works.
   transfer_marker: string | null
 
+  // Soniox endpointing. null = the provider's defaults.
+  stt_endpoint_level: number | null
+  stt_endpoint_sensitivity: number | null
+
   recording_disclosure: string
   stt_provider: string
   tts_provider: string

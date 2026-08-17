@@ -54,6 +54,10 @@ class AgentConfig:
     # Written by the model when the conversation is finished. Stripped before
     # TTS and never spoken.
     end_call_marker: str
+    # Soniox endpointing, NULL = the provider's own defaults. See
+    # migration 017 for why these are per-campaign and not constants.
+    stt_endpoint_level: Optional[int]
+    stt_endpoint_sensitivity: Optional[float]
     # NULL = no marker-driven handoff on this campaign. The tool still works.
     transfer_marker: Optional[str]
     # Spoken with the greeting on every call. Recording is unconditional in the

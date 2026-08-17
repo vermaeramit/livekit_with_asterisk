@@ -560,6 +560,31 @@ export function CampaignConfig() {
               />
             </div>
 
+            {/* Soniox is the only provider exposing these. Sarvam's endpointing
+                is server-side and not tunable from here; OpenAI's STT is not
+                streaming, so it has no endpoint to detect. */}
+            {value.stt_provider === 'soniox' && (
+              <div className="grid gap-5 sm:grid-cols-2">
+                <NumberField
+                  label="Endpoint latency level"
+                  value={value.stt_endpoint_level ?? -1}
+                  onChange={(v) => set('stt_endpoint_level', v < 0 ? null : v)}
+                  min={-1}
+                  max={3}
+                  hint="0–3. Higher returns a result sooner but breaks long speech into more pieces — on Hinglish sales calls, being cut off mid-sentence is worse than waiting. −1 leaves Soniox's own default (0). Measured at the default: 1067ms against Sarvam's 238ms."
+                />
+                <NumberField
+                  label="Endpoint sensitivity"
+                  value={value.stt_endpoint_sensitivity ?? 0}
+                  onChange={(v) => set('stt_endpoint_sensitivity', v)}
+                  min={-1}
+                  max={1}
+                  step={0.1}
+                  hint="−1.0 to 1.0. Positive ends turns sooner, negative waits longer for people who pause. Set the level first, then tune this — and never pair a high level with a negative value, they cancel out."
+                />
+              </div>
+            )}
+
             <ComboField
               label="Speech-to-text model"
               value={value.stt_model ?? ''}
