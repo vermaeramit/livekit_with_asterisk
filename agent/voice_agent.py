@@ -258,6 +258,63 @@ class KBAgent(Agent):
         self.turn_count = 0
         self.prompt_tokens = 0
         self.limit_hit: str | None = None
+        # Set when the model writes the end-of-call marker. Acted on after the
+        # sentence carrying it has finished playing, never during.
+        self.end_requested = False
+        # Set when the call was ended deliberately by something other than a
+        # limit: today only the silence handler. Feeds calls.end_reason, so
+        # "nobody ever spoke" is countable separately from "it finished".
+        self.ended_by: str | None = None
+        # Whether the caller has been asked to confirm a handoff. Kept here and
+        # not passed by the model: a flag the model supplies is a flag the model
+        # can decide to set on the first call, which is exactly the thing this
+        # is meant to prevent.
+        self.transfer_asked = False
+
+    # ────────────────────── end of call ──────────────────────
+
+    async def tts_node(self, text, model_settings):
+        """Strip the end-of-call marker before anything is synthesised.
+
+        The marker cannot simply be searched for in each chunk. An LLM streams
+        its answer in pieces with no regard for token boundaries, so "[EOC]"
+        routinely arrives as "[EO" then "C]" - and a naive filter passes both
+        through, leaving the caller listening to "bracket E O C".
+
+        So a tail is held back: anything that could still turn into the marker
+        is buffered rather than spoken, and released once it is clear it will
+        not. Costs at most a few characters of latency, which is inside a single
+        TTS chunk.
+
+        Ending the call is NOT done here. This runs while audio is still being
+        produced; hanging up now would cut off the sentence the marker was
+        attached to. It only raises the flag - see _finish_if_requested.
+        """
+        marker = (self.cfg.end_call_marker or "[EOC]")
+
+        async def filtered():
+            held = ""
+            async for chunk in text:
+                buf = held + chunk
+                if marker in buf:
+                    self.end_requested = True
+                    buf = buf.replace(marker, "")
+                # Keep back anything that is still a possible prefix of the
+                # marker. Only the longest such suffix - holding more would
+                # delay speech for no reason.
+                held = ""
+                for i in range(1, min(len(marker), len(buf) + 1)):
+                    if buf.endswith(marker[:i]):
+                        held = buf[-i:]
+                buf = buf[:len(buf) - len(held)] if held else buf
+                if buf:
+                    yield buf
+            # A partial marker at the very end was never a marker.
+            if held:
+                yield held
+
+        async for frame in Agent.default.tts_node(self, filtered(), model_settings):
+            yield frame
 
     # ────────────────────────── knowledge ──────────────────────────
 
@@ -311,6 +368,29 @@ class KBAgent(Agent):
         if not self.cfg.transfer_enabled:
             return ("Transfer is disabled. Tell the caller to call back during "
                     "office hours.")
+
+        # Ask first, and make the asking a state change here rather than an
+        # argument the model supplies. A `confirmed: bool` parameter is a
+        # parameter the model can set true on its very first call, which defeats
+        # the whole point - the caller who says "no, wait" is already gone.
+        #
+        # Returning instead of transferring hands control back to the model,
+        # which asks and waits. The caller's answer is a normal turn, after
+        # which the model calls this again - and by then the flag is set.
+        if self.cfg.transfer_confirm and not self.transfer_asked:
+            self.transfer_asked = True
+            ask = (self.cfg.transfer_confirm_message
+                   or "Main aapko ek sathi se jod rahi hoon. Theek hai?")
+            logger.info("  TOOL transfer_to_human(%r) -> asking first", reason)
+            try:
+                handle = await context.session.say(ask, allow_interruptions=True)
+                await handle.wait_for_playout()
+            except Exception:
+                logger.exception("transfer confirmation prompt failed")
+            return ("You have asked the caller to confirm. Wait for their "
+                    "answer. If they agree, call this tool again. If they say "
+                    "no or want to continue, carry on helping them and do not "
+                    "call this tool again unless they ask.")
 
         sip_identity = None
         for p in self.room.remote_participants.values():
@@ -804,6 +884,93 @@ async def entrypoint(ctx: JobContext):
 
     asyncio.create_task(duration_watchdog())
 
+    # ---- silence, and ending the call on purpose ----
+    # Both live in one loop because they are the same question asked once a
+    # second: is the agent finished talking, and if so, should this call still
+    # be open?
+    #
+    # Driven by timestamps rather than by awaiting an event, so a missed or
+    # renamed event degrades into "the timer never fires" instead of a task
+    # wedged forever on something that will not arrive.
+    last_activity = time.monotonic()
+    agent_speaking = False
+    silence_attempts = 0
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev):
+        nonlocal agent_speaking, last_activity
+        state = getattr(ev, "new_state", None)
+        agent_speaking = state == "speaking"
+        if state == "listening":
+            # The clock starts when the AGENT stops, not when the caller last
+            # spoke. Otherwise a long answer from the agent counts as the
+            # caller's silence and the prompt fires the moment it finishes.
+            last_activity = time.monotonic()
+
+    @session.on("user_input_transcribed")
+    def _on_user_input(ev):
+        nonlocal last_activity, silence_attempts
+        if not (getattr(ev, "transcript", "") or "").strip():
+            return
+        last_activity = time.monotonic()
+        # Any real speech clears the count. Two unanswered prompts an hour
+        # apart are not a caller who has gone away.
+        silence_attempts = 0
+
+    async def _hangup(reason: str | None) -> None:
+        if reason:
+            agent.ended_by = reason
+        try:
+            await ctx.delete_room()
+        except Exception:
+            logger.exception("delete_room failed - falling back to shutdown")
+            ctx.shutdown(reason=reason or "ended")
+
+    async def call_watchdog():
+        prompts = list(cfg.silence_prompts or [])
+        timeout = cfg.silence_timeout_sec
+        nonlocal silence_attempts, last_activity
+
+        while not agent.limit_hit and agent.transferred is None:
+            await asyncio.sleep(1)
+            if agent_speaking:
+                continue
+
+            # The model asked to finish. Acted on HERE and not in tts_node,
+            # because that runs while audio is still being produced - hanging up
+            # there would cut off the sentence the marker was attached to.
+            if agent.end_requested:
+                logger.info("end-of-call marker seen - closing call %s", call_id)
+                await _hangup(None)     # a finished conversation is "completed"
+                return
+
+            if not timeout or not prompts:
+                continue
+            if time.monotonic() - last_activity < timeout:
+                continue
+
+            line = prompts[min(silence_attempts, len(prompts) - 1)]
+            silence_attempts += 1
+            final = silence_attempts >= len(prompts)
+            logger.info("silence %ds - prompt %d/%d%s", timeout,
+                        silence_attempts, len(prompts),
+                        " (last)" if final else "")
+            try:
+                handle = await session.say(line, allow_interruptions=not final)
+                await handle.wait_for_playout()
+            except Exception:
+                logger.exception("silence prompt failed")
+
+            if final:
+                await _hangup("no_response")
+                return
+            # Restart the clock from the end of OUR prompt, not from when the
+            # caller last spoke - otherwise every remaining attempt fires at
+            # once, one second apart.
+            last_activity = time.monotonic()
+
+    asyncio.create_task(call_watchdog())
+
     # Which provider actually served this call, as opposed to which one the
     # config asked for. A set, because a call can start on the primary and fall
     # back partway - "sarvam" means the fallback never fired, "sarvam,openai"
@@ -914,8 +1081,12 @@ async def entrypoint(ctx: JobContext):
 
             # transferred and limit are deliberate outcomes and outrank an error
             # seen on the way out; anything else that errored did not complete.
+            # ended_by outranks an error seen on the way out for the same reason
+            # transferred and limit do: it is a decision, not a failure. A call
+            # closed because nobody ever spoke is not an error to investigate.
             reason = ("transferred" if agent.transferred
                       else "limit" if agent.limit_hit
+                      else agent.ended_by if agent.ended_by
                       else "error" if session_error
                       else "completed")
             await store.end_call_usage(

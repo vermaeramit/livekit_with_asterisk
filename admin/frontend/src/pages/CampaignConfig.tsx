@@ -8,13 +8,16 @@ import {
   Info,
   KeyRound,
   MessageSquare,
+  MicOff,
   PhoneForwarded,
   PhoneIncoming,
+  Plus,
   ShieldCheck,
   TriangleAlert,
   Wrench,
   Undo2,
   Waves,
+  X,
 } from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
@@ -22,7 +25,7 @@ import { CampaignTools } from '@/components/CampaignTools'
 import { ProviderKeys } from '@/components/ProviderKeys'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
-import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
+import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -212,6 +215,82 @@ function HistoryTab({ campaignId }: { campaignId: number }) {
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * The lines the agent says into silence, one per attempt.
+ *
+ * There is no separate "number of attempts" field on purpose. Two fields that
+ * have to agree eventually stop agreeing, and the failure is invisible: a count
+ * of 3 with 2 lines means the third attempt says nothing, and the caller is hung
+ * up on without warning. The list IS the count.
+ */
+function SilencePrompts({
+  lines,
+  onChange,
+}: {
+  lines: string[]
+  onChange: (lines: string[]) => void
+}) {
+  const edit = (i: number, v: string) =>
+    onChange(lines.map((l, j) => (j === i ? v : l)))
+
+  return (
+    <div className="space-y-1.5">
+      <Label>What to say, in order</Label>
+
+      {lines.length === 0 ? (
+        <p className="text-2xs leading-relaxed text-muted-foreground">
+          Nothing set — the agent waits indefinitely, and the call runs until the duration limit.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {lines.map((line, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="mt-2 w-14 shrink-0 text-2xs tabular-nums text-muted-foreground">
+                {i === lines.length - 1 && lines.length > 1 ? 'last' : `try ${i + 1}`}
+              </span>
+              <Input
+                value={line}
+                onChange={(e) => edit(i, e.target.value)}
+                placeholder={
+                  i === 0
+                    ? 'Kya aap mujhe sun paa rahe hain?'
+                    : 'Aawaz nahi aa rahi, main call band kar rahi hoon. Dhanyavaad.'
+                }
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-0.5"
+                aria-label={`Remove line ${i + 1}`}
+                onClick={() => onChange(lines.filter((_, j) => j !== i))}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 pt-1">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={lines.length >= 5}
+          onClick={() => onChange([...lines, ''])}
+        >
+          <Plus className="size-3.5" />
+          Add a line
+        </Button>
+        <p className="text-2xs leading-relaxed text-muted-foreground">
+          {lines.length > 0
+            ? `${lines.length} attempt${lines.length === 1 ? '' : 's'}, then the call ends. The last line is spoken first — write it as a goodbye.`
+            : 'Each line is one attempt. After the last one the call ends.'}
+        </p>
+      </div>
     </div>
   )
 }
@@ -826,6 +905,60 @@ export function CampaignConfig() {
                 onChange={(v) => set('transfer_message', v || null)}
                 placeholder="Main aapko ek executive se connect kar raha hoon."
                 hint="Spoken and finished before the REFER is sent — otherwise the caller hears it cut off."
+              />
+
+              <Toggle
+                label="Ask the caller before transferring"
+                checked={value.transfer_confirm}
+                onChange={(v) => set('transfer_confirm', v)}
+                hint="The agent asks first and waits for an answer, so a caller who says “no, wait” stops it. Enforced in the agent, not left to the model to remember."
+              />
+
+              {value.transfer_confirm && (
+                <TextField
+                  label="Confirmation question"
+                  value={value.transfer_confirm_message ?? ''}
+                  onChange={(v) => set('transfer_confirm_message', v || null)}
+                  placeholder="Main aapko ek sathi se jod rahi hoon. Theek hai?"
+                  hint="Asked, then the caller's reply decides. Only after they agree does the transfer happen."
+                />
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MicOff className="h-4 w-4 text-muted-foreground" />
+                When the caller says nothing
+              </CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-5">
+              <NumberField
+                label="Wait this long before speaking again"
+                value={value.silence_timeout_sec ?? 0}
+                onChange={(v) => set('silence_timeout_sec', v > 0 ? v : null)}
+                min={0}
+                max={60}
+                suffix="sec"
+                hint="Counted from the moment the AGENT stops speaking, not from the caller's last word. 0 turns the whole thing off. Under 3s fires while someone is drawing breath."
+              />
+
+              <SilencePrompts
+                lines={value.silence_prompts ?? []}
+                onChange={(lines) => set('silence_prompts', lines.length ? lines : null)}
+              />
+
+              <TextField
+                label="End-of-call marker"
+                value={value.end_call_marker ?? ''}
+                // NOT NULL in the schema: clearing the box means "back to the
+                // default", not "no marker" — an empty marker would match every
+                // chunk and silence the agent entirely.
+                onChange={(v) => set('end_call_marker', v.trim() || '[EOC]')}
+                placeholder="[EOC]"
+                className="font-mono"
+                hint="When the model writes this, it is removed before speaking and the call ends once the sentence finishes. Tell the model to use it in the instructions, or it never will."
               />
             </CardBody>
           </Card>

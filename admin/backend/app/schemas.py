@@ -174,6 +174,14 @@ class AgentConfigOut(BaseModel):
     transfer_enabled: bool
     transfer_to: str
     transfer_message: str | None
+    transfer_confirm: bool
+    transfer_confirm_message: str | None
+
+    # NULL = no silence handling. The array's LENGTH is the number of attempts;
+    # the last line is spoken and then the call ends.
+    silence_timeout_sec: int | None
+    silence_prompts: list[str] | None
+    end_call_marker: str
 
     recording_disclosure: str
 
@@ -224,6 +232,17 @@ class AgentConfigUpdate(BaseModel):
     transfer_enabled: bool | None = None
     transfer_to: str | None = Field(default=None, max_length=200)
     transfer_message: str | None = Field(default=None, max_length=600)
+    transfer_confirm: bool | None = None
+    transfer_confirm_message: str | None = Field(default=None, max_length=600)
+
+    # Under 3s fires while the caller is drawing breath; over 60s the call is
+    # already lost. Both ends are product decisions - the database carries the
+    # same CHECK.
+    silence_timeout_sec: int | None = Field(default=None, ge=3, le=60)
+    # One line per attempt. Five is a ceiling on politeness, not on storage.
+    silence_prompts: list[str] | None = Field(default=None, max_length=5)
+    end_call_marker: str | None = Field(default=None, min_length=2,
+                                        max_length=20)
 
     # min_length=1, not Optional. Every call is recorded unconditionally by the
     # dialplan, so a campaign with nothing to say here would be recording callers
@@ -244,6 +263,28 @@ class AgentConfigUpdate(BaseModel):
         if v is not None and not v.strip():
             raise ValueError("the recording disclosure cannot be blank")
         return v
+
+    @field_validator("silence_prompts")
+    @classmethod
+    def _prompts_are_spoken(cls, v: list[str] | None) -> list[str] | None:
+        """Blank lines are dropped, not stored.
+
+        A blank entry becomes an attempt that says nothing - the caller hears
+        the same silence for another timeout and is then hung up on with no
+        warning at all. Since the array's length IS the attempt count, an empty
+        string is not a small formatting problem; it silently changes what the
+        caller experiences.
+        """
+        if v is None:
+            return v
+        cleaned = [s.strip() for s in v if s and s.strip()]
+        if not cleaned:
+            # Empty means "off". Sending [] to clear it is reasonable; storing
+            # an empty array would arm the timeout with nothing to say.
+            return None
+        if any(len(s) > 600 for s in cleaned):
+            raise ValueError("each line must be 600 characters or fewer")
+        return cleaned
 
     @field_validator("transfer_to")
     @classmethod

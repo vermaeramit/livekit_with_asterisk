@@ -40,6 +40,20 @@ class AgentConfig:
     transfer_enabled: bool
     transfer_to: str
     transfer_message: Optional[str]
+    # Ask the caller before handing over, so "no, wait" can still stop it.
+    # Enforced by state in the agent, never by trusting the model to say it has
+    # asked - see transfer_to_human.
+    transfer_confirm: bool
+    transfer_confirm_message: Optional[str]
+    # NULL = no silence handling on this campaign. The array's LENGTH is the
+    # number of attempts; there is no separate count, because two fields that
+    # must agree eventually do not. The last line is spoken and then the call
+    # ends, so it is the one written as a goodbye.
+    silence_timeout_sec: Optional[int]
+    silence_prompts: Optional[list]
+    # Written by the model when the conversation is finished. Stripped before
+    # TTS and never spoken.
+    end_call_marker: str
     # Spoken with the greeting on every call. Recording is unconditional in the
     # dialplan, so this is the notice that makes keeping it lawful - not a
     # per-campaign preference. NOT NULL in the schema for that reason.

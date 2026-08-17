@@ -189,6 +189,15 @@ export interface AgentConfig {
   transfer_enabled: boolean
   transfer_to: string
   transfer_message: string | null
+  transfer_confirm: boolean
+  transfer_confirm_message: string | null
+
+  // null = no silence handling. The array's LENGTH is the attempt count — the
+  // last line is spoken and then the call ends.
+  silence_timeout_sec: number | null
+  silence_prompts: string[] | null
+  end_call_marker: string
+
   recording_disclosure: string
   stt_provider: string
   tts_provider: string

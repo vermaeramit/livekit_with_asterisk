@@ -29,6 +29,8 @@ FIELDS = (
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     "transfer_enabled", "transfer_to", "transfer_message",
+    "transfer_confirm", "transfer_confirm_message",
+    "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "recording_disclosure",
 )
 
