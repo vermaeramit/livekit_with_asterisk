@@ -266,11 +266,34 @@ class KBAgent(Agent):
         # limit: today only the silence handler. Feeds calls.end_reason, so
         # "nobody ever spoke" is countable separately from "it finished".
         self.ended_by: str | None = None
-        # Whether the caller has been asked to confirm a handoff. Kept here and
-        # not passed by the model: a flag the model supplies is a flag the model
-        # can decide to set on the first call, which is exactly the thing this
-        # is meant to prevent.
-        self.transfer_asked = False
+        # How many times the caller has actually said something. The transfer
+        # gate is measured against this, not against a boolean - see below.
+        self.user_turns = 0
+        # The value of user_turns when the caller was asked to confirm a
+        # handoff, or None if they have not been asked.
+        #
+        # A boolean was not enough. Given both a tool and a marker for the same
+        # job, the model used BOTH in one response: the tool asked for
+        # confirmation and set the flag, and the marker - arriving milliseconds
+        # later, before the caller could draw breath - found the flag already
+        # set and transferred. The confirmation was satisfied by the agent
+        # talking to itself.
+        #
+        # Requiring the caller to have spoken SINCE being asked is a gate that
+        # holds however many routes exist, because only the caller can move it.
+        self.transfer_asked_at: int | None = None
+
+        # One route, not two. The double-fire above is what having both looks
+        # like from the caller's side: three utterances for one handoff, and a
+        # confirmation they were never given a chance to answer.
+        if cfg.transfer_marker and cfg.transfer_enabled:
+            try:
+                self.update_tools([t for t in self.tools
+                                   if getattr(t, "name", "") != "transfer_to_human"])
+            except Exception:
+                logger.warning(
+                    "could not remove the transfer tool - the marker and the "
+                    "tool are both live, and the model may use either")
 
     # ────────────────────── end of call ──────────────────────
 
@@ -412,20 +435,31 @@ class KBAgent(Agent):
         #
         # Returning instead of transferring hands control back to the model,
         # which asks and waits. The caller's answer is a normal turn, after
-        # which the model asks again - and by then the flag is set.
-        if self.cfg.transfer_confirm and not self.transfer_asked:
-            self.transfer_asked = True
-            ask = (self.cfg.transfer_confirm_message
-                   or "Main aapko ek sathi se jod rahi hoon. Theek hai?")
-            logger.info("  TRANSFER(%r) -> asking the caller first", reason)
-            try:
-                handle = await session.say(ask, allow_interruptions=True)
-                await handle.wait_for_playout()
-            except Exception:
-                logger.exception("transfer confirmation prompt failed")
-            return ("You have asked the caller to confirm. Wait for their "
-                    "answer. If they agree, ask for the transfer again. If they "
-                    "say no or want to continue, carry on helping them.")
+        # which the model asks again - and by then the gate has moved.
+        if self.cfg.transfer_confirm:
+            if self.transfer_asked_at is None:
+                self.transfer_asked_at = self.user_turns
+                ask = (self.cfg.transfer_confirm_message
+                       or "Main aapko ek sathi se jod rahi hoon. Theek hai?")
+                logger.info("  TRANSFER(%r) -> asking the caller first", reason)
+                try:
+                    handle = await session.say(ask, allow_interruptions=True)
+                    await handle.wait_for_playout()
+                except Exception:
+                    logger.exception("transfer confirmation prompt failed")
+                return ("You have asked the caller to confirm. Wait for their "
+                        "answer. If they agree, ask for the transfer again. If "
+                        "they say no or want to continue, carry on helping them.")
+
+            # Asked, but the caller has not spoken since. This is the case that
+            # actually happened: a tool call asked and a marker in the same
+            # response transferred, milliseconds apart, with the caller silent
+            # throughout. Only the caller can move this counter.
+            if self.user_turns <= self.transfer_asked_at:
+                logger.info("  TRANSFER(%r) -> refused, the caller has not "
+                            "answered yet", reason)
+                return ("The caller has not answered yet. Wait for them to "
+                        "reply before asking for the transfer again.")
 
         sip_identity = None
         for p in self.room.remote_participants.values():
@@ -948,6 +982,9 @@ async def entrypoint(ctx: JobContext):
         nonlocal last_activity, silence_attempts
         if not (getattr(ev, "transcript", "") or "").strip():
             return
+        # The only counter the transfer confirmation gate trusts. Incremented
+        # here and nowhere else, so nothing the agent does can advance it.
+        agent.user_turns += 1
         last_activity = time.monotonic()
         # Any real speech clears the count. Two unanswered prompts an hour
         # apart are not a caller who has gone away.
