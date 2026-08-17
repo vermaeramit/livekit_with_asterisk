@@ -32,7 +32,8 @@ editor = require_roles("tenant_admin")
 
 COLUMNS = """id, name, description, parameters, method, url, headers,
              auth_header, auth_value_hint, body_template, timeout_ms,
-             max_response_bytes, response_path, enabled, updated_at"""
+             max_response_bytes, response_path, filler_message, enabled,
+             updated_at"""
 
 
 def _row(r) -> ToolOut:
@@ -68,15 +69,17 @@ async def create_tool(campaign_id: int, body: ToolCreate,
                     (campaign_id, tenant_id, name, description, parameters,
                      method, url, headers, auth_header, auth_value_enc,
                      auth_value_hint, body_template, timeout_ms,
-                     max_response_bytes, response_path, enabled)
+                     max_response_bytes, response_path, filler_message,
+                     enabled)
                 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9,$10,$11,$12,
-                        $13,$14,$15,$16)
+                        $13,$14,$15,$16,$17)
                 RETURNING {COLUMNS}""",
             campaign_id, tenant_id, body.name, body.description,
             json.dumps(body.parameters), body.method, body.url,
             json.dumps(body.headers) if body.headers else None,
             body.auth_header, enc, hint, body.body_template, body.timeout_ms,
-            body.max_response_bytes, body.response_path, body.enabled)
+            body.max_response_bytes, body.response_path, body.filler_message,
+            body.enabled)
     except asyncpg.UniqueViolationError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

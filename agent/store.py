@@ -189,7 +189,7 @@ async def load_tools(campaign_id: int) -> list[dict]:
     rows = await (await pool()).fetch(
         """SELECT id, name, description, parameters, method, url, headers,
                   auth_header, auth_value_enc, body_template, timeout_ms,
-                  max_response_bytes, response_path
+                  max_response_bytes, response_path, filler_message
              FROM campaign_tools
             WHERE campaign_id = $1 AND enabled
             ORDER BY name""",

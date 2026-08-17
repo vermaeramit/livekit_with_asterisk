@@ -927,13 +927,27 @@ async def entrypoint(ctx: JobContext):
     # here. Built AFTER start_call so every invocation can be recorded against a
     # call id - writes are in scope, and "which call booked this?" has to be
     # answerable.
+    # Tools are built before the session exists, so they cannot hold a
+    # reference to it. This box is filled in a few lines below, and a tool that
+    # wants to say something reads it then - by which time there is always a
+    # session, because a tool can only run during a call.
+    live: dict = {}
+
+    async def _tool_says(line: str) -> None:
+        session = live.get("session")
+        if session is None:
+            logger.warning("a tool wanted to speak before the session existed")
+            return
+        await session.say(line, allow_interruptions=True)
+
     extra_tools = []
     if cfg.campaign_id is not None:
         specs = await store.load_tools(cfg.campaign_id)
         if specs:
             extra_tools = tools_mod.build_all(
                 specs, call_id,
-                functools.partial(store.record_tool_call, call_id))
+                functools.partial(store.record_tool_call, call_id),
+                _tool_says)
             logger.info("campaign tools: %s",
                         ", ".join(s["name"] for s in specs))
 
@@ -952,6 +966,8 @@ async def entrypoint(ctx: JobContext):
         min_endpointing_delay=MIN_ENDPOINTING,
         max_endpointing_delay=MAX_ENDPOINTING,
     )
+
+    live["session"] = session
 
     usage = metrics.UsageCollector()
     pending: dict[str, int] = {}

@@ -413,6 +413,8 @@ export interface CampaignTool {
   timeout_ms: number
   max_response_bytes: number
   response_path: string | null
+  // Spoken only if the tool is still running after ~600ms.
+  filler_message: string | null
   enabled: boolean
   updated_at: string
 }

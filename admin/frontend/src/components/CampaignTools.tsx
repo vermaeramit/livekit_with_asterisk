@@ -26,6 +26,7 @@ const BLANK = {
   timeout_ms: 2500,
   max_response_bytes: 8192,
   response_path: '',
+  filler_message: '',
   enabled: true,
 }
 
@@ -47,7 +48,7 @@ const ACTIVITY_PAGE_SIZE = 20
 const FIELD_ORDER = [
   'name', 'description', 'method', 'url', 'parameters', 'body_template',
   'auth_header', 'auth_value', 'timeout_ms', 'max_response_bytes',
-  'response_path',
+  'response_path', 'filler_message',
 ]
 
 function toDraft(t: CampaignTool): Draft {
@@ -65,6 +66,7 @@ function toDraft(t: CampaignTool): Draft {
     timeout_ms: t.timeout_ms,
     max_response_bytes: t.max_response_bytes,
     response_path: t.response_path ?? '',
+    filler_message: t.filler_message ?? '',
     enabled: t.enabled,
   }
 }
@@ -158,6 +160,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
         auth_header: draft.auth_header.trim() || null,
         body_template: draft.body_template.trim() || null,
         response_path: draft.response_path.trim() || null,
+        filler_message: draft.filler_message.trim() || null,
       }
       // Omitted, not empty: an empty string means "clear the stored secret",
       // and editing a description should not wipe a credential.
@@ -487,6 +490,16 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
                        onChange={(v) => set('response_path', v)} placeholder="data.customer"
                        error={fieldErrors.response_path} />
           </div>
+
+          <TextField
+            id="f-filler_message"
+            label="Say this while it runs"
+            value={draft.filler_message}
+            onChange={(v) => set('filler_message', v)}
+            error={fieldErrors.filler_message}
+            placeholder="Kripya ek pal rukiye…"
+            hint="Spoken only if this tool has not answered within 600ms, and cancelled the moment it does — so a fast lookup stays silent. Saying it every time would turn a 200ms pause into a two-second one. Leave empty for no announcement."
+          />
 
           <Toggle
             label="Enabled"

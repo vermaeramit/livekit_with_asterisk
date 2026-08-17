@@ -721,6 +721,9 @@ class ToolBase(BaseModel):
     timeout_ms: int = Field(default=2500, ge=200, le=8000)
     max_response_bytes: int = Field(default=8192, ge=256, le=65536)
     response_path: str | None = Field(default=None, max_length=200)
+    # Spoken only if the tool has not answered within TOOL_FILLER_AFTER_MS.
+    # A filler in front of a fast API makes a short pause into a long one.
+    filler_message: str | None = Field(default=None, max_length=200)
     enabled: bool = True
 
     @field_validator("name")

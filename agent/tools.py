@@ -95,16 +95,42 @@ def _idempotency_key(call_id: int, name: str, args: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()[:32]
 
 
-def build(spec: dict, call_id: int | None, record: Callable):
+# How long a tool may take before the caller is told to hold on.
+#
+# Not configurable, and deliberately short. A filler in front of a fast API
+# makes a short pause into a long one - "kripya ek pal rukiye" takes longer to
+# say than a 200 ms lookup takes to run. 600 ms is under the point where silence
+# is noticed on a phone call, so a fast tool stays silent and only a slow one
+# gets covered.
+FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
+
+
+def build(spec: dict, call_id: int | None, record: Callable,
+          speak: Callable | None = None):
     """-> a livekit function tool for one campaign_tools row.
 
     `record` is awaited with the outcome of every invocation. It is passed in
     rather than imported so this module does not depend on the database.
+
+    `speak` says one line to the caller. Passed in for the same reason, and
+    because the session does not exist yet when tools are built - see the
+    entrypoint. Absent, tools run silently, exactly as before.
     """
     name: str = spec["name"]
     method: str = (spec.get("method") or "GET").upper()
     timeout = aiohttp.ClientTimeout(total=(spec.get("timeout_ms") or 2500) / 1000)
     max_bytes: int = spec.get("max_response_bytes") or 8192
+    filler: str | None = (spec.get("filler_message") or "").strip() or None
+
+    async def hold_on() -> None:
+        """Say the filler, but only if the tool is still running by then."""
+        try:
+            await asyncio.sleep(FILLER_AFTER_S)
+            await speak(filler)
+        except asyncio.CancelledError:
+            pass        # the tool answered first, which is the good case
+        except Exception:
+            log.exception("tool %s filler failed", name)
 
     async def run(raw_arguments: dict[str, object]) -> str:
         args = dict(raw_arguments or {})
@@ -144,6 +170,12 @@ def build(spec: dict, call_id: int | None, record: Callable):
             data = toolfmt.fill(spec["body_template"], args)
             headers.setdefault("Content-Type", "application/json")
 
+        # Started, not awaited: the point is for it to overlap the request, not
+        # to be added in front of it. Cancelled the moment the response lands,
+        # so a fast tool never says anything at all.
+        waiting = (asyncio.create_task(hold_on())
+                   if filler and speak is not None else None)
+
         try:
             async with _http().request(method, url, headers=headers, data=data,
                                        timeout=timeout,
@@ -169,6 +201,13 @@ def build(spec: dict, call_id: int | None, record: Callable):
             raise lk_llm.ToolError(
                 "That lookup failed. Tell the caller you could not check it "
                 "right now.")
+        finally:
+            # In `finally` so it runs on the timeout and failure paths too. A
+            # tool that timed out at 2500 ms has already said the filler and the
+            # model is about to apologise; leaving the task alive would let it
+            # fire again over the apology.
+            if waiting is not None:
+                waiting.cancel()
 
         await done(status=status)
 
@@ -202,7 +241,8 @@ def build(spec: dict, call_id: int | None, record: Callable):
     )
 
 
-def build_all(specs: list[dict], call_id: int | None, record: Callable) -> list:
+def build_all(specs: list[dict], call_id: int | None, record: Callable,
+              speak: Callable | None = None) -> list:
     """One bad tool must not take the others down.
 
     A campaign with five tools and one malformed schema should lose one tool,
@@ -212,7 +252,7 @@ def build_all(specs: list[dict], call_id: int | None, record: Callable) -> list:
     out = []
     for spec in specs:
         try:
-            out.append(build(spec, call_id, record))
+            out.append(build(spec, call_id, record, speak))
         except Exception:
             log.exception("tool %r could not be built - skipping",
                           spec.get("name"))
