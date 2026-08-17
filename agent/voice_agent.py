@@ -231,6 +231,23 @@ def _api_url() -> str:
     return u.replace("wss://", "https://").replace("ws://", "http://")
 
 
+def _tool_name(tool) -> str:
+    """The name a livekit function tool is exposed to the model under.
+
+    Not simply `tool.name`. A method decorated with @function_tool is still a
+    function; its name lives in the tool info the decorator attaches, and
+    reading `.name` off it returns nothing at all - which is how a filter meant
+    to remove one tool silently removed none.
+    """
+    info = getattr(tool, "__livekit_tool_info__", None)
+    for candidate in (getattr(info, "name", None),
+                      getattr(tool, "name", None),
+                      getattr(tool, "__name__", None)):
+        if candidate:
+            return str(candidate)
+    return ""
+
+
 class KBAgent(Agent):
     def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict,
                  chat_ctx=None, extra_tools=None):
@@ -288,8 +305,16 @@ class KBAgent(Agent):
         # confirmation they were never given a chance to answer.
         if cfg.transfer_marker and cfg.transfer_enabled:
             try:
-                self.update_tools([t for t in self.tools
-                                   if getattr(t, "name", "") != "transfer_to_human"])
+                kept = [t for t in self.tools
+                        if _tool_name(t) != "transfer_to_human"]
+                self.update_tools(kept)
+                # Logged, not assumed. The first version of this filtered on
+                # `t.name`, which does not exist on a decorated tool - so it
+                # matched nothing, removed nothing, raised nothing, and the
+                # model went on calling the tool. Silent no-ops are why this
+                # line exists.
+                logger.info("transfer marker set - tools now: %s",
+                            ", ".join(_tool_name(t) for t in self.tools) or "none")
             except Exception:
                 logger.warning(
                     "could not remove the transfer tool - the marker and the "
@@ -1035,6 +1060,21 @@ async def entrypoint(ctx: JobContext):
                 return
 
             if agent.end_requested:
+                # A handoff has been asked for and not finished. Observed live:
+                # the confirmation gate correctly refused a transfer because the
+                # caller had not answered yet, and the [EOC] in the very same
+                # response then hung up on them one second later - so a caller
+                # who asked for a person got a dial tone instead.
+                #
+                # Nothing the model writes should be able to end a call that is
+                # mid-handoff. Cleared rather than remembered: if the caller
+                # declines the transfer and the conversation genuinely finishes
+                # later, a fresh marker should still work.
+                if agent.transfer_asked_at is not None and agent.transferred is None:
+                    logger.info("end-of-call marker ignored - a handoff is "
+                                "still pending on call %s", call_id)
+                    agent.end_requested = False
+                    continue
                 logger.info("end-of-call marker seen - closing call %s", call_id)
                 await _hangup(None)     # a finished conversation is "completed"
                 return
