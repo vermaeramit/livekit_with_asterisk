@@ -156,8 +156,16 @@ def _dialler_attrs(participant) -> dict[str, str]:
     if participant is None:
         return {}
     attrs = participant.attributes or {}
-    wanted = list(_PROMPT_ATTRS) + list(_RECORD_ONLY_ATTRS)
-    return {k: v for k in wanted if (v := (attrs.get(k) or "").strip())}
+    # EVERY dialer.* attribute, not a fixed list. The dialler adds fields
+    # without telling anyone - they added seven at once - and a field that
+    # arrives but is not on an allowlist is silently thrown away, which is
+    # indistinguishable from the dialler never sending it.
+    #
+    # This is the STORAGE side only. What reaches the model stays curated, in
+    # _PROMPT_ATTRS: a model handed a lead id will eventually read it out to the
+    # caller, and that must not become automatic.
+    return {k: v for k, raw in attrs.items()
+            if k.startswith("dialer.") and (v := (raw or "").strip())}
 
 
 def _caller_context(dialler: dict[str, str]):

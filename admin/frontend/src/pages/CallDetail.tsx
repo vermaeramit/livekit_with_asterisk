@@ -302,21 +302,39 @@ const DIALLER_FIELDS: Record<string, { label: string; toModel: boolean }> = {
 }
 
 function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
-  const rows = Object.entries(ctx).map(([k, v]) => ({
-    // An unknown key still renders: the dialler added seven fields once without
-    // telling anyone, and the next one should be visible without a deploy.
-    ...(DIALLER_FIELDS[k] ?? { label: k.replace(/^dialer\./, '').replace(/_/g, ' '), toModel: false }),
-    key: k,
-    value: v,
-  }))
+  // Every dialer.* attribute the agent stored, whether this console has ever
+  // heard of it or not. The dialler added seven fields at once without telling
+  // anyone; an eighth should appear here the day it arrives, not the day
+  // someone edits a list. DIALLER_FIELDS only supplies a nicer label and says
+  // whether the model was told — it does not decide what is shown.
+  const known = Object.keys(DIALLER_FIELDS)
+  const rows = Object.entries(ctx)
+    .map(([k, v]) => ({
+      key: k,
+      value: v,
+      label: DIALLER_FIELDS[k]?.label ?? k.replace(/^dialer\./, '').replace(/[_.]/g, ' '),
+      toModel: DIALLER_FIELDS[k]?.toModel ?? false,
+      isNew: !(k in DIALLER_FIELDS),
+    }))
+    // Documented fields in their usual order, then anything new at the bottom
+    // where a change to the feed stands out instead of hiding mid-list.
+    .sort((a, b) => {
+      const ai = known.indexOf(a.key)
+      const bi = known.indexOf(b.key)
+      if (ai === bi) return a.key.localeCompare(b.key)
+      return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi)
+    })
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex items-center justify-between">
         <CardTitle className="flex items-center gap-1.5">
           <PhoneIncoming className="h-3.5 w-3.5 text-muted-foreground" />
           From the dialler
         </CardTitle>
+        <span className="text-2xs text-muted-foreground">
+          {rows.length} field{rows.length === 1 ? '' : 's'}
+        </span>
       </CardHeader>
       <CardBody className="space-y-1.5 text-sm">
         {rows.map((r) => (
@@ -331,13 +349,23 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
                   in prompt
                 </span>
               )}
+              {r.isNew && (
+                <span
+                  className="rounded bg-warning/10 px-1 py-px font-mono text-2xs font-medium text-warning"
+                  title="The dialler is sending this and nothing here has been told what it means. Stored, but not given to the model."
+                >
+                  {r.key.replace(/^dialer\./, '')}
+                </span>
+              )}
             </span>
             <span className="truncate text-right font-medium">{r.value}</span>
           </div>
         ))}
-        <p className="pt-1 text-2xs text-muted-foreground">
-          Identifiers are stored but never shown to the model — a model given a lead ID will
-          eventually read it out to the caller.
+        <p className="pt-1 text-2xs leading-relaxed text-muted-foreground">
+          Everything the dialler sent is stored and shown here. Only the three marked{' '}
+          <span className="font-medium text-primary">in prompt</span> reach the model — a model
+          given a lead ID will eventually read it out to the caller, so new fields are recorded
+          and withheld until someone decides otherwise.
         </p>
       </CardBody>
     </Card>
