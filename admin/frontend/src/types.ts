@@ -197,6 +197,8 @@ export interface AgentConfig {
   silence_timeout_sec: number | null
   silence_prompts: string[] | null
   end_call_marker: string
+  // null = no marker-driven handoff; the tool still works.
+  transfer_marker: string | null
 
   recording_disclosure: string
   stt_provider: string

@@ -54,6 +54,8 @@ class AgentConfig:
     # Written by the model when the conversation is finished. Stripped before
     # TTS and never spoken.
     end_call_marker: str
+    # NULL = no marker-driven handoff on this campaign. The tool still works.
+    transfer_marker: Optional[str]
     # Spoken with the greeting on every call. Recording is unconditional in the
     # dialplan, so this is the notice that makes keeping it lawful - not a
     # per-campaign preference. NOT NULL in the schema for that reason.

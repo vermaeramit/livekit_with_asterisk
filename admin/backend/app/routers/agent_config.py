@@ -31,6 +31,7 @@ FIELDS = (
     "transfer_enabled", "transfer_to", "transfer_message",
     "transfer_confirm", "transfer_confirm_message",
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
+    "transfer_marker",
     "recording_disclosure",
 )
 

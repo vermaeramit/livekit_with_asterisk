@@ -182,6 +182,7 @@ class AgentConfigOut(BaseModel):
     silence_timeout_sec: int | None
     silence_prompts: list[str] | None
     end_call_marker: str
+    transfer_marker: str | None
 
     recording_disclosure: str
 
@@ -243,6 +244,7 @@ class AgentConfigUpdate(BaseModel):
     silence_prompts: list[str] | None = Field(default=None, max_length=5)
     end_call_marker: str | None = Field(default=None, min_length=2,
                                         max_length=20)
+    transfer_marker: str | None = Field(default=None, max_length=20)
 
     # min_length=1, not Optional. Every call is recorded unconditionally by the
     # dialplan, so a campaign with nothing to say here would be recording callers

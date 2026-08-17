@@ -261,6 +261,7 @@ class KBAgent(Agent):
         # Set when the model writes the end-of-call marker. Acted on after the
         # sentence carrying it has finished playing, never during.
         self.end_requested = False
+        self.transfer_requested = False
         # Set when the call was ended deliberately by something other than a
         # limit: today only the silence handler. Feeds calls.end_reason, so
         # "nobody ever spoke" is countable separately from "it finished".
@@ -273,39 +274,57 @@ class KBAgent(Agent):
 
     # ────────────────────── end of call ──────────────────────
 
-    async def tts_node(self, text, model_settings):
-        """Strip the end-of-call marker before anything is synthesised.
+    def _markers(self) -> dict[str, str]:
+        """{marker text -> the flag it sets}, empties dropped."""
+        out = {}
+        if self.cfg.end_call_marker:
+            out[self.cfg.end_call_marker] = "end_requested"
+        if self.cfg.transfer_marker and self.cfg.transfer_enabled:
+            out[self.cfg.transfer_marker] = "transfer_requested"
+        return out
 
-        The marker cannot simply be searched for in each chunk. An LLM streams
-        its answer in pieces with no regard for token boundaries, so "[EOC]"
+    async def tts_node(self, text, model_settings):
+        """Strip control markers before anything is synthesised.
+
+        A marker cannot simply be searched for in each chunk. An LLM streams its
+        answer in pieces with no regard for token boundaries, so "[EOC]"
         routinely arrives as "[EO" then "C]" - and a naive filter passes both
         through, leaving the caller listening to "bracket E O C".
 
-        So a tail is held back: anything that could still turn into the marker
-        is buffered rather than spoken, and released once it is clear it will
-        not. Costs at most a few characters of latency, which is inside a single
-        TTS chunk.
+        So a tail is held back: anything that could still turn into a marker is
+        buffered rather than spoken, and released once it is clear it will not.
+        Costs at most a few characters of latency, which is inside a single TTS
+        chunk. A real "[order]" in the text is untouched, because the held-back
+        prefix is released the moment it stops matching.
 
-        Ending the call is NOT done here. This runs while audio is still being
-        produced; hanging up now would cut off the sentence the marker was
-        attached to. It only raises the flag - see _finish_if_requested.
+        The ACTION is not taken here. This runs while audio is still being
+        produced; hanging up or transferring now would cut off the sentence the
+        marker was attached to. It only raises a flag - see call_watchdog.
         """
-        marker = (self.cfg.end_call_marker or "[EOC]")
+        markers = self._markers()
+        if not markers:
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                yield frame
+            return
+
+        longest = max(len(m) for m in markers)
 
         async def filtered():
             held = ""
             async for chunk in text:
                 buf = held + chunk
-                if marker in buf:
-                    self.end_requested = True
-                    buf = buf.replace(marker, "")
-                # Keep back anything that is still a possible prefix of the
+                for marker, flag in markers.items():
+                    if marker in buf:
+                        setattr(self, flag, True)
+                        buf = buf.replace(marker, "")
+                # Keep back anything that is still a possible prefix of ANY
                 # marker. Only the longest such suffix - holding more would
                 # delay speech for no reason.
                 held = ""
-                for i in range(1, min(len(marker), len(buf) + 1)):
-                    if buf.endswith(marker[:i]):
-                        held = buf[-i:]
+                for i in range(1, min(longest, len(buf)) + 1):
+                    tail = buf[-i:]
+                    if any(m.startswith(tail) for m in markers):
+                        held = tail
                 buf = buf[:len(buf) - len(held)] if held else buf
                 if buf:
                     yield buf
@@ -365,6 +384,15 @@ class KBAgent(Agent):
         Args:
             reason: A short note on why the handoff is needed, for the call log.
         """
+        return await self.request_transfer(context.session, reason, context)
+
+    async def request_transfer(self, session, reason: str, context=None) -> str:
+        """The whole handoff flow, reachable from the tool AND the marker.
+
+        One implementation on purpose: a campaign can drive handoff either way,
+        and two copies of the confirmation gate is how one of them ends up
+        without it.
+        """
         if not self.cfg.transfer_enabled:
             return ("Transfer is disabled. Tell the caller to call back during "
                     "office hours.")
@@ -376,21 +404,20 @@ class KBAgent(Agent):
         #
         # Returning instead of transferring hands control back to the model,
         # which asks and waits. The caller's answer is a normal turn, after
-        # which the model calls this again - and by then the flag is set.
+        # which the model asks again - and by then the flag is set.
         if self.cfg.transfer_confirm and not self.transfer_asked:
             self.transfer_asked = True
             ask = (self.cfg.transfer_confirm_message
                    or "Main aapko ek sathi se jod rahi hoon. Theek hai?")
-            logger.info("  TOOL transfer_to_human(%r) -> asking first", reason)
+            logger.info("  TRANSFER(%r) -> asking the caller first", reason)
             try:
-                handle = await context.session.say(ask, allow_interruptions=True)
+                handle = await session.say(ask, allow_interruptions=True)
                 await handle.wait_for_playout()
             except Exception:
                 logger.exception("transfer confirmation prompt failed")
             return ("You have asked the caller to confirm. Wait for their "
-                    "answer. If they agree, call this tool again. If they say "
-                    "no or want to continue, carry on helping them and do not "
-                    "call this tool again unless they ask.")
+                    "answer. If they agree, ask for the transfer again. If they "
+                    "say no or want to continue, carry on helping them.")
 
         sip_identity = None
         for p in self.room.remote_participants.values():
@@ -404,17 +431,18 @@ class KBAgent(Agent):
         # Speak the handoff line and let it finish BEFORE the REFER goes out.
         # Without the wait the caller gets abrupt silence and then a stranger.
         msg = self.cfg.transfer_message or "One moment, connecting you now."
+        if context is not None:
+            try:
+                context.disallow_interruptions()
+            except Exception:
+                pass
         try:
-            context.disallow_interruptions()
-        except Exception:
-            pass
-        try:
-            handle = await context.session.say(msg, allow_interruptions=False)
+            handle = await session.say(msg, allow_interruptions=False)
             await handle.wait_for_playout()
         except Exception:
             logger.exception("handoff announcement failed - transferring anyway")
 
-        logger.info("  TOOL transfer_to_human(%r) -> %s  participant=%s",
+        logger.info("  TRANSFER(%r) -> %s  participant=%s",
                     reason, self.cfg.transfer_to, sip_identity)
         lkapi = api.LiveKitAPI(url=_api_url(),
                                api_key=os.environ["LIVEKIT_API_KEY"],
@@ -936,9 +964,17 @@ async def entrypoint(ctx: JobContext):
             if agent_speaking:
                 continue
 
-            # The model asked to finish. Acted on HERE and not in tts_node,
-            # because that runs while audio is still being produced - hanging up
-            # there would cut off the sentence the marker was attached to.
+            # A marker was seen. Acted on HERE and not in tts_node, because that
+            # runs while audio is still being produced - transferring or hanging
+            # up there would cut off the sentence the marker was attached to.
+            if agent.transfer_requested:
+                agent.transfer_requested = False
+                # Same path as the tool, so the confirmation gate applies to
+                # both. With confirmation on, the first marker only asks; the
+                # caller's reply and a second marker are what transfer.
+                await agent.request_transfer(session, "end-of-turn marker")
+                continue
+
             if agent.end_requested:
                 logger.info("end-of-call marker seen - closing call %s", call_id)
                 await _hangup(None)     # a finished conversation is "completed"

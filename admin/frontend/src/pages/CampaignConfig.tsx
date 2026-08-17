@@ -923,6 +923,15 @@ export function CampaignConfig() {
                   hint="Asked, then the caller's reply decides. Only after they agree does the transfer happen."
                 />
               )}
+
+              <TextField
+                label="Transfer marker"
+                value={value.transfer_marker ?? ''}
+                onChange={(v) => set('transfer_marker', v.trim() || null)}
+                placeholder="[TRANSFER]"
+                className="font-mono"
+                hint="Optional. Works like the end-of-call marker: the model writes it, it is never spoken, and the handoff happens once the sentence finishes. Empty means the tool is the only route. Confirmation applies either way."
+              />
             </CardBody>
           </Card>
 

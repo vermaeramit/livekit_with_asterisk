@@ -44,6 +44,12 @@ ALTER TABLE agent_config
 ALTER TABLE agent_config
     ADD COLUMN IF NOT EXISTS end_call_marker TEXT NOT NULL DEFAULT '[EOC]';
 
+-- The same mechanism for handing over. NULL rather than a default, because a
+-- marker the prompt never mentions is harmless but a marker that fires is not:
+-- transfer is opt-in per campaign, the way the tool is.
+ALTER TABLE agent_config
+    ADD COLUMN IF NOT EXISTS transfer_marker TEXT;
+
 -- A timeout under 3s fires while the caller is drawing breath; over 60s the
 -- call is already lost. Both ends are product decisions, not technical limits.
 ALTER TABLE agent_config
