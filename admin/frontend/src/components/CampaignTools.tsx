@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ChevronLeft, ChevronRight, FlaskConical, Pencil, Plus, Trash2, TriangleAlert, Wrench,
+  ChevronLeft, ChevronRight, FlaskConical, Pencil, Plus, Trash2, TriangleAlert, Wrench, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
-import { Badge, EmptyState, Skeleton } from '@/components/ui/primitives'
+import { Badge, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
@@ -27,10 +27,97 @@ const BLANK = {
   max_response_bytes: 8192,
   response_path: '',
   filler_message: '',
+  error_messages: {} as Record<string, string>,
   enabled: true,
 }
 
 type Draft = typeof BLANK
+
+/**
+ * What to tell the model for each outcome of a tool call.
+ *
+ * Exists because a 404 is usually not a failure. Observed live: a pincode with
+ * no dealers returned 404, the model was handed "the lookup returned an error",
+ * and the caller was told the system was having trouble — when the truth was
+ * "there is no dealer near you, try another pincode". 404, 500 and a timeout
+ * mean three different things to a caller and no single sentence covers them.
+ */
+function ErrorMessages({
+  value,
+  onChange,
+}: {
+  value: Record<string, string>
+  onChange: (v: Record<string, string>) => void
+}) {
+  const rows = Object.entries(value)
+
+  const edit = (i: number, key: string, line: string) => {
+    const next: Record<string, string> = {}
+    rows.forEach(([k, v], j) => {
+      const [nk, nv] = j === i ? [key, line] : [k, v]
+      if (nk) next[nk] = nv
+    })
+    onChange(next)
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label>What to say for each outcome</Label>
+
+      {rows.length === 0 ? (
+        <p className="text-2xs leading-relaxed text-muted-foreground">
+          Nothing set — every non-200 is reported to the model as a generic failure, including a
+          404 that only means “nothing found”.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(([code, line], i) => (
+            <div key={i} className="flex items-start gap-2">
+              <Input
+                value={code}
+                onChange={(e) => edit(i, e.target.value.trim().toLowerCase(), line)}
+                placeholder="404"
+                className="w-28 shrink-0 font-mono"
+              />
+              <Input
+                value={line}
+                onChange={(e) => edit(i, code, e.target.value)}
+                placeholder="Is pincode par koi dealer nahi mila — doosra pincode poochhiye."
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-0.5"
+                aria-label={`Remove ${code}`}
+                onClick={() => onChange(Object.fromEntries(rows.filter((_, j) => j !== i)))}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 pt-1">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={rows.length >= 8}
+          onClick={() => onChange({ ...value, '': '' })}
+        >
+          <Plus className="size-3.5" />
+          Add an outcome
+        </Button>
+        <p className="text-2xs leading-relaxed text-muted-foreground">
+          An HTTP status like <span className="font-mono">404</span>, or{' '}
+          <span className="font-mono">timeout</span>, or{' '}
+          <span className="font-mono">default</span> for anything else. This is an instruction to
+          the model, not a line read aloud — write it as “tell the caller …”.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 // Paged in the database. tool_invocations gains a row for every tool call on
 // every call, so this list is unbounded by nature.
@@ -48,7 +135,7 @@ const ACTIVITY_PAGE_SIZE = 20
 const FIELD_ORDER = [
   'name', 'description', 'method', 'url', 'parameters', 'body_template',
   'auth_header', 'auth_value', 'timeout_ms', 'max_response_bytes',
-  'response_path', 'filler_message',
+  'response_path', 'filler_message', 'error_messages',
 ]
 
 function toDraft(t: CampaignTool): Draft {
@@ -67,6 +154,7 @@ function toDraft(t: CampaignTool): Draft {
     max_response_bytes: t.max_response_bytes,
     response_path: t.response_path ?? '',
     filler_message: t.filler_message ?? '',
+    error_messages: t.error_messages ?? {},
     enabled: t.enabled,
   }
 }
@@ -161,6 +249,9 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
         body_template: draft.body_template.trim() || null,
         response_path: draft.response_path.trim() || null,
         filler_message: draft.filler_message.trim() || null,
+        error_messages: Object.keys(draft.error_messages).length
+          ? draft.error_messages
+          : null,
       }
       // Omitted, not empty: an empty string means "clear the stored secret",
       // and editing a description should not wipe a credential.
@@ -499,6 +590,11 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
             error={fieldErrors.filler_message}
             placeholder="Kripya ek pal rukiye…"
             hint="Spoken only if this tool has not answered within 600ms, and cancelled the moment it does — so a fast lookup stays silent. Saying it every time would turn a 200ms pause into a two-second one. Leave empty for no announcement."
+          />
+
+          <ErrorMessages
+            value={draft.error_messages}
+            onChange={(v) => set('error_messages', v)}
           />
 
           <Toggle

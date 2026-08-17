@@ -121,6 +121,21 @@ def build(spec: dict, call_id: int | None, record: Callable,
     timeout = aiohttp.ClientTimeout(total=(spec.get("timeout_ms") or 2500) / 1000)
     max_bytes: int = spec.get("max_response_bytes") or 8192
     filler: str | None = (spec.get("filler_message") or "").strip() or None
+    errors: dict = spec.get("error_messages") or {}
+
+    def what_to_say(key: str, fallback: str) -> str:
+        """The campaign's words for this outcome, or the built-in ones.
+
+        `key` is an exact status ("404") or "timeout". A 404 from a lookup is
+        usually not a failure at all - it means "nothing found here" - and
+        telling a caller the system is having trouble when the truth is "there
+        is no dealer near you" sends them away for the wrong reason.
+        """
+        for k in (key, "default"):
+            line = (errors.get(k) or "").strip()
+            if line:
+                return line
+        return fallback
 
     async def hold_on() -> None:
         """Say the filler, but only if the tool is still running by then."""
@@ -192,9 +207,10 @@ def build(spec: dict, call_id: int | None, record: Callable,
             # ToolError, not an exception: the model needs something it can say.
             # Raising anything else here ends the turn and the caller hears
             # nothing at all.
-            raise lk_llm.ToolError(
+            raise lk_llm.ToolError(what_to_say(
+                "timeout",
                 "That system did not respond in time. Tell the caller you could "
-                "not fetch it and offer to continue without it.")
+                "not fetch it and offer to continue without it."))
         except Exception as e:
             await done(err=f"{type(e).__name__}: {e}"[:200])
             log.exception("tool %s failed", name)
@@ -213,9 +229,10 @@ def build(spec: dict, call_id: int | None, record: Callable,
 
         if status >= 400:
             log.warning("tool %s -> HTTP %s", name, status)
-            raise lk_llm.ToolError(
+            raise lk_llm.ToolError(what_to_say(
+                str(status),
                 f"The lookup returned an error ({status}). Tell the caller you "
-                "could not retrieve it.")
+                "could not retrieve it."))
 
         try:
             body = toolfmt.extract(json.loads(text), spec.get("response_path"))

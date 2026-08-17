@@ -415,6 +415,8 @@ export interface CampaignTool {
   response_path: string | null
   // Spoken only if the tool is still running after ~600ms.
   filler_message: string | null
+  // Status code (or "timeout"/"default") -> what to tell the model.
+  error_messages: Record<string, string> | null
   enabled: boolean
   updated_at: string
 }

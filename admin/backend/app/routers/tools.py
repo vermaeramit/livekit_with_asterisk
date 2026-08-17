@@ -32,14 +32,14 @@ editor = require_roles("tenant_admin")
 
 COLUMNS = """id, name, description, parameters, method, url, headers,
              auth_header, auth_value_hint, body_template, timeout_ms,
-             max_response_bytes, response_path, filler_message, enabled,
-             updated_at"""
+             max_response_bytes, response_path, filler_message,
+             error_messages, enabled, updated_at"""
 
 
 def _row(r) -> ToolOut:
     d = dict(r)
     # asyncpg hands JSONB back as text unless a codec is registered.
-    for k in ("parameters", "headers"):
+    for k in ("parameters", "headers", "error_messages"):
         if isinstance(d.get(k), str):
             d[k] = json.loads(d[k])
     return ToolOut(**d)
@@ -70,15 +70,16 @@ async def create_tool(campaign_id: int, body: ToolCreate,
                      method, url, headers, auth_header, auth_value_enc,
                      auth_value_hint, body_template, timeout_ms,
                      max_response_bytes, response_path, filler_message,
-                     enabled)
+                     error_messages, enabled)
                 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9,$10,$11,$12,
-                        $13,$14,$15,$16,$17)
+                        $13,$14,$15,$16,$17::jsonb,$18)
                 RETURNING {COLUMNS}""",
             campaign_id, tenant_id, body.name, body.description,
             json.dumps(body.parameters), body.method, body.url,
             json.dumps(body.headers) if body.headers else None,
             body.auth_header, enc, hint, body.body_template, body.timeout_ms,
             body.max_response_bytes, body.response_path, body.filler_message,
+            json.dumps(body.error_messages) if body.error_messages else None,
             body.enabled)
     except asyncpg.UniqueViolationError:
         raise HTTPException(
@@ -102,7 +103,7 @@ async def update_tool(campaign_id: int, tool_id: int, body: ToolUpdate,
     # drift out of step with the values. The first version of this built two
     # fragments and renumbered one against the other, which is a silent
     # wrong-column update waiting to happen.
-    JSON_COLS = ("parameters", "headers")
+    JSON_COLS = ("parameters", "headers", "error_messages")
     pairs: list[tuple[str, object]] = []
     for col, val in body.model_dump(exclude={"auth_value"}).items():
         pairs.append((col, json.dumps(val) if col in JSON_COLS and val is not None

@@ -724,7 +724,32 @@ class ToolBase(BaseModel):
     # Spoken only if the tool has not answered within TOOL_FILLER_AFTER_MS.
     # A filler in front of a fast API makes a short pause into a long one.
     filler_message: str | None = Field(default=None, max_length=200)
+    # {"404": "...", "timeout": "...", "default": "..."} - what to tell the
+    # model for each outcome. A 404 from a lookup is usually not a failure at
+    # all; it means "nothing found here", and the caller deserves to be told
+    # that rather than that the system is having trouble.
+    error_messages: dict[str, str] | None = None
     enabled: bool = True
+
+    @field_validator("error_messages")
+    @classmethod
+    def _known_outcomes(cls, v: dict | None) -> dict | None:
+        if not v:
+            return None
+        out = {}
+        for key, line in v.items():
+            k = str(key).strip().lower()
+            if not re.fullmatch(r"[1-5]\d\d|timeout|default", k):
+                raise ValueError(
+                    f"'{key}' is not an outcome. Use an HTTP status like 404, "
+                    "or the words 'timeout' or 'default'.")
+            line = (line or "").strip()
+            if not line:
+                continue        # blank means "no special wording for this one"
+            if len(line) > 400:
+                raise ValueError("each message must be 400 characters or fewer")
+            out[k] = line
+        return out or None
 
     @field_validator("name")
     @classmethod
