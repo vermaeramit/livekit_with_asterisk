@@ -2355,6 +2355,96 @@ was not a TTS cold start to be engineered around. It was the provider.
 
 ---
 
+## Ending, waiting, handing over (17 Aug 2026)
+
+Four things a call needs that it did not have, plus the bugs each one exposed.
+
+### End of call, and handing over, on a marker
+
+The model writes `[EOC]` or `[TRANSFER]`; the marker is stripped before TTS and
+the action happens once the sentence carrying it has finished playing.
+
+The filter holds back a tail that could still become a marker. This is not
+optional cleverness: an LLM streams without regard for token boundaries, so
+`[EOC]` routinely arrives as `[EO` then `C]`, and a naive filter passes both -
+the caller hears "bracket E O C". With two markers sharing a `[` prefix, a
+chunk ending in `[` must be held until it is clear which, or neither, it
+belongs to. Matching is case-insensitive: asked for `[TRANSFER]`, the model
+wrote `[Transfer]`.
+
+The action deliberately does NOT happen in `tts_node` - audio is still being
+produced there, and hanging up would cut off the sentence.
+
+### The confirmation the agent gave itself
+
+Transfer can ask first, so a caller who says "no, wait" is heard. From a live
+call:
+
+```
+12:14:48  asking the caller first                      <- the tool
+12:14:52  refused, the caller has not answered yet      <- the marker
+12:14:53  end-of-call marker seen - closing call 292
+```
+
+Two routes for one job. The tool asked and set a boolean; the marker, in the
+same response, found it set and transferred - the caller silent throughout. The
+gate now records a counter that **only the caller's own speech advances**, which
+holds however many routes exist. And the transfer tool is removed when a marker
+is configured.
+
+Then the `[EOC]` in that same response hung up on someone waiting to be
+transferred. Nothing the model writes may end a call that is mid-handoff.
+
+The first attempt to remove the tool did nothing at all: it filtered on
+`t.name`, and a method decorated with `@function_tool` is still a function - the
+name lives in the tool info the decorator attaches. Matched nothing, removed
+nothing, raised nothing. The tool list is logged at startup now.
+
+### Silence
+
+N lines, one per timeout, then the call ends as `no_response`. The array's
+length **is** the attempt count - no separate field, because two values that
+must agree eventually do not, and the failure mode is a caller hung up on with
+no warning.
+
+### While a tool runs
+
+A tool call is silence on the line, up to 2500 ms of it. A per-tool line covers
+it - but only if the tool has not answered within 600 ms, and cancelled the
+moment it does. Saying it every time makes things worse: the dealer lookup
+answers in 74 ms, and "कृपया एक पल रुकिए" takes about twenty times that to say.
+Started rather than awaited, so it overlaps the request instead of preceding it.
+
+### A 404 is not a failure
+
+```
+caller gives pincode 485056
+dealer_by_pincode -> HTTP 404
+agent: "अभी dealer की जानकारी नहीं मिल पा रही है"
+```
+
+The lookup worked. The answer was "there are no dealers near you", and the
+caller was sent away for a reason that was not true. Per-tool wording keyed by
+status, `timeout`, or `default`.
+
+Configured, saved, and still ignored: `load_tools` parses JSONB columns back
+from text **by name**, and `error_messages` was not on the list. **Third time** a
+JSONB column has arrived as text in this code path. It never fails loudly - the
+value is a string, whatever reads it quietly does the wrong thing, and the only
+symptom is a feature that appears not to work.
+
+### The prompt was reading JSON aloud
+
+A caller heard `{ "customer_name": "", "uses":` spoken. The instructions asked
+for a FINAL CALL DATA document as the model's reply, and a reply is what gets
+synthesised - while nothing captured it, because there is no tool or column for
+it. Also removed: a reference to a test-ride booking tool that does not exist,
+and one caller's name hardcoded into the cacheable prefix.
+
+`server-configs/prompt-glamourx.md` holds the corrected version.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
