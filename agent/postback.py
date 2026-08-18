@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from datetime import timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger("voice-agent")
 
@@ -166,5 +169,34 @@ def envelope(*, call_row: dict, dialler: dict, extracted: dict,
     return body
 
 
+# Every timestamp in the payload is rendered in this zone. The database stores
+# timestamptz (UTC, correctly) and asyncpg hands back UTC-aware datetimes, so
+# without this the client's API receives 2026-08-17T06:38:22+00:00 for a call
+# that everyone involved thinks happened at 12:08 - and reconciling their
+# records against ours becomes an arithmetic exercise nobody should be doing.
+#
+# The offset is kept in the string rather than stripped. A bare "12:08:22" is
+# ambiguous the moment anything crosses a border or a DST boundary; "+05:30"
+# says exactly what it means and every JSON date parser understands it.
+_TZ_NAME = os.getenv("POSTBACK_TIMEZONE", "Asia/Kolkata")
+try:
+    POSTBACK_TZ = ZoneInfo(_TZ_NAME)
+except Exception:
+    # ZoneInfo needs a tz database. Rocky has one, but a container built from a
+    # slim base may not, and this module failing to import would silently take
+    # every postback with it. IST has never observed DST, so a fixed +05:30 is
+    # not an approximation - it is the same answer.
+    POSTBACK_TZ = timezone(timedelta(hours=5, minutes=30))
+    log.warning("no tz database for %r - using a fixed +05:30", _TZ_NAME)
+
+
 def _iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else v
+    """-> ISO 8601 in POSTBACK_TZ, or the value untouched if it is not a time."""
+    if not hasattr(v, "isoformat"):
+        return v
+    if getattr(v, "tzinfo", None) is None:
+        # A naive datetime from this database is UTC - that is what the column
+        # type means. Assuming local time here would silently shift it by five
+        # and a half hours.
+        v = v.replace(tzinfo=timezone.utc)
+    return v.astimezone(POSTBACK_TZ).isoformat()
