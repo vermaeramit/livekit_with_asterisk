@@ -183,7 +183,11 @@ async def ack_secrets_key(actor: CurrentUser = Depends(superadmin)):
             "acknowledge. Provider keys cannot be decrypted either - check "
             "admin/.env")
 
-    name = actor.name or actor.email
+    # CurrentUser carries email, not name - it is built from the token, and the
+    # token holds what is needed to authorise a request rather than what is
+    # pleasant to display. Stored as text so it survives the user row being
+    # deleted: "who confirmed this" has to outlive them leaving.
+    name = actor.email
     await db.pool().execute(
         """INSERT INTO system_acks (key, fingerprint, acked_by, acked_name)
            VALUES ($1, $2, $3, $4)
