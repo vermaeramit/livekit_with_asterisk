@@ -63,6 +63,14 @@ Check the timer is really armed:
 systemctl list-timers aivoice-backup
 ```
 
+> 🚨 **If it fails with `status=203/EXEC`**, it is SELinux, not permissions.
+> `/srv` is labelled `var_t` on Rocky and systemd may not execute a `var_t`
+> file — `ls -l` shows 755 and looks entirely fine. `ausearch -m avc -ts recent`
+> says so in one line. The unit runs the script through `/bin/sh` for exactly
+> this reason; `chcon -t bin_t` also works but is undone by the next `git pull`,
+> which rewrites the file and hands it the directory's label again. That failure
+> is silent.
+
 ### What the script does that a bare `pg_dump` does not
 
 - **Verifies every dump** by listing it with `pg_restore --list`. A backup nobody

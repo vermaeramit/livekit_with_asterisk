@@ -7,7 +7,21 @@ After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/srv/aivoice/server-configs/backup-db.sh
+# Run THROUGH /bin/sh rather than executing the file directly.
+#
+# /srv is labelled var_t on Rocky, and SELinux will not let systemd (init_t)
+# execute a var_t file. The permissions are 755 and `ls -l` looks perfectly
+# normal, which is what makes the 203/EXEC confusing:
+#
+#   avc: denied { execute } ... scontext=init_t tcontext=var_t
+#
+# chcon -t bin_t on the script fixes it until the next `git pull` rewrites the
+# file, at which point it inherits var_t from the directory again and the
+# backups stop with nobody watching. Moving the script to /usr/local/bin would
+# work, but then it is outside the checkout and a deploy no longer updates it.
+#
+# /bin/sh is bin_t, so systemd may execute it, and it only READS the script.
+ExecStart=/bin/sh /srv/aivoice/server-configs/backup-db.sh
 # Output goes to the journal, so a failure is visible in the same place as
 # everything else on this box: journalctl -u aivoice-backup
 StandardOutput=journal
