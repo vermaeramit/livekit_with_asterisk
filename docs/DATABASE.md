@@ -40,13 +40,16 @@ encrypting them.
 
 ```bash
 # on the server, once
-sudo cp /srv/aivoice/server-configs/systemd/aivoice-backup.{service,timer} \
-        /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now aivoice-backup.timer
+# \cp, not cp: root's cp is aliased to `cp -i` on Rocky, and in a pasted
+# block the NEXT LINE answers the overwrite prompt - so the copy silently does
+# not happen and daemon-reload reloads the old unit.
+\cp -f /srv/aivoice/server-configs/systemd/aivoice-backup.{service,timer} \
+       /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now aivoice-backup.timer
 
 # run it now rather than waiting until 02:30
-sudo systemctl start aivoice-backup
+systemctl start aivoice-backup
 journalctl -u aivoice-backup --no-pager -n 20
 ```
 
