@@ -291,6 +291,14 @@ class KBAgent(Agent):
         self.room = room
         self.tool_calls = 0
         self.last_kb_ms = 0
+        # Which chunks answered the current turn, best score first. Cleared when
+        # the turn is written down, so it never carries into the next one.
+        #
+        # The console has always been able to show this - the endpoint resolves
+        # ids to a filename, heading and page, and the turn renders them with
+        # their scores. Nothing ever filled the column, so the section stayed
+        # hidden and the whole path looked like it did not exist.
+        self.last_kb_hits: list[tuple[int, float]] = []
         self.transferred: tuple[str, str] | None = None
         self.turn_count = 0
         self.prompt_tokens = 0
@@ -564,6 +572,15 @@ class KBAgent(Agent):
             logger.exception("kb search failed")
             return "The knowledge base is unavailable right now."
         self.last_kb_ms = int((time.perf_counter() - t0) * 1000)
+        # Kept per turn rather than per call: a model that searches twice for one
+        # answer used both, and the reader wants to see both. Best score wins on
+        # a repeat - the same chunk twice would also collide as a React key.
+        best: dict[int, float] = {i: sc for i, sc in self.last_kb_hits}
+        for h in hits:
+            cid, score = h["id"], float(h["score"])
+            if score > best.get(cid, -1.0):
+                best[cid] = score
+        self.last_kb_hits = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
         logger.info("  TOOL search_knowledge_base(%r) -> %d hit(s) in %d ms  %s",
                     query, len(hits), self.last_kb_ms,
                     [f"{h['score']:.2f}" for h in hits])
@@ -1499,6 +1516,13 @@ async def entrypoint(ctx: JobContext):
                 if agent.last_kb_ms:
                     extra += f"  kb_tool={agent.last_kb_ms}ms"
                     agent.last_kb_ms = 0
+                if agent.last_kb_hits:
+                    # Two parallel arrays because that is what the column, the
+                    # endpoint and the console already agreed on. Same order.
+                    t["kb_chunk_ids"] = [c for c, _ in agent.last_kb_hits]
+                    t["kb_scores"] = [sc for _, sc in agent.last_kb_hits]
+                    extra += f"  kb_sources={len(agent.last_kb_hits)}"
+                    agent.last_kb_hits = []
                 pending.clear()
 
             if role == "assistant":
