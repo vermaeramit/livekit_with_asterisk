@@ -901,3 +901,33 @@ class PostbackOut(BaseModel):
     created_at: datetime
     sent_at: datetime | None = None
     payload: dict
+
+
+# --- system ------------------------------------------------------------------
+
+class BackupFile(BaseModel):
+    name: str
+    bytes: int
+    at: datetime
+
+
+class BackupStatus(BaseModel):
+    """Read-only view of the nightly database dumps.
+
+    `problem` is the whole point: a page that shows a list of files leaves the
+    reader to work out whether that list is healthy. The newest dump's age
+    answers it, and a timer that is armed but failing every night looks
+    identical to a working one until you check that.
+    """
+    configured: bool
+    problem: str | None = None
+    last_run: datetime | None = None
+    # ok | failed, from the script's own status file
+    last_result: str | None = None
+    last_detail: str | None = None
+    newest_at: datetime | None = None
+    age_hours: float | None = None
+    total_bytes: int = 0
+    disk_free_bytes: int | None = None
+    disk_total_bytes: int | None = None
+    files: list[BackupFile] = []

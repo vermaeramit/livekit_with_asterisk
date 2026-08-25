@@ -3,20 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell,
-  Building2,
-  ChevronDown,
-  KeyRound,
-  LayoutDashboard,
-  LogOut,
-  Megaphone,
-  Menu,
-  Moon,
-  PhoneCall,
-  Radio,
-  Sun,
-  Users2,
-  X,
+  Bell, Building2, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { cn, initials } from '@/lib/utils'
@@ -45,6 +32,9 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/users', label: 'Users', icon: Users2, roles: ['tenant_admin'] },
   // roles: [] means superadmin only - the guard passes superadmin unconditionally
   { kind: 'link', to: '/tenants', label: 'Clients', icon: Building2, roles: [] },
+  // Infrastructure, not a tenant's business - and the disk figures are about
+  // the platform rather than anyone's campaigns.
+  { kind: 'link', to: '/backups', label: 'Backups', icon: Database, roles: [] },
 ]
 
 const ROLE_LABEL: Record<Role, string> = {

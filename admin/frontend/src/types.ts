@@ -459,3 +459,25 @@ export interface Postback {
   sent_at: string | null
   payload: Record<string, unknown>
 }
+
+export interface BackupFile {
+  name: string
+  bytes: number
+  at: string
+}
+
+export interface BackupStatus {
+  configured: boolean
+  // The whole point of the page. A list of files leaves the reader to work out
+  // whether that list is healthy; this says so outright.
+  problem: string | null
+  last_run: string | null
+  last_result: string | null
+  last_detail: string | null
+  newest_at: string | null
+  age_hours: number | null
+  total_bytes: number
+  disk_free_bytes: number | null
+  disk_total_bytes: number | null
+  files: BackupFile[]
+}

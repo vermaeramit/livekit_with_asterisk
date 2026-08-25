@@ -25,6 +25,10 @@ services:
       # volume. Still read-only - the panel serves recordings, it has no
       # business changing them.
       - /var/spool/asterisk/recordings:/data/recordings:ro
+      # Database dumps, read-only. The console shows whether backups are
+      # actually running, which was otherwise only answerable by SSHing in
+      # and running ls - so nobody ever asked until it mattered.
+      - /opt/aivoice/backups:/data/backups:ro
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.

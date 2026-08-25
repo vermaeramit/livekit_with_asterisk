@@ -5,6 +5,7 @@ import { Layout } from '@/components/Layout'
 import { Alerts } from '@/pages/Alerts'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
+import { Backups } from '@/pages/Backups'
 import { Campaigns } from '@/pages/Campaigns'
 import { CampaignConfig } from '@/pages/CampaignConfig'
 import { ChangePassword } from '@/pages/ChangePassword'
@@ -103,6 +104,17 @@ export function App() {
           element={
             <Protected roles={[]}>
               <Tenants />
+            </Protected>
+          }
+        />
+        {/* roles={[]} is superadmin only, same as Clients. Backups are
+            infrastructure - a tenant admin cannot act on them, and the disk
+            figures describe the platform rather than their campaigns. */}
+        <Route
+          path="/backups"
+          element={
+            <Protected roles={[]}>
+              <Backups />
             </Protected>
           }
         />

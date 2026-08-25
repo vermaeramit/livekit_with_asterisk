@@ -11,6 +11,11 @@
 # not a backup - it is a file, and the difference only becomes apparent on the
 # day it matters.
 #
+# A status file is written on EVERY run, success or failure. Without it the
+# directory cannot tell "last night failed" from "last night never happened" -
+# both look like an absent dump - and that distinction is the whole reason
+# anyone looks.
+#
 # ⚠️ This does NOT back up SECRETS_KEY, and that is deliberate. Provider keys,
 # tool auth values and the postback credential are Fernet-encrypted in these
 # rows; the key lives in /opt/aivoice/.env. Keeping both in one directory would
@@ -22,34 +27,57 @@ DIR="${BACKUP_DIR:-/opt/aivoice/backups}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 STAMP=$(date +%Y-%m-%d-%H%M)
 OUT="$DIR/aivoice-$STAMP.dump"
+TMP="$OUT.partial"
+STATUS="$DIR/last-run.json"
+
+RESULT="failed"
+DETAIL="the script exited before finishing"
+BYTES=0
+NAME=""
 
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
-# Written to a temp name and moved only once it verifies, so a dump interrupted
-# half way never sits in the directory looking like a good one.
-TMP="$OUT.partial"
-trap 'rm -f "$TMP"' EXIT
+# One EXIT trap for both jobs: clean up a partial dump, and leave a status file
+# behind whichever way this ends. `set -e` means most failures land here.
+finish() {
+    rm -f "$TMP"
+    KEPT=$(find "$DIR" -name 'aivoice-*.dump' | wc -l)
+    cat > "$STATUS" <<JSON
+{"when":"$(date -Is)","result":"$RESULT","detail":"$DETAIL","file":"$NAME","bytes":$BYTES,"kept":$KEPT,"retention_days":$KEEP_DAYS}
+JSON
+    chmod 600 "$STATUS"
+}
+trap finish EXIT
 
-docker exec postgres pg_dump -U aivoice -Fc -d aivoice > "$TMP"
-
-if ! docker exec -i postgres pg_restore --list < "$TMP" > /dev/null 2>&1; then
-    echo "backup verification FAILED - $TMP is not a readable dump" >&2
+if ! docker exec postgres pg_dump -U aivoice -Fc -d aivoice > "$TMP" 2>/dev/null; then
+    DETAIL="pg_dump failed - is the postgres container running"
+    echo "$DETAIL" >&2
     exit 1
 fi
 
-SIZE=$(stat -c %s "$TMP")
-if [ "$SIZE" -lt 10240 ]; then
+if ! docker exec -i postgres pg_restore --list < "$TMP" > /dev/null 2>&1; then
+    DETAIL="the dump is not readable by pg_restore - not keeping it"
+    echo "$DETAIL" >&2
+    exit 1
+fi
+
+BYTES=$(stat -c %s "$TMP")
+if [ "$BYTES" -lt 10240 ]; then
     # A dump this small means the database answered but had nothing in it.
-    echo "backup is only ${SIZE} bytes - refusing to keep it" >&2
+    DETAIL="only $BYTES bytes - the database answered but is empty"
+    echo "$DETAIL" >&2
+    BYTES=0
     exit 1
 fi
 
 mv "$TMP" "$OUT"
-trap - EXIT
 chmod 600 "$OUT"
-
 find "$DIR" -name 'aivoice-*.dump' -mtime "+$KEEP_DAYS" -delete
 
-echo "backup ok: $OUT ($(numfmt --to=iec "$SIZE" 2>/dev/null || echo "$SIZE bytes"))"
+RESULT="ok"
+DETAIL=""
+NAME="aivoice-$STAMP.dump"
+
+echo "backup ok: $OUT ($(numfmt --to=iec "$BYTES" 2>/dev/null || echo "$BYTES bytes"))"
 echo "kept: $(find "$DIR" -name 'aivoice-*.dump' | wc -l) dumps, $KEEP_DAYS day retention"
