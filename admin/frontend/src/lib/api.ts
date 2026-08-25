@@ -355,7 +355,7 @@ export async function upload<T = unknown>(
  * not public. Downloading it once with the token and playing from a blob is the
  * only way to have both. The caller must revokeObjectURL when it is done.
  */
-export async function authedBlobUrl(path: string): Promise<string> {
+export async function authedBlob(path: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
 
@@ -367,7 +367,18 @@ export async function authedBlobUrl(path: string): Promise<string> {
     })
   }
   if (!res.ok) throw new ApiError(res.status, messageOf(res.status, await parse(res)))
-  return URL.createObjectURL(await res.blob())
+  return res.blob()
+}
+
+/**
+ * The Blob itself, not just a URL, so a caller can check what actually arrived.
+ *
+ * The recording player needs that: a file the server reports as 543 KB that
+ * plays perfectly from a plain HTTP server, and not through this API, is a
+ * delivery problem — and a blob URL alone gives nothing to compare against.
+ */
+export async function authedBlobUrl(path: string): Promise<string> {
+  return URL.createObjectURL(await authedBlob(path))
 }
 
 export function buildQuery(params: Record<string, unknown>): string {

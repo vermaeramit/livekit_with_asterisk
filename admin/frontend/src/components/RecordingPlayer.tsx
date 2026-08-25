@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, Pause, Play, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/primitives'
-import { authedBlobUrl } from '@/lib/api'
+import { authedBlob } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 function clock(seconds: number): string {
@@ -40,12 +40,23 @@ export function RecordingPlayer({
     setLoading(true)
     setError(null)
 
-    authedBlobUrl(`/calls/${callId}/recording`)
-      .then((url) => {
-        if (cancelled) {
-          URL.revokeObjectURL(url)
+    authedBlob(`/calls/${callId}/recording`)
+      .then((blob) => {
+        if (cancelled) return
+        // What arrived, against what the server said it holds. A short blob
+        // decodes as a corrupt stream and the browser only reports "cannot
+        // decode", which sends you looking at the codec - the one place the
+        // fault is not.
+        if (sizeBytes != null && blob.size !== sizeBytes) {
+          setError(
+            `Only ${blob.size.toLocaleString()} of ${sizeBytes.toLocaleString()} ` +
+              'bytes arrived, so the audio is incomplete. The file on the server ' +
+              'is fine — something between it and this page is cutting the ' +
+              'response short.',
+          )
           return
         }
+        const url = URL.createObjectURL(blob)
         revoke = url
         setSrc(url)
       })
