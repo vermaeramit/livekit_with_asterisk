@@ -1102,13 +1102,24 @@ async def entrypoint(ctx: JobContext):
         nonlocal last_activity, silence_attempts
         if not (getattr(ev, "transcript", "") or "").strip():
             return
-        # The only counter the transfer confirmation gate trusts. Incremented
-        # here and nowhere else, so nothing the agent does can advance it.
-        agent.user_turns += 1
+        # Speech of any kind, finished or not, proves somebody is still there.
         last_activity = time.monotonic()
         # Any real speech clears the count. Two unanswered prompts an hour
         # apart are not a caller who has gone away.
         silence_attempts = 0
+        # This event fires for interim transcripts as well - is_final is right
+        # there on it - and the counter was taking every one of them. So a turn
+        # was counted several times over, on fragments of a word rather than on
+        # an answer.
+        #
+        # That matters here because the transfer confirmation gate waits for the
+        # caller to say yes, and it waits by watching this number. Counting the
+        # first syllable of a half-heard reply as consent is not what it is for.
+        if not getattr(ev, "is_final", True):
+            return
+        # The only counter that gate trusts. Incremented here and nowhere else,
+        # so nothing the agent does can advance it.
+        agent.user_turns += 1
 
     async def _hangup(reason: str | None) -> None:
         if reason:
