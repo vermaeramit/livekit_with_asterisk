@@ -180,7 +180,7 @@ Ranked by what happens if nobody acts.
 
 | # | Decision | Why it matters |
 |---|---|---|
-| 1 | **Database backups** | Script and timer exist — see [docs/DATABASE.md](docs/DATABASE.md). Not yet installed on the server, and `SECRETS_KEY` still has to be stored somewhere off this box or the dumps are undecryptable. |
+| 1 | **`SECRETS_KEY` is only on this box** | Nightly backups run and verify themselves ([docs/DATABASE.md](docs/DATABASE.md)), but the key that decrypts every provider credential in them lives in `/opt/aivoice/.env`. A dump without it restores rows nobody can read. It never changes — store it once, elsewhere. |
 | 2 | **`HANDOFF_EXTEN` is empty** | Transfer works end to end — the agent asks, the caller agrees, the REFER goes out — and stops at extension `800`. Needs one queue number from the dialler team. |
 | 3 | **Firewall is off, and the IAX peer is unauthenticated** | `permit=0.0.0.0/0`, `requirecalltoken=no`, `insecure=port,invite`. Fine on an isolated LAN, and a decision that should be made rather than inherited. |
 | 4 | **IAX register credential is `76SERVER:76SERVER`** | Username and password are the same string. |
@@ -306,6 +306,7 @@ console works from a four-character hint.
 | 11 | Admin console — auth, RBAC, tenants, campaigns, KB, analytics, recordings, live monitor, alerting | ✅ |
 | — | Capacity | ✅ **20 concurrent, 0 dropped** (under Docker Asterisk) |
 | — | Dispatch ceiling — root cause was CPU-based load reporting | ✅ |
+| — | Nightly database backups, verified before they are kept | ✅ |
 | — | Asterisk out of Docker — native 20.20.1, SELinux labels, recordings migrated | ✅ |
 | 12.1 | Per-client encrypted provider keys; STT/TTS chosen per campaign | ✅ |
 | 12.2 | Dialler trunk over IAX2; per-call context into the prompt and the database | ✅ |
@@ -322,7 +323,7 @@ Ranked by consequence, not by effort.
 
 | | Work | Why now |
 |---|---|---|
-| 1 | **Install the backup timer** | Written, not running. And store `SECRETS_KEY` off this box — a dump without it restores rows nobody can decrypt. |
+| 1 | **Store `SECRETS_KEY` off this box, and rehearse a restore** | Backups run nightly and verify themselves. Neither of those is worth much until the key is somewhere else and the restore has been done once, into a scratch database. |
 | 2 | **Wire `HANDOFF_EXTEN`** | A caller who asks for a person gets confirmation, a transfer, and then nothing. Blocked on one number from the dialler team. |
 | 3 | **Decide the firewall and IAX authentication** | Currently open, on purpose, on an isolated LAN. It should stay that way by decision rather than by default. |
 | 4 | **A real recording disclosure** | Every call is recorded. Campaign 1 says nothing. |
