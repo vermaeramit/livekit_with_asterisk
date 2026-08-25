@@ -750,7 +750,7 @@ _PROVIDER_HOSTS = {
 }
 
 
-async def _warm_tts(tts) -> None:
+async def _warm_tts(tts, seen: set[str]) -> None:
     """Open the TTS connection while the cached greeting is playing.
 
     The greeting used to do this by accident: it was the first synthesis in the
@@ -769,11 +769,19 @@ async def _warm_tts(tts) -> None:
 
     Failures are ignored on purpose: this is an optimisation, and a TTS that
     cannot be reached here will fail properly and visibly at the first reply.
+
+    `seen` collects this synthesis's request ids so the metrics handler can tell
+    them apart from the call's own. Without that the warm-up's 1.9 s lands on
+    the greeting's row, and the console reports a greeting that took 1640 ms
+    when it in fact took none at all - a number somebody would eventually spend
+    an afternoon chasing.
     """
     t = time.perf_counter()
     try:
-        async for _ in tts.synthesize("नमस्ते"):
-            pass
+        async for ev in tts.synthesize("नमस्ते"):
+            # Claimed before the stream ends, and the metrics arrive when it
+            # ends - so by the time anybody asks, this id is already spoken for.
+            seen.add(ev.request_id)
     except Exception:
         logger.debug("tts warm-up failed - the first reply will pay for it",
                      exc_info=True)
@@ -1073,6 +1081,9 @@ async def entrypoint(ctx: JobContext):
 
     usage = metrics.UsageCollector()
     pending: dict[str, int] = {}
+    # TTS requests this call made for its own sake rather than for the caller.
+    # Their timings belong to nobody's turn.
+    warm_requests: set[str] = set()
     seq = 0
 
     # ---- guardrails ----
@@ -1292,6 +1303,10 @@ async def entrypoint(ctx: JobContext):
     def _on_metrics(ev):
         try:
             m = ev.metrics
+            if getattr(m, "request_id", None) in warm_requests:
+                # The connection warm-up behind the greeting. Not a turn, not
+                # the caller's, and not the greeting's either.
+                return
             usage.collect(m)
             n = type(m).__name__
             if n == "EOUMetrics":
@@ -1463,7 +1478,7 @@ async def entrypoint(ctx: JobContext):
             # thing standing between the caller and a cold TTS, and it is 7.2
             # seconds long. Nothing else in the call is a better place to spend
             # a connection handshake.
-            asyncio.create_task(_warm_tts(tts_stack))
+            asyncio.create_task(_warm_tts(tts_stack, warm_requests))
             await session.say(opening, audio=cached,
                               allow_interruptions=cfg.allow_interrupt)
         else:
