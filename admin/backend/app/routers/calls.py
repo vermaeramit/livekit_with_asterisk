@@ -200,7 +200,16 @@ async def get_recording(call_id: int, request: Request,
     common = {
         "Accept-Ranges": "bytes",
         "Content-Disposition": f'inline; filename="{filename}"',
-        "Cache-Control": "private, max-age=3600",
+        # no-store, not max-age. A cached recording sounds like a good idea -
+        # they never change - but one poisoned entry then sticks for the full
+        # hour with no way for anyone to clear it. That happened: a zero-length
+        # entry was served from cache with no request reaching the server at
+        # all, the audio decoded as corrupt, and a hard reload did not help
+        # because a JS fetch() uses the default cache mode regardless.
+        #
+        # These are half a megabyte on a LAN, opened one at a time by a human.
+        # Re-fetching costs nothing worth having.
+        "Cache-Control": "private, no-store",
     }
 
     range_header = request.headers.get("range")

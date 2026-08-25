@@ -359,10 +359,21 @@ export async function authedBlob(path: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
 
-  let res = await fetch(BASE + path, { headers })
+  // no-store, and not only because the server says so. A recording came back
+  // as a zero-length blob with no request reaching the server at all - Chrome
+  // was serving a broken cache entry - and Ctrl+Shift+R did not clear it,
+  // because a hard reload governs the page and its assets while a fetch()
+  // started by script afterwards still uses the default cache mode.
+  //
+  // Nothing fetched this way is worth caching: it is a file a person opened
+  // once, on a LAN.
+  const init: RequestInit = { headers, cache: 'no-store' }
+
+  let res = await fetch(BASE + path, init)
   if (res.status === 401 && hasSession() && (await refreshAccessToken())) {
     // safe to retry: nothing was consumed on the first attempt
     res = await fetch(BASE + path, {
+      ...init,
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
     })
   }
