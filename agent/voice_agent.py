@@ -15,6 +15,7 @@ the wrong chunk.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import logging
 import os
@@ -50,6 +51,15 @@ CONFIG_NAME = os.getenv("AGENT_CONFIG", "default")
 MIN_ENDPOINTING = float(os.getenv("MIN_ENDPOINTING_DELAY", "0.25"))
 # The 4.0 default froze calls for 4s when a short closing scored below threshold.
 MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
+# How long we will wait for the STT to call a transcript final once the words
+# have stopped arriving. 0 disables it and restores the old behaviour exactly.
+#
+# Soniox will not send its end token until it agrees the caller has stopped, and
+# on a line carrying constant low noise it may not agree for a very long time -
+# 15926 ms on call 342, where the caller trailed off with "लेकिन।". Its own
+# max_endpoint_delay_ms cannot help: that bounds the wait AFTER cessation is
+# detected, so it never applies to the case that hurts.
+STT_FINAL_CEILING = float(os.getenv("STT_FINAL_CEILING_MS", "2000")) / 1000
 
 
 def prewarm(proc: JobProcess):
@@ -340,6 +350,133 @@ class KBAgent(Agent):
         if self.cfg.transfer_marker and self.cfg.transfer_enabled:
             out[self.cfg.transfer_marker] = "transfer_requested"
         return out
+
+    async def stt_node(self, audio, model_settings):
+        """Hold our own ceiling on how long a transcript may stay provisional.
+
+        The plugin streams interim transcripts continuously and withholds only
+        the FINAL, which it sends when the provider decides the caller has
+        stopped. Everything downstream - the turn, the reply, the whole call -
+        waits on that decision, and on call 342 it took 15926 ms while the
+        finished sentence sat in our hands the entire time.
+
+        No provider setting fixes that: Soniox's max_endpoint_delay_ms bounds
+        the wait after cessation is detected, and the failure is that cessation
+        is never detected. A phone line is rarely silent enough to convince it.
+
+        So the words stop arriving, a clock runs, and if nothing has been called
+        final by the time it expires we promote the last interim ourselves. The
+        provider's own final turns up later and is dropped, because the caller
+        has already been answered.
+
+        The promoted event is a copy of that interim with only its type changed,
+        so language, timings and request_id are exactly what the plugin set. A
+        hand-built event would differ in some field nobody would think to check
+        until something downstream tripped over it.
+
+        Set STT_FINAL_CEILING_MS=0 to turn all of this off and get the stock
+        behaviour back, unchanged, in one restart.
+        """
+        default = Agent.default.stt_node(self, audio, model_settings)
+        if STT_FINAL_CEILING <= 0:
+            async for ev in default:
+                yield ev
+            return
+
+        def text_of(ev) -> str:
+            alts = getattr(ev, "alternatives", None) or []
+            return (getattr(alts[0], "text", "") or "") if alts else ""
+
+        def norm(t: str) -> str:
+            return " ".join(t.split()).strip().lower()
+
+        # Read on a task rather than inline: the ceiling has to be able to fire
+        # while nothing is arriving, and timing out an async generator's
+        # __anext__ cancels it. A queue lets the clock run without touching the
+        # stream that feeds it.
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for ev in default:
+                    await queue.put(ev)
+            except Exception:
+                logger.exception("stt stream failed")
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(pump())
+        pending_interim = None
+        interim_at = 0.0
+        last_text = ""
+        promoted = ""
+
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    if (pending_interim is not None
+                            and time.monotonic() - interim_at > STT_FINAL_CEILING):
+                        try:
+                            final = dataclasses.replace(
+                                pending_interim,
+                                type=lk_stt.SpeechEventType.FINAL_TRANSCRIPT)
+                        except Exception:
+                            # Not a dataclass after some future upgrade. Give up
+                            # on the ceiling rather than take the STT down with
+                            # it - a slow call beats a deaf one.
+                            logger.exception("cannot promote an interim - "
+                                             "ceiling disabled for this call")
+                            pending_interim = None
+                            continue
+                        promoted = text_of(pending_interim)
+                        logger.info("STT ceiling %.1fs reached - answering on the "
+                                    "interim: %r", STT_FINAL_CEILING, promoted[:70])
+                        pending_interim = None
+                        yield final
+                    continue
+
+                if ev is None:
+                    break
+
+                if ev.type == lk_stt.SpeechEventType.INTERIM_TRANSCRIPT:
+                    txt = text_of(ev)
+                    # Identical to what we already answered on: the provider is
+                    # still repeating the same segment. Passing it would reopen
+                    # a turn that has been dealt with.
+                    if promoted and norm(txt) == norm(promoted):
+                        continue
+                    if txt and txt != last_text:
+                        # New words. The caller is still going, so the clock
+                        # restarts - it measures silence, not elapsed time.
+                        last_text = txt
+                        pending_interim = ev
+                        interim_at = time.monotonic()
+                    yield ev
+                    continue
+
+                if ev.type == lk_stt.SpeechEventType.FINAL_TRANSCRIPT:
+                    txt = text_of(ev)
+                    pending_interim = None
+                    last_text = ""
+                    if promoted and norm(txt) == norm(promoted):
+                        logger.info("STT late final dropped - already answered")
+                        promoted = ""
+                        continue
+                    # Longer than what we promoted means the caller carried on
+                    # talking. Let it through: a repeated sentence is a nuisance
+                    # and a lost one is not recoverable.
+                    promoted = ""
+                    yield ev
+                    continue
+
+                yield ev
+        finally:
+            # Cancelled, not awaited. Awaiting inside an async generator's
+            # finally while it is being closed is how you get "async generator
+            # ignored GeneratorExit"; the cancel is enough to end the pump.
+            task.cancel()
 
     async def tts_node(self, text, model_settings):
         """Strip control markers before anything is synthesised.
