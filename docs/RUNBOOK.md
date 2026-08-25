@@ -1,6 +1,8 @@
 # Runbook — Commands, Config, Debugging
 
 Day-to-day operations reference for `10.130.9.243`.
+For the handful of commands that get typed most days, start with
+[COMMANDS.md](COMMANDS.md) — this file is the long version.
 Architecture is in [../README.md](../README.md); the build history is in [PROGRESS.md](PROGRESS.md).
 
 **Everything below assumes you are `root` on the server unless stated otherwise.**

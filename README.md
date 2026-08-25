@@ -7,8 +7,10 @@ Real-time conversation with **STT → LLM → TTS**, live **barge-in**, and a **
 > the phone, answers from a **PDF knowledge base**, **no longer invents facts**, **hands the
 > call to a human** when asked, runs under systemd, and has been load-tested to
 > **10 concurrent calls at full quality**.
-> See [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed step log and
-> [docs/RUNBOOK.md](docs/RUNBOOK.md) for day-to-day commands.
+> [docs/COMMANDS.md](docs/COMMANDS.md) is the short list — deploy, restart,
+> logs, health. [docs/RUNBOOK.md](docs/RUNBOOK.md) is the full operations
+> reference, and [docs/PROGRESS.md](docs/PROGRESS.md) is the build log,
+> including what did not work.
 
 ---
 
@@ -173,7 +175,8 @@ livekit_with_asterisk/
 ├── README.md                  ← this file: architecture, decisions, latency
 ├── .env.example               ← required env vars, no values
 ├── docs/
-│   ├── RUNBOOK.md             ← 🔧 commands, config, debugging — start here day-to-day
+│   ├── COMMANDS.md            ← ⚡ the short list — deploy, restart, logs, health
+│   ├── RUNBOOK.md             ← 🔧 the long version: config, debugging, recovery
 │   ├── PROGRESS.md            ← full build log, including what did NOT work
 │   └── SERVER.md              ← inventory, ports, credentials map
 ├── agent/
