@@ -9,6 +9,7 @@ that can trigger a restore is a page that can trigger a restore by accident.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -16,10 +17,11 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from .. import audit, db
 from ..deps import CurrentUser, require_roles
-from ..schemas import BackupStatus, BackupFile
+from ..schemas import BackupFile, BackupStatus, SystemAck
 
 log = logging.getLogger("admin-api")
 
@@ -35,6 +37,37 @@ STALE_AFTER_HOURS = float(os.getenv("BACKUP_STALE_HOURS", "36"))
 # Infrastructure, so superadmin only. A tenant admin has no way to act on it and
 # the disk figures are about the platform, not their campaigns.
 superadmin = require_roles()
+
+# What was acknowledged, identified without being stored. A truncated SHA-256 of
+# SECRETS_KEY: not the key, not reversible, and different the moment the key is
+# rotated - which is exactly when a stale "yes, it is backed up" becomes
+# dangerous rather than merely wrong.
+SECRETS_KEY_ACK = "secrets_key_stored_offsite"
+
+
+def _secrets_fingerprint() -> str | None:
+    raw = (os.getenv("SECRETS_KEY") or "").strip()
+    if not raw:
+        return None
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+async def _load_ack(key: str, fingerprint: str | None) -> SystemAck | None:
+    row = await db.pool().fetchrow(
+        "SELECT key, fingerprint, acked_name, acked_at FROM system_acks "
+        "WHERE key = $1", key)
+    if row is None:
+        return None
+    return SystemAck(
+        key=row["key"],
+        acked_by=row["acked_name"],
+        acked_at=row["acked_at"],
+        # Both known and different: the key has been rotated since. If either is
+        # unknown we cannot claim staleness, and claiming it wrongly would nag
+        # somebody who has done nothing wrong.
+        stale=bool(fingerprint and row["fingerprint"]
+                   and fingerprint != row["fingerprint"]),
+    )
 
 
 @router.get("/backups", response_model=BackupStatus)
@@ -118,6 +151,7 @@ async def backups(user: CurrentUser = Depends(superadmin)):
     return BackupStatus(
         configured=True,
         problem=problem,
+        secrets_key_ack=await _load_ack(SECRETS_KEY_ACK, _secrets_fingerprint()),
         last_run=last_run,
         last_result=last_result,
         last_detail=last_detail,
@@ -128,3 +162,42 @@ async def backups(user: CurrentUser = Depends(superadmin)):
         disk_total_bytes=disk_total,
         files=dumps,
     )
+
+
+@router.post("/acks/secrets-key", response_model=SystemAck)
+async def ack_secrets_key(actor: CurrentUser = Depends(superadmin)):
+    """Record that SECRETS_KEY is stored somewhere other than this server.
+
+    A statement by a person, not a check. Nothing here can look inside a
+    password manager - and pretending to would be worse than admitting it,
+    because a green tick nobody earned is read as proof.
+
+    Re-acknowledging after a rotation simply overwrites the row: the fingerprint
+    moves with it, which is the point.
+    """
+    fp = _secrets_fingerprint()
+    if not fp:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "SECRETS_KEY is not set on this service, so there is nothing to "
+            "acknowledge. Provider keys cannot be decrypted either - check "
+            "admin/.env")
+
+    name = actor.name or actor.email
+    await db.pool().execute(
+        """INSERT INTO system_acks (key, fingerprint, acked_by, acked_name)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (key) DO UPDATE
+              SET fingerprint = EXCLUDED.fingerprint,
+                  acked_by    = EXCLUDED.acked_by,
+                  acked_name  = EXCLUDED.acked_name,
+                  acked_at    = now()""",
+        SECRETS_KEY_ACK, fp, actor.id, name)
+
+    # In the audit trail like any other decision. "Who said the key was safe,
+    # and when" is a question that gets asked exactly once, in a bad week.
+    await audit.record(actor, entity="system", entity_id=SECRETS_KEY_ACK,
+                       action="acknowledge", tenant_id=None, campaign_id=None,
+                       changes={"fingerprint": fp})
+
+    return await _load_ack(SECRETS_KEY_ACK, fp)

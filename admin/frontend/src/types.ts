@@ -480,4 +480,14 @@ export interface BackupStatus {
   disk_free_bytes: number | null
   disk_total_bytes: number | null
   files: BackupFile[]
+  secrets_key_ack: SystemAck | null
+}
+
+export interface SystemAck {
+  key: string
+  acked_by: string | null
+  acked_at: string | null
+  // The key has been rotated since this was given, so the confirmation no
+  // longer describes anything real.
+  stale: boolean
 }

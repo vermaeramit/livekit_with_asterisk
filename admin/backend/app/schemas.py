@@ -931,3 +931,20 @@ class BackupStatus(BaseModel):
     disk_free_bytes: int | None = None
     disk_total_bytes: int | None = None
     files: list[BackupFile] = []
+    # Whether anyone has confirmed SECRETS_KEY is stored off this box. Nothing
+    # here can verify that; see migration 022.
+    secrets_key_ack: "SystemAck | None" = None
+
+
+class SystemAck(BaseModel):
+    """Someone confirming a thing the server cannot check for itself.
+
+    `stale` means the acknowledgement no longer describes reality - the
+    fingerprint of what is running has moved since it was given. An
+    acknowledgement that outlives its subject is worse than none, because it
+    reads as reassurance.
+    """
+    key: str
+    acked_by: str | None = None
+    acked_at: datetime | None = None
+    stale: bool = False

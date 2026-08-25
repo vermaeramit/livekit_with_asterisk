@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Database, HardDrive, KeyRound, TriangleAlert } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, Skeleton } from '@/components/ui/primitives'
+import { useToast } from '@/components/ui/toast'
 import { api } from '@/lib/api'
 import { formatDateTime, formatRelative } from '@/lib/utils'
 import type { BackupStatus } from '@/types'
@@ -13,10 +15,21 @@ function size(bytes: number | null | undefined): string {
 }
 
 export function Backups() {
+  const qc = useQueryClient()
+  const toast = useToast()
   const q = useQuery({
     queryKey: ['backups'],
     queryFn: () => api<BackupStatus>('/system/backups'),
     refetchInterval: 60_000,
+  })
+
+  const ack = useMutation({
+    mutationFn: () => api('/system/acks/secrets-key', { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backups'] })
+      toast.success('Recorded', 'The warning stays gone until SECRETS_KEY changes.')
+    },
+    onError: (e) => toast.error('Could not record it', (e as Error).message),
   })
 
   if (q.isLoading) {
@@ -106,24 +119,69 @@ export function Backups() {
         </Card>
       ) : null}
 
-      {/* Not something the server can check, and the one thing that would make
-          every dump above useless. It belongs where somebody looking at backups
-          will actually read it. */}
-      <Card className="border-warning/30 bg-warning/5 p-4">
-        <div className="flex items-start gap-2 text-sm">
-          <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          <div>
-            <p className="font-medium">A dump alone cannot restore this system</p>
-            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              Provider keys, tool credentials and the postback secret are encrypted in these
-              dumps. The key that opens them — <span className="font-mono">SECRETS_KEY</span> —
-              is in the server&rsquo;s <span className="font-mono">.env</span>, not in the
-              database. Restore without it and every campaign stops taking calls. It never
-              changes, so store it once somewhere off this box.
-            </p>
+      {/* Nothing here can look inside a password manager, so this is a person's
+          statement rather than a check. It was a permanent warning before, and a
+          warning that can never be satisfied is one people learn to scroll past -
+          taking the real ones with it. */}
+      {s.secrets_key_ack && !s.secrets_key_ack.stale ? (
+        <Card className="p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div>
+              <p className="font-medium">
+                <span className="font-mono">SECRETS_KEY</span> is stored off this server
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Confirmed by {s.secrets_key_ack.acked_by ?? 'someone'}
+                {s.secrets_key_ack.acked_at
+                  ? ` on ${formatDateTime(s.secrets_key_ack.acked_at)}`
+                  : ''}
+                . This is a statement, not a check — and it will come back on its own if
+                the key is ever rotated.
+              </p>
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      ) : (
+        <Card className="border-warning/30 bg-warning/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {s.secrets_key_ack?.stale
+                  ? 'SECRETS_KEY has changed since it was last stored'
+                  : 'A dump alone cannot restore this system'}
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {s.secrets_key_ack?.stale ? (
+                  <>
+                    The key on this server no longer matches the one confirmed as stored.
+                    Every dump taken since is encrypted with the new key — store that one
+                    too, then confirm again.
+                  </>
+                ) : (
+                  <>
+                    Provider keys, tool credentials and the postback secret are encrypted in
+                    these dumps. The key that opens them —{' '}
+                    <span className="font-mono">SECRETS_KEY</span> — is in the server&rsquo;s{' '}
+                    <span className="font-mono">.env</span>, not in the database. Restore
+                    without it and every campaign stops taking calls.
+                  </>
+                )}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-3"
+                loading={ack.isPending}
+                onClick={() => ack.mutate()}
+              >
+                I have stored it somewhere else
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
