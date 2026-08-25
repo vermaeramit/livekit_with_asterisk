@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import {
   Bell, Building2, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
 } from 'lucide-react'
+import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
 import { cn, initials } from '@/lib/utils'
 import type { Role } from '@/types'
@@ -246,6 +247,10 @@ export function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Fixed, so it sits above everything and does not shift the layout when
+          it appears. Held back 300ms - see TopProgress. */}
+      <TopProgress />
+
       {/* desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
         <div className="flex h-16 items-center px-5">

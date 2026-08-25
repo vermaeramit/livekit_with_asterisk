@@ -150,3 +150,11 @@
     background: transparent;
   }
 }
+
+/* The indeterminate sweep for TopProgress. Deliberately indeterminate: the app
+   has no idea how long a request will take, and a bar that fills to 90% and
+   stops is a lie told smoothly. */
+@keyframes topbar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}

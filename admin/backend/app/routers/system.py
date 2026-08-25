@@ -47,9 +47,21 @@ async def backups(user: CurrentUser = Depends(superadmin)):
                     "volumes",
         )
 
-    files = sorted(
-        (p for p in BACKUP_DIR.glob("aivoice-*.dump") if p.is_file()),
-        key=lambda p: p.stat().st_mtime, reverse=True)
+    # A 500 here would have read, from the console, as "no backups exist" - the
+    # page cannot tell an empty directory from one it may not open, and the
+    # difference is the entire point of looking.
+    try:
+        files = sorted(
+            (p for p in BACKUP_DIR.glob("aivoice-*.dump") if p.is_file()),
+            key=lambda p: p.stat().st_mtime, reverse=True)
+    except PermissionError:
+        return BackupStatus(
+            configured=False,
+            problem=f"{BACKUP_DIR} cannot be read by this service. The backup "
+                    "script sets 755 on the directory and 600 on the dumps - an "
+                    "older run may have left it at 700. Re-run the backup, or "
+                    "chmod 755 /opt/aivoice/backups",
+        )
 
     dumps = [
         BackupFile(
@@ -66,6 +78,9 @@ async def backups(user: CurrentUser = Depends(superadmin)):
     last_run = None
     status_file = BACKUP_DIR / "last-run.json"
     if status_file.is_file():
+        # Wrapped, because an unreadable status file is a permissions detail and
+        # not a reason to fail the whole page - the dumps above are the answer
+        # people came for.
         try:
             d = json.loads(status_file.read_text())
             last_result = d.get("result")

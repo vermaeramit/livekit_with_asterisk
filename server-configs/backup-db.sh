@@ -36,7 +36,14 @@ BYTES=0
 NAME=""
 
 mkdir -p "$DIR"
-chmod 700 "$DIR"
+# 755 on the DIRECTORY, 600 on the dumps.
+#
+# The console lists these files - names, sizes, timestamps - so it needs to read
+# the directory. It has no business reading the dumps themselves, and does not:
+# admin-api runs as a non-root user, so 600 keeps every dump unreadable to it
+# while `stat` still works. 700 here made the whole page fail with a permission
+# error that looked exactly like "no backups exist".
+chmod 755 "$DIR"
 
 # One EXIT trap for both jobs: clean up a partial dump, and leave a status file
 # behind whichever way this ends. `set -e` means most failures land here.
@@ -46,7 +53,9 @@ finish() {
     cat > "$STATUS" <<JSON
 {"when":"$(date -Is)","result":"$RESULT","detail":"$DETAIL","file":"$NAME","bytes":$BYTES,"kept":$KEPT,"retention_days":$KEEP_DAYS}
 JSON
-    chmod 600 "$STATUS"
+    # Readable, unlike the dumps: it holds a timestamp, a result and a byte
+    # count, and the console cannot report a failed run without it.
+    chmod 644 "$STATUS"
 }
 trap finish EXIT
 

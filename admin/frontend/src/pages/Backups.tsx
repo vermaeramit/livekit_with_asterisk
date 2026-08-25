@@ -28,8 +28,39 @@ export function Backups() {
     )
   }
 
+  // Without this the page renders an empty shell when the request fails: every
+  // figure reads "—", the list says "nothing here yet", and it looks exactly
+  // like a server with no backups. That is the same failure the recording
+  // player had - a component that cannot say why it is empty.
+  if (q.isError || !q.data) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
+        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+          <Database className="h-5 w-5 text-muted-foreground" />
+          Backups
+        </h1>
+        <Card className="border-danger/30 bg-danger/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+            <div>
+              <p className="font-medium">Could not read the backup status</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {(q.error as Error | null)?.message ?? 'the request returned nothing'}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                This says nothing about whether backups are running — only that this page
+                cannot see them. Check on the server:{' '}
+                <span className="font-mono">ls -la /opt/aivoice/backups</span>
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
   const s = q.data
-  const healthy = s?.configured && !s.problem
+  const healthy = s.configured && !s.problem
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
