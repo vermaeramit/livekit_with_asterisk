@@ -54,6 +54,34 @@ export function RecordingPlayer({
     }
   }, [callId])
 
+  /**
+   * Read the duration, forcing it out of the browser if necessary.
+   *
+   * Chrome reports `Infinity` for an Ogg stream until it has seen the last
+   * page, and a blob URL is no exception. The file is fine - ffprobe reads
+   * 3:35 from the same bytes - but the player showed "0:00 / 0:00" and the
+   * scrubber did nothing, because clock() renders a non-finite number as 0:00.
+   *
+   * The fix is the standard one: seek far past the end, which makes the browser
+   * resolve the real duration, then seek back. Harmless when the duration was
+   * already known, which is why it is not conditional on the browser.
+   */
+  function onMetadata(el: HTMLAudioElement) {
+    if (Number.isFinite(el.duration) && el.duration > 0) {
+      setTotal(el.duration)
+      return
+    }
+    const settle = () => {
+      if (!Number.isFinite(el.duration)) return
+      el.removeEventListener('durationchange', settle)
+      el.currentTime = 0
+      setNow(0)
+      setTotal(el.duration)
+    }
+    el.addEventListener('durationchange', settle)
+    el.currentTime = 1e101
+  }
+
   function toggle() {
     const el = audio.current
     if (!el) return
@@ -100,9 +128,22 @@ export function RecordingPlayer({
         ref={audio}
         src={src ?? undefined}
         preload="metadata"
-        onLoadedMetadata={(e) => setTotal(e.currentTarget.duration)}
-        onTimeUpdate={(e) => setNow(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => onMetadata(e.currentTarget)}
+        onTimeUpdate={(e) => {
+          // Guarded because forcing the duration below seeks to 1e101 first,
+          // and that fires a timeupdate with a nonsense position on the way.
+          const t = e.currentTarget.currentTime
+          if (Number.isFinite(t) && t < 1e6) setNow(t)
+        }}
         onEnded={() => setPlaying(false)}
+        // Without this a codec the browser cannot decode leaves a player that
+        // looks fine, does nothing, and says nothing about why.
+        onError={() =>
+          setError(
+            'The browser could not decode this recording. The file is on the ' +
+              'server and downloads fine — try the download button.',
+          )
+        }
       />
 
       <div className="flex items-center gap-3">
