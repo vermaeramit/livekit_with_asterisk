@@ -169,7 +169,7 @@ async def upload_document(campaign_id: int,
         # Trust the bytes, not the extension
         with staged.open("rb") as fh:
             head = fh.read(5)
-        if base.lower().endswith(".pdf"):
+        if filename.lower().endswith(".pdf"):
             if head[:5] != b"%PDF-":
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                     "this does not look like a PDF")
