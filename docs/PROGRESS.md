@@ -2546,8 +2546,121 @@ one thing that was never wrong.
 
 ---
 
+## The wait that was not ours, and the greeting that was (25 Aug 2026)
+
+Reported as "Turn detection kaafi fluctuate kar raha hai". It was not the turn
+detection, and finding that out took five read-only probes of the installed
+livekit package rather than any change to our own code.
+
+### Reading the library instead of guessing at it
+
+Twice before, an API was assumed and the traceback arrived on a live call. So
+this ran the other way round: `tools/probe-*.py` print what is actually
+installed - `say()`'s signature, the events a session emits and their fields,
+the soniox options, and the plugin's own source around endpointing. They are
+kept because the next question of this kind starts the same way.
+
+What they established, in order:
+
+- `eou_ms - stt_ms` was a near-constant 370-380 ms across every turn. Our turn
+  detection never fluctuated at all. The whole spread lived in `stt_ms`.
+- `max_endpoint_delay_ms` **is** put on the wire - the plugin sends it
+  unconditionally. So "we never sent it" was not the answer.
+- The plugin emits a final transcript **only** on an end token from Soniox. The
+  words arrive before that and sit in an accumulator. Soniox had the sentence;
+  it had not yet agreed the caller had stopped talking.
+- Zero reconnects all day, so the connection was not it either.
+- `transcription_delay = max(last_final_transcript_time - last_speaking_time, 0)`
+  and the endpointing sleep is `delay + (last_speaking_time - now)`. That is
+  negative once the wait exceeds the delay, so **livekit was committing the turn
+  the instant it could**. No setting on our side could have made it earlier;
+  `max_delay` can only ever make it later. That closed the question by
+  arithmetic rather than by opinion.
+
+### One knob, never set
+
+`endpoint_sensitivity` - "how readily the model emits speech endpoints" - was
+`NULL`. `endpoint_latency_adjustment_level`, set to 3 on 18 Aug, works *after*
+cessation is detected and does nothing to detect it, which is exactly why it
+improved the median by 380 ms and left the tail untouched.
+
+Set to `0.5`:
+
+| | before | after |
+|---|---|---|
+| worst `stt_ms` | **6684 ms** | **1219 ms** |
+| median | ~1550 ms | **~325 ms** |
+
+The five-to-seven second turns are gone. `eou_ms` now stops dead on 1500-1501,
+which is `MAX_ENDPOINTING` finally acting as a ceiling - it never could before,
+because Soniox had not answered by the time it expired. The feared cost, one
+reply split across two turns, did not materialise: a 16-turn booking ran clean.
+
+The slowest leg is now our own EOU model, around 950 ms. That is a smaller and
+different problem, and `preemptive_generation` addresses it.
+
+### One fix had quietly undone another
+
+Two of five test calls were abandoned before the caller heard anything. Their
+greetings took 3946 ms and 6835 ms; a good run is ~1470 ms, against 619-701 ms
+for every later turn in the same call.
+
+The journal had been saying why on every call: `warm_done=False`. The provider
+warm-up takes ~820 ms and the session starts at ~390 ms, so it finishes after
+the greeting has already been asked for. Its docstring claimed it "finishes
+inside time that was already being spent" - true when startup took four seconds.
+Removing `import kb` cut startup to 390 ms and made that sentence false without
+touching it. The warm-up still helps the LLM leg, which nothing needs for
+several more seconds. It never helped the greeting.
+
+The greeting is the same sentence, in the same voice, on every call, at the one
+moment that cannot absorb a delay. `agent/greeting_cache.py` renders it once to
+a wav and hands the frames to `say(audio=...)`; the text still reaches the
+transcript and the model unchanged.
+
+| call | greeting `tts_ttfb_ms` |
+|---|---|
+| 337 - cache empty | 1629 |
+| 338 - cache warm | **none: no request was made** |
+
+The file name is a hash of text, provider, model and voice, so editing the
+greeting or the voice in the console renders new audio on its own. There is
+nothing to clear. A call that finds the cache empty speaks the ordinary way and
+renders afterwards, so no caller ever waits for it, and every failure path falls
+back to synthesising.
+
+### Two bugs found by reading, not by failing
+
+**The silence watchdog talked to calls that had ended.** It exited on a limit or
+a transfer and on nothing else - neither of which happens when somebody simply
+hangs up. Every ended call left two `RuntimeError: AgentSession isn't running`
+tracebacks. Nobody heard it, which is the only reason it went unnoticed, and a
+log with routine tracebacks in it is a log people stop reading.
+
+**A caller's turn was counted several times.** `user_input_transcribed` fires for
+interim transcripts too - `is_final` is a field on the event - and the counter
+took every one. The transfer confirmation gate waits for the caller to answer by
+watching that number, so it could be satisfied by the first fragment of a
+half-heard word. It looked like it was working, and on a busy line it usually
+would.
+
+### Left deliberately
+
+The gate has a second weakness, seen on call 336: the caller asked
+**"क्यों?"**, the model explained and transferred in the same response, and the
+gate allowed it because the caller had *spoken*, not because they had *agreed*.
+Fixing it means the gate reading the reply for a yes or a no, which changes how
+transfer behaves and needs the word lists agreed first. Deferred by the user.
+
+---
+
 ## ⏭️ Next
 
+- **Transfer gate reads consent, not just speech** - "क्यों?" currently opens it
+  (word lists to be agreed - see 25 Aug)
+- **`preemptive_generation`** - the EOU model is now the slowest leg at ~950 ms
+- Move off `min/max_endpointing_delay`, deprecated in 1.6.7 for
+  `turn_handling=TurnHandlingOptions(...)`
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
   once, 3 calls lost. TTS held; LLM did not
 - Re-measure latency at 20 once Sarvam credits are restored
