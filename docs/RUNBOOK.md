@@ -1067,7 +1067,32 @@ firewall-cmd --reload
 
 ---
 
-## 9. Restart order
+## 9. Restarting
+
+### Just one thing
+
+```bash
+# agent workers — after any agent/ change. DROPS CALLS IN PROGRESS.
+systemctl restart aivoice-agent@{1,2,3,4,5,6}
+
+# the console — after any admin/ change. Never touches calls: it is a separate
+# compose project that only joins the existing network.
+docker compose -f /srv/aivoice/admin/docker-compose.yml up -d --build
+
+# Asterisk — after a dialplan change
+systemctl restart asterisk
+
+# LiveKit / livekit-sip
+cd /opt/aivoice && docker compose restart livekit sip
+```
+
+The usual deploy, with a guard so a live call is never cut off:
+
+```bash
+cd /srv/aivoice && git pull &&   asterisk -rx "core show channels" | grep -q "^0 active calls" &&   docker compose -f admin/docker-compose.yml up -d --build &&   systemctl restart aivoice-agent@{1,2,3,4,5,6} && sleep 8 &&   systemctl is-active aivoice-agent@{1,2,3,4,5,6}
+```
+
+### Bringing the stack up by hand
 
 Dependencies matter — Redis and LiveKit must be up before livekit-sip.
 
@@ -1077,16 +1102,59 @@ docker compose up -d postgres redis
 sleep 5
 docker compose up -d livekit
 sleep 5
-docker compose up -d sip asterisk
+docker compose up -d sip
 sleep 5
 docker compose ps
 
-# then the agent, and wait for "registered worker"
-cd /srv/aivoice/agent && source /opt/aivoice/agent/.venv/bin/activate
-export LIVEKIT_URL=ws://127.0.0.1:7880
-set -a; source /opt/aivoice/.env; set +a
-python voice_agent.py start
+systemctl start asterisk                        # native since 10 Aug, not a container
+systemctl start aivoice-agent@{1,2,3,4,5,6}
 ```
 
 `live-restore: true` in `/etc/docker/daemon.json` means restarting the Docker **daemon**
 does not drop running containers — but `docker compose down` does drop calls.
+
+### A full server reboot
+
+The first reboot of this box lost the LiveKit SIP trunk: Redis had no persistence
+and came back empty, so every call rang and died with nothing in any log to say
+why. `save 60 1` fixed that — but **check before rebooting, not after**. A
+service that is not `enabled` simply will not be there, and the symptom is a
+phone that does not answer.
+
+```bash
+# 1. will it all come back on its own?
+systemctl is-enabled asterisk docker
+for i in 1 2 3 4 5 6; do printf "agent@%s: %s
+" $i "$(systemctl is-enabled aivoice-agent@$i)"; done
+docker inspect --format '{{.Name}} -> {{.HostConfig.RestartPolicy.Name}}' $(docker ps -q)
+docker exec redis redis-cli config get save     # must NOT be empty
+docker exec redis ls -la /data                  # dump.rdb must exist
+asterisk -rx "core show channels" | tail -2
+```
+
+Everything should read `enabled` / `unless-stopped`, and `save` should be set.
+
+```bash
+# 2. force a fresh dump, then go. `save 60 1` only writes when something
+#    changed, and the SIP trunk changes about once a month.
+docker exec redis redis-cli bgsave && sleep 2 && docker exec redis ls -la /data && reboot
+```
+
+```bash
+# 3. after it comes back
+systemctl is-active asterisk docker
+for i in 1 2 3 4 5 6; do printf "agent@%s: %s
+" $i "$(systemctl is-active aivoice-agent@$i)"; done
+docker ps --format '{{.Names}}	{{.Status}}'
+docker exec redis redis-cli dbsize              # 0 means the trunk is gone - see §2
+asterisk -rx "iax2 show peers"                  # the dialler re-registers itself
+journalctl -u "aivoice-agent@*"   --since "$(systemctl show -p ActiveEnterTimestamp --value aivoice-agent@1)"   --no-pager | grep -c "registered worker"      # expect 6
+```
+
+Verified clean on 25 Aug 2026: `dbsize` 7, the dialler's IAX peer back at
+`OK (2 ms)` without anyone touching it, 6/6 workers registered.
+
+> 🚨 If Asterisk does not start after a reboot, check SELinux **first**:
+> `ausearch -m avc -ts recent | grep asterisk`. A source build leaves
+> `var_lib_t` where the policy expects `asterisk_var_lib_t`, and the error it
+> prints ("ASTdb initialization failed") names neither.
