@@ -32,6 +32,13 @@ TIMEOUT = float(os.getenv("POSTBACK_TIMEOUT_SEC", "15"))
 # hundred connections to an API that has just come back up.
 BATCH = int(os.getenv("POSTBACK_BATCH", "20"))
 
+# Stored tool responses age out. Not deleted - the invocation row IS the audit
+# trail and must survive - only the body is nulled. A dealer list does not
+# matter; the next tool somebody enables might answer with a phone number and an
+# address, and this is what stops that sitting in the database forever.
+RESPONSE_RETENTION_DAYS = int(os.getenv("TOOL_RESPONSE_RETENTION_DAYS", "30"))
+PURGE_EVERY = 3600.0
+
 _task: asyncio.Task | None = None
 
 
@@ -123,11 +130,38 @@ async def sweep_once() -> int:
     return len(rows)
 
 
+async def purge_old_responses() -> int:
+    """Null the bodies of tool responses past their retention. Never raises."""
+    if RESPONSE_RETENTION_DAYS <= 0:
+        return 0
+    try:
+        result = await db.pool().execute(
+            f"""UPDATE tool_invocations SET response = NULL
+                 WHERE response IS NOT NULL
+                   AND created_at < now() - interval '{RESPONSE_RETENTION_DAYS} days'""")
+        n = int(result.split()[-1]) if result else 0
+        if n:
+            log.info("purged %d stored tool responses older than %d days",
+                     n, RESPONSE_RETENTION_DAYS)
+        return n
+    except Exception:
+        log.exception("tool response purge failed")
+        return 0
+
+
 async def _loop() -> None:
-    log.info("postback sweeper started (every %.0fs)", SWEEP_EVERY)
+    log.info("postback sweeper started (every %.0fs), tool responses kept %d days",
+             SWEEP_EVERY, RESPONSE_RETENTION_DAYS)
+    last_purge = 0.0
     while True:
         try:
             await sweep_once()
+            # Hourly, on the sweeper's own clock rather than a second task. One
+            # loop that can be seen to be alive beats two that cannot.
+            now = asyncio.get_running_loop().time()
+            if now - last_purge > PURGE_EVERY:
+                last_purge = now
+                await purge_old_responses()
         except Exception:
             # Never let one bad pass stop the loop. A sweeper that dies quietly
             # looks exactly like a client API that never receives anything.

@@ -81,7 +81,33 @@ def transcript_text(turns: list[dict], limit: int = 120) -> str:
     return "\n".join(lines)
 
 
+def tool_text(tool_calls: list[dict], limit: int = 6000) -> str:
+    """What the tools answered, for values the conversation never spoke aloud.
+
+    The reason this exists: a dealer lookup returns a code and a name, the agent
+    reads the NAMES to the caller because nobody recites "10015" down a phone,
+    and the code is therefore nowhere in the transcript. Extraction could only
+    ever record the name - which is exactly what kept happening.
+
+    Only tools whose campaign_tools row has keep_response set have anything
+    stored, so this is empty unless somebody deliberately turned it on for that
+    endpoint.
+    """
+    out, used = [], 0
+    for t in tool_calls or []:
+        body = (t.get("response") or "").strip()
+        if not body:
+            continue
+        block = f"{t.get('name')}({json.dumps(t.get('arguments') or {}, ensure_ascii=False)}) returned:\n{body}"
+        if used + len(block) > limit:
+            break
+        out.append(block)
+        used += len(block)
+    return "\n\n".join(out)
+
+
 async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
+                  tool_calls: list[dict] | None = None,
                   model: str = "gpt-4.1-mini") -> dict:
     """-> {field: value}, or {} when there is nothing to extract.
 
@@ -98,6 +124,12 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
     if not text.strip():
         log.info("postback: nothing said on this call, skipping extraction")
         return {}
+
+    # Appended rather than mixed in, and labelled, so the model can tell what a
+    # person said from what a system returned. Rule 5 below leans on that.
+    tools_md = tool_text(tool_calls or [])
+    if tools_md:
+        text = text + "\n\n=== TOOL RESULTS ===\n" + tools_md
 
     try:
         from openai import AsyncOpenAI
@@ -130,7 +162,8 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
 
 
 def envelope(*, call_row: dict, dialler: dict, extracted: dict,
-             turns: list[dict] | None) -> dict:
+             turns: list[dict] | None,
+             tool_calls: list[dict] | None = None) -> dict:
     """The payload.
 
     Split into three parts on purpose, because they have three different levels
@@ -140,6 +173,12 @@ def envelope(*, call_row: dict, dialler: dict, extracted: dict,
       dialer    - passed through untouched from their own system
       extracted - read out of a conversation by a model, and therefore the only
                   part that can be wrong
+      tools     - what the client's own API answered, verbatim
+
+    `tools` is the answer to "are you sure the model read that code correctly".
+    It is present only for tools with keep_response set, and it is the same
+    bytes their API sent - so if the extraction and this disagree, this is the
+    one to believe.
     """
     body: dict[str, Any] = {
         "call": {
@@ -160,6 +199,15 @@ def envelope(*, call_row: dict, dialler: dict, extracted: dict,
         "dialer": {k.split(".", 1)[-1]: v for k, v in (dialler or {}).items()},
         "extracted": extracted or {},
     }
+    kept = [t for t in (tool_calls or []) if (t.get("response") or "").strip()]
+    if kept:
+        body["tools"] = [
+            {"name": t.get("name"), "arguments": t.get("arguments"),
+             "status_code": t.get("status_code"), "response": t.get("response"),
+             "at": _iso(t.get("created_at"))}
+            for t in kept
+        ]
+
     if turns is not None:
         body["transcript"] = [
             {"role": t.get("role"), "text": t.get("text"),

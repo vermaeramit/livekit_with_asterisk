@@ -197,7 +197,7 @@ async def load_tools(campaign_id: int) -> list[dict]:
         """SELECT id, name, description, parameters, method, url, headers,
                   auth_header, auth_value_enc, body_template, timeout_ms,
                   max_response_bytes, response_path, filler_message,
-                  error_messages
+                  error_messages, keep_response
              FROM campaign_tools
             WHERE campaign_id = $1 AND enabled
             ORDER BY name""",
@@ -230,7 +230,7 @@ async def load_tools(campaign_id: int) -> list[dict]:
 
 async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
                            status_code=None, error=None, duration_ms=None,
-                           url=None) -> None:
+                           url=None, response=None) -> None:
     """Never let recording a tool call break the call it describes.
 
     `url` is the RESOLVED url, after placeholder substitution. Storing the
@@ -244,10 +244,10 @@ async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
         await (await pool()).execute(
             """INSERT INTO tool_invocations
                    (call_id, tool_id, name, arguments, status_code, error,
-                    duration_ms, url)
-               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8)""",
+                    duration_ms, url, response)
+               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9)""",
             call_id, tool_id, name, json.dumps(arguments, default=str),
-            status_code, error, duration_ms, url,
+            status_code, error, duration_ms, url, response,
         )
     except Exception:
         import logging
@@ -413,3 +413,27 @@ async def save_postback(call_id: int, campaign_id: Optional[int],
     except Exception:
         logging.getLogger("voice-agent").exception(
             "could not queue the postback for call %s", call_id)
+
+
+async def load_tool_calls(call_id: int) -> list[dict]:
+    """Tool invocations for a call, with whatever response was kept.
+
+    `response` is NULL unless that tool has keep_response set - see migration
+    021. The rows are still worth reading either way: the arguments and status
+    say what the model asked for and what came back, and extraction can use the
+    response only when someone deliberately allowed it.
+    """
+    import json
+
+    rows = await (await pool()).fetch(
+        """SELECT name, arguments, status_code, response, created_at
+             FROM tool_invocations
+            WHERE call_id = $1 AND error IS NULL
+            ORDER BY created_at, id""", call_id)
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("arguments"), str):
+            d["arguments"] = json.loads(d["arguments"])
+        out.append(d)
+    return out

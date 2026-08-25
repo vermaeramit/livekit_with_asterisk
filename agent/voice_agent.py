@@ -810,6 +810,10 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
         import postback as pb
 
         turns = await store.load_turns(call_id)
+        # Values the caller was never read aloud - a dealer code, an id - live
+        # only in what the tool answered. Empty unless a tool has keep_response
+        # set, so this changes nothing for a campaign that has not asked for it.
+        tool_calls = await store.load_tool_calls(call_id)
         row = await (await store.pool()).fetchrow(
             """SELECT id, started_at, ended_at, duration_ms, caller, callee,
                       end_reason, outcome, transferred_to, turn_count,
@@ -829,13 +833,14 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
 
         extracted = await pb.extract(
             turns=turns, fields=fields, api_key=keys.get("openai", ""),
-            model=cfg.llm_model)
+            tool_calls=tool_calls, model=cfg.llm_model)
 
         payload = pb.envelope(
             call_row=dict(row) if row else {"id": call_id},
             dialler=dialler,
             extracted=extracted,
-            turns=turns if cfg.postback_include_transcript else None)
+            turns=turns if cfg.postback_include_transcript else None,
+            tool_calls=tool_calls)
 
         await store.save_postback(call_id, cfg.campaign_id, payload)
         logger.info("postback queued for call %s (%d extracted fields)",

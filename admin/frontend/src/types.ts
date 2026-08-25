@@ -431,6 +431,8 @@ export interface CampaignTool {
   filler_message: string | null
   // Status code (or "timeout"/"default") -> what to tell the model.
   error_messages: Record<string, string> | null
+  // Keep the response so extraction can read values never spoken aloud.
+  keep_response: boolean
   enabled: boolean
   updated_at: string
 }

@@ -28,6 +28,7 @@ const BLANK = {
   response_path: '',
   filler_message: '',
   error_messages: {} as Record<string, string>,
+  keep_response: false,
   enabled: true,
 }
 
@@ -135,7 +136,7 @@ const ACTIVITY_PAGE_SIZE = 20
 const FIELD_ORDER = [
   'name', 'description', 'method', 'url', 'parameters', 'body_template',
   'auth_header', 'auth_value', 'timeout_ms', 'max_response_bytes',
-  'response_path', 'filler_message', 'error_messages',
+  'response_path', 'filler_message', 'error_messages', 'keep_response',
 ]
 
 function toDraft(t: CampaignTool): Draft {
@@ -155,6 +156,7 @@ function toDraft(t: CampaignTool): Draft {
     response_path: t.response_path ?? '',
     filler_message: t.filler_message ?? '',
     error_messages: t.error_messages ?? {},
+    keep_response: t.keep_response,
     enabled: t.enabled,
   }
 }
@@ -595,6 +597,13 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
           <ErrorMessages
             value={draft.error_messages}
             onChange={(v) => set('error_messages', v)}
+          />
+
+          <Toggle
+            label="Keep the response"
+            checked={draft.keep_response}
+            onChange={(v) => set('keep_response', v)}
+            hint="Turn on when this tool returns something the caller is never told — a dealer code the agent reads out only by name, an internal id. Without it, “Send to API” can only record what was actually spoken. Off for everything else: this stores whatever your API answers, and the next endpoint might answer with a phone number and an address. Bodies are nulled after 30 days; the record of the call itself is kept."
           />
 
           <Toggle

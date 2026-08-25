@@ -750,6 +750,11 @@ class ToolBase(BaseModel):
     # all; it means "nothing found here", and the caller deserves to be told
     # that rather than that the system is having trouble.
     error_messages: dict[str, str] | None = None
+    # Keep what this endpoint answers, so extraction can read values the
+    # caller was never told - a dealer code the agent read out only by name.
+    # Off by default and decided PER TOOL: a dealer list is business data, and
+    # the next endpoint might answer with a phone number and an address.
+    keep_response: bool = False
     enabled: bool = True
 
     @field_validator("error_messages")

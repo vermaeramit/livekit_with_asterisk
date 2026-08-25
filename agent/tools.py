@@ -121,6 +121,10 @@ def build(spec: dict, call_id: int | None, record: Callable,
     timeout = aiohttp.ClientTimeout(total=(spec.get("timeout_ms") or 2500) / 1000)
     max_bytes: int = spec.get("max_response_bytes") or 8192
     filler: str | None = (spec.get("filler_message") or "").strip() or None
+    # Off unless someone turned it on for THIS tool - see migration 021. A
+    # dealer list is business data; the next endpoint might answer with a
+    # phone number and an address, and that is a separate decision.
+    keep_response: bool = bool(spec.get("keep_response"))
     # Parsed by store.load_tools. Guarded anyway: this arrives from a JSONB
     # column, asyncpg returns those as text without a codec, and a string here
     # would raise AttributeError mid-call rather than fall back to the built-in
@@ -163,12 +167,13 @@ def build(spec: dict, call_id: int | None, record: Callable,
         t0 = time.perf_counter()
         url = toolfmt.fill(spec["url"], args) or ""
 
-        async def done(status=None, err=None):
+        async def done(status=None, err=None, body=None):
             # The resolved url, not the template. A placeholder that did not
             # substitute is invisible in the arguments - they are correct - and
             # only shows up here, in what was actually requested.
             await record(tool_id=spec.get("id"), name=name, arguments=args,
                          status_code=status, error=err, url=url,
+                         response=body if keep_response else None,
                          duration_ms=int((time.perf_counter() - t0) * 1000))
 
         if BLOCK_PRIVATE and _host_is_private(url):
@@ -236,7 +241,10 @@ def build(spec: dict, call_id: int | None, record: Callable,
             if waiting is not None:
                 waiting.cancel()
 
-        await done(status=status)
+        # Only the successful body. An error body is whatever the endpoint felt
+        # like emitting - a stack trace, a login page - and is not what anyone
+        # turned this on to keep.
+        await done(status=status, body=text if status < 400 else None)
 
         if status >= 400:
             log.warning("tool %s -> HTTP %s", name, status)
