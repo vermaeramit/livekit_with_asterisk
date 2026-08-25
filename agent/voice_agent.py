@@ -1076,6 +1076,15 @@ async def entrypoint(ctx: JobContext):
     last_activity = time.monotonic()
     agent_speaking = False
     silence_attempts = 0
+    # Set the moment the session ends, whatever ended it. The watchdog's other
+    # exit conditions - a limit, a transfer - do not cover the ordinary case of
+    # somebody hanging up.
+    closed = False
+
+    @session.on("close")
+    def _on_close(_ev=None):
+        nonlocal closed
+        closed = True
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev):
@@ -1115,7 +1124,16 @@ async def entrypoint(ctx: JobContext):
         timeout = cfg.silence_timeout_sec
         nonlocal silence_attempts, last_activity
 
-        while not agent.limit_hit and agent.transferred is None:
+        # `closed` is what actually stops this. The loop used to run on until the
+        # limit or a transfer, neither of which happens when the caller simply
+        # hangs up - so after a call ended the watchdog carried on noticing
+        # silence and tried to speak into a session that was gone:
+        #
+        #   RuntimeError: AgentSession isn't running
+        #
+        # Twice, on a real call. Nobody heard it, which is the only reason it
+        # went unnoticed.
+        while not agent.limit_hit and agent.transferred is None and not closed:
             await asyncio.sleep(1)
             if agent_speaking:
                 continue
@@ -1179,6 +1197,14 @@ async def entrypoint(ctx: JobContext):
             try:
                 handle = await session.say(line, allow_interruptions=not final)
                 await handle.wait_for_playout()
+            except RuntimeError as e:
+                # The session went away between the check above and here - the
+                # caller hung up mid-prompt. Not a fault, and not worth a
+                # traceback: there is nobody left to say anything to.
+                if "isn't running" in str(e) or "not running" in str(e):
+                    logger.info("silence prompt skipped - the call had ended")
+                    return
+                logger.exception("silence prompt failed")
             except Exception:
                 logger.exception("silence prompt failed")
 
