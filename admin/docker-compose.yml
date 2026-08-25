@@ -29,6 +29,12 @@ services:
       # actually running, which was otherwise only answerable by SSHing in
       # and running ls - so nobody ever asked until it mattered.
       - /opt/aivoice/backups:/data/backups:ro
+      # The ONLY writable path outside the app. It holds one empty file and
+      # nothing else: the console asks for a backup by creating it, and a
+      # systemd .path unit does the actual work as root. The alternatives -
+      # the docker socket, or write access to the dumps - would both hand a
+      # web service far more than it needs to press one button.
+      - /opt/aivoice/backup-trigger:/data/backup-trigger
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.

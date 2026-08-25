@@ -1,0 +1,17 @@
+[Unit]
+Description=Run a backup when the console asks for one
+# The console cannot run this itself, and should not be able to. admin-api is a
+# web service in a container: giving it the docker socket would hand it root on
+# the host, and giving it write access to the backup directory would let anyone
+# who compromised it delete the backups first.
+#
+# So it creates one empty file in a directory that holds nothing else, and
+# systemd - which already runs as root and already owns this job - does the
+# work. The console's entire privilege here is "touch a file".
+
+[Path]
+PathExists=/opt/aivoice/backup-trigger/request
+Unit=aivoice-backup.service
+
+[Install]
+WantedBy=paths.target

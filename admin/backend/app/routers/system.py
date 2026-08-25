@@ -30,6 +30,15 @@ router = APIRouter(prefix="/system", tags=["system"])
 # Mounted read-only from the host - see admin/docker-compose.yml.
 BACKUP_DIR = Path(os.getenv("BACKUP_DIR", "/data/backups"))
 
+# The one writable path this service has outside its own app directory, and it
+# holds a single empty file. Creating it makes a systemd .path unit run the
+# backup as root - see server-configs/systemd/aivoice-backup-trigger.path.
+#
+# The alternatives were the docker socket (root on the host, handed to a web
+# API) or write access to the dumps themselves (so anyone who got in could
+# delete the backups before doing anything else). Neither is worth a button.
+TRIGGER = Path(os.getenv("BACKUP_TRIGGER", "/data/backup-trigger")) / "request"
+
 # Backups run nightly. Past this, something is wrong and the page should say so
 # rather than showing a stale timestamp and leaving the reader to do the sum.
 STALE_AFTER_HOURS = float(os.getenv("BACKUP_STALE_HOURS", "36"))
@@ -205,3 +214,31 @@ async def ack_secrets_key(actor: CurrentUser = Depends(superadmin)):
                        changes={"fingerprint": fp})
 
     return await _load_ack(SECRETS_KEY_ACK, fp)
+
+
+@router.post("/backups/run", status_code=status.HTTP_202_ACCEPTED)
+async def run_backup(actor: CurrentUser = Depends(superadmin)):
+    """Ask for a backup now. Returns once ASKED, not once done.
+
+    202 rather than 200, and deliberately: this service does not run the dump
+    and cannot say whether it worked. The page finds out the way anyone else
+    would - a new file appears, or the last run says it failed.
+
+    Additive, which is why it is the one thing on this page that writes at all.
+    An extra backup cannot destroy anything; a restore button could, which is
+    why there isn't one.
+    """
+    try:
+        TRIGGER.parent.mkdir(parents=True, exist_ok=True)
+        TRIGGER.touch()
+    except Exception as e:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"could not ask for a backup: {type(e).__name__}. The trigger "
+            f"directory {TRIGGER.parent} has to be mounted writable, and "
+            "aivoice-backup-trigger.path has to be enabled on the host")
+
+    await audit.record(actor, entity="system", entity_id="backup",
+                       action="run", tenant_id=None, campaign_id=None)
+    log.info("backup requested by %s", actor.email)
+    return {"requested": True}

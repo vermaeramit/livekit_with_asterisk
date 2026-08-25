@@ -35,6 +35,13 @@ DETAIL="the script exited before finishing"
 BYTES=0
 NAME=""
 
+# Cleared first, not last. The .path unit fires on the file EXISTING, so
+# leaving it in place until the end would re-trigger the moment this finishes -
+# and a failing backup would then loop. Removing it up front means a request
+# made while this is already running simply queues one more run, which is the
+# behaviour anyone pressing the button twice would expect.
+rm -f /opt/aivoice/backup-trigger/request 2>/dev/null || true
+
 mkdir -p "$DIR"
 # 755 on the DIRECTORY, 600 on the dumps.
 #

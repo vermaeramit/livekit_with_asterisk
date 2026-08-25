@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Database, HardDrive, KeyRound, TriangleAlert } from 'lucide-react'
+import { Check, Database, HardDrive, KeyRound, Play, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
@@ -17,10 +18,26 @@ function size(bytes: number | null | undefined): string {
 export function Backups() {
   const qc = useQueryClient()
   const toast = useToast()
+  // Normally a minute. After asking for a backup it drops to three seconds for
+  // a while, because the answer arrives as a file appearing rather than as a
+  // response - this service asks for the dump, it does not take it.
+  const [watching, setWatching] = useState(false)
   const q = useQuery({
     queryKey: ['backups'],
     queryFn: () => api<BackupStatus>('/system/backups'),
-    refetchInterval: 60_000,
+    refetchInterval: watching ? 3_000 : 60_000,
+  })
+
+  const runNow = useMutation({
+    mutationFn: () => api('/system/backups/run', { method: 'POST' }),
+    onSuccess: () => {
+      setWatching(true)
+      // Long enough for a dump of this size, and it stops on its own so the
+      // page does not poll every three seconds forever after one click.
+      setTimeout(() => setWatching(false), 90_000)
+      toast.success('Backup requested', 'It appears below when it finishes.')
+    },
+    onError: (e) => toast.error('Could not request a backup', (e as Error).message),
   })
 
   const ack = useMutation({
@@ -77,15 +94,29 @@ export function Backups() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-          <Database className="h-5 w-5 text-muted-foreground" />
-          Backups
-        </h1>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Nightly dumps of the database — every call and transcript, the campaign
-          configuration, the knowledge base, and the encrypted provider keys.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+            <Database className="h-5 w-5 text-muted-foreground" />
+            Backups
+          </h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Nightly dumps of the database — every call and transcript, the campaign
+            configuration, the knowledge base, and the encrypted provider keys.
+          </p>
+        </div>
+        {/* The one thing on this page that writes anything. Taking an extra
+            backup cannot destroy something; a restore button could, which is why
+            there is not one. */}
+        <Button
+          variant="outline"
+          size="sm"
+          loading={runNow.isPending || watching}
+          onClick={() => runNow.mutate()}
+        >
+          <Play className="size-3.5" />
+          {watching ? 'Running…' : 'Back up now'}
+        </Button>
       </div>
 
       {/* The headline. A list of files does not answer "is this working"; the age

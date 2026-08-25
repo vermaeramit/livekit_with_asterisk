@@ -48,6 +48,12 @@ encrypting them.
 systemctl daemon-reload
 systemctl enable --now aivoice-backup.timer
 
+# and the path unit behind the console's "Back up now" button
+\cp -f /srv/aivoice/server-configs/systemd/aivoice-backup-trigger.path        /etc/systemd/system/
+mkdir -p /opt/aivoice/backup-trigger && chmod 777 /opt/aivoice/backup-trigger
+systemctl daemon-reload
+systemctl enable --now aivoice-backup-trigger.path
+
 # run it now rather than waiting until 02:30
 systemctl start aivoice-backup
 journalctl -u aivoice-backup --no-pager -n 20
@@ -85,6 +91,26 @@ systemctl list-timers aivoice-backup
 - **Writes to a `.partial` name** and moves it only once it verifies, so an
   interrupted dump never sits there looking healthy.
 - **Prunes after 14 days** (`BACKUP_KEEP_DAYS`).
+
+### The "Back up now" button
+
+The console cannot run the backup itself, and deliberately cannot. admin-api is
+a web service in a container: the docker socket would hand it root on the host,
+and write access to the dumps would let anyone who compromised it delete the
+backups before doing anything else.
+
+So it creates one empty file in a directory that holds nothing else, and a
+systemd `.path` unit - already root, already owning this job - does the work.
+The console's entire privilege is `touch`.
+
+`chmod 777` on that one directory looks alarming and is not: it contains a
+single empty file whose only meaning is "somebody pressed the button", it is
+recreated every run, and the alternative is aligning UIDs between a container
+and the host for no gain.
+
+The API answers **202, not 200**. It has asked for a backup; it cannot say
+whether one happened. The page finds out the way anyone would - a new file
+appears, or the last run reports a failure.
 
 ---
 
