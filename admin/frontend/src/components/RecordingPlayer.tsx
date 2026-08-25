@@ -15,9 +15,13 @@ function clock(seconds: number): string {
 export function RecordingPlayer({
   callId,
   sizeBytes,
+  durationMs,
 }: {
   callId: number
   sizeBytes: number | null
+  // The call's measured length, used when the browser will not report the
+  // media's own. See effectiveTotal.
+  durationMs?: number | null
 }) {
   const audio = useRef<HTMLAudioElement>(null)
   const [src, setSrc] = useState<string | null>(null)
@@ -55,32 +59,21 @@ export function RecordingPlayer({
   }, [callId])
 
   /**
-   * Read the duration, forcing it out of the browser if necessary.
+   * The length to draw the scrubber against.
    *
-   * Chrome reports `Infinity` for an Ogg stream until it has seen the last
-   * page, and a blob URL is no exception. The file is fine - ffprobe reads
-   * 3:35 from the same bytes - but the player showed "0:00 / 0:00" and the
-   * scrubber did nothing, because clock() renders a non-finite number as 0:00.
+   * Chrome reports `duration` as Infinity for an Ogg stream until it has read
+   * the last page, so the media element cannot be relied on for this. The
+   * previous attempt forced it out by seeking to 1e101 - which Chrome answers
+   * with an error event, turning a cosmetic problem into a player that refused
+   * to load at all.
    *
-   * The fix is the standard one: seek far past the end, which makes the browser
-   * resolve the real duration, then seek back. Harmless when the duration was
-   * already known, which is why it is not conditional on the browser.
+   * There was never any need to ask the browser. The call's duration is
+   * measured server-side and already on the page; the recording is a few
+   * seconds shorter because it starts after the answer, which is close enough
+   * for a progress bar and exact once the browser does report a real duration.
    */
-  function onMetadata(el: HTMLAudioElement) {
-    if (Number.isFinite(el.duration) && el.duration > 0) {
-      setTotal(el.duration)
-      return
-    }
-    const settle = () => {
-      if (!Number.isFinite(el.duration)) return
-      el.removeEventListener('durationchange', settle)
-      el.currentTime = 0
-      setNow(0)
-      setTotal(el.duration)
-    }
-    el.addEventListener('durationchange', settle)
-    el.currentTime = 1e101
-  }
+  const effectiveTotal =
+    Number.isFinite(total) && total > 0 ? total : (durationMs ?? 0) / 1000
 
   function toggle() {
     const el = audio.current
@@ -96,9 +89,9 @@ export function RecordingPlayer({
 
   function seek(e: React.MouseEvent<HTMLDivElement>) {
     const el = audio.current
-    if (!el || !total) return
+    if (!el || !effectiveTotal) return
     const box = e.currentTarget.getBoundingClientRect()
-    el.currentTime = ((e.clientX - box.left) / box.width) * total
+    el.currentTime = ((e.clientX - box.left) / box.width) * effectiveTotal
   }
 
   if (loading) {
@@ -128,13 +121,8 @@ export function RecordingPlayer({
         ref={audio}
         src={src ?? undefined}
         preload="metadata"
-        onLoadedMetadata={(e) => onMetadata(e.currentTarget)}
-        onTimeUpdate={(e) => {
-          // Guarded because forcing the duration below seeks to 1e101 first,
-          // and that fires a timeupdate with a nonsense position on the way.
-          const t = e.currentTarget.currentTime
-          if (Number.isFinite(t) && t < 1e6) setNow(t)
-        }}
+        onLoadedMetadata={(e) => setTotal(e.currentTarget.duration)}
+        onTimeUpdate={(e) => setNow(e.currentTarget.currentTime)}
         onEnded={() => setPlaying(false)}
         // Without this a codec the browser cannot decode leaves a player that
         // looks fine, does nothing, and says nothing about why.
@@ -158,18 +146,18 @@ export function RecordingPlayer({
             role="slider"
             aria-label="Seek"
             aria-valuemin={0}
-            aria-valuemax={Math.round(total)}
+            aria-valuemax={Math.round(effectiveTotal)}
             aria-valuenow={Math.round(now)}
             tabIndex={0}
           >
             <div
               className="h-full rounded-full bg-primary transition-[width] duration-100"
-              style={{ width: total ? `${(now / total) * 100}%` : '0%' }}
+              style={{ width: effectiveTotal ? `${(now / effectiveTotal) * 100}%` : '0%' }}
             />
           </div>
           <div className="mt-1.5 flex items-center justify-between text-2xs text-muted-foreground">
             <span className="tnum">
-              {clock(now)} / {clock(total)}
+              {clock(now)} / {clock(effectiveTotal)}
             </span>
             <span className="tnum">
               {sizeBytes != null ? `${Math.round(sizeBytes / 1024)} KB` : ''}

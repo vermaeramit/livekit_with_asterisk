@@ -665,7 +665,7 @@ export function CallDetail() {
       </div>
 
       {c.recording_available && (
-        <RecordingPlayer callId={c.id} sizeBytes={c.recording_bytes} />
+        <RecordingPlayer callId={c.id} sizeBytes={c.recording_bytes} durationMs={c.duration_ms} />
       )}
 
       <div className={cn('grid gap-3', c.dialer_context && 'lg:grid-cols-2')}>
