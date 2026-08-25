@@ -32,6 +32,7 @@ from livekit.agents import (
 from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
 from livekit.plugins import google, openai, sarvam, silero, soniox
 
+import greeting_cache
 import prompt as prompt_mod
 import tools as tools_mod
 
@@ -77,6 +78,7 @@ def prewarm(proc: JobProcess):
 
     t = time.perf_counter()
     try:
+        import greeting_cache  # noqa: F401
         import kb  # noqa: F401  - imported for its side effect: being imported
         import store  # noqa: F401
     except Exception:
@@ -757,10 +759,16 @@ async def _warm_providers() -> None:
     opening the connection, paid once per job process - and a job process
     handles exactly one call, so every caller pays it.
 
-    This runs concurrently with ctx.connect() and the config load, which
-    together take well over a second during which the process is doing nothing
-    but waiting. The warm-up is free in wall-clock terms: it finishes inside
-    time that was already being spent.
+    This runs concurrently with ctx.connect() and the config load. That used to
+    be free - those took well over a second - but fixing the kb import brought
+    startup down to ~390ms while this still takes ~820ms. It now finishes after
+    the greeting has already been asked for, which is what `warm_done=False` in
+    the timing log below has been reporting on every call.
+
+    It still earns its place on the LLM leg, which nothing needs until the
+    caller has finished their first sentence. It does nothing for the greeting,
+    and the greeting is why it was written - see greeting_cache, which fixes
+    that end properly by not needing the provider at all.
 
     All three hosts, not just the campaign's own - the campaign is not known
     yet, and two extra TLS handshakes on a LAN cost nothing next to what they
@@ -1016,10 +1024,13 @@ async def entrypoint(ctx: JobContext):
                     extra_tools=extra_tools)
 
     vad = ctx.proc.userdata["vad"]
+    # Held rather than passed inline: the greeting cache renders through this
+    # same stack, so a campaign's fallback provider applies there too.
+    tts_stack = _tts_stack(cfg, keys)
     session = AgentSession(
         stt=_stt_stack(cfg, vad, keys),
         llm=_llm_stack(cfg, keys),
-        tts=_tts_stack(cfg, keys),
+        tts=tts_stack,
         vad=vad,
         turn_detection=MultilingualModel(),
         allow_interruptions=cfg.allow_interrupt,
@@ -1403,7 +1414,30 @@ async def entrypoint(ctx: JobContext):
     opening = " ".join(x for x in (_render(cfg.greeting, dialler),
                                    cfg.recording_disclosure) if x)
     if opening:
-        await session.say(opening, allow_interruptions=cfg.allow_interrupt)
+        # Cacheable only when the greeting does not depend on who is calling. A
+        # placeholder gives every caller a different opening, and a cache with
+        # one entry per caller is not a cache - it is a disk leak.
+        cache_path = None
+        cached = None
+        if "{{" not in (cfg.greeting or ""):
+            cache_path = greeting_cache.path_for(
+                opening, cfg.tts_provider, cfg.tts_model, cfg.tts_voice)
+            cached = greeting_cache.frames(cache_path)
+
+        # `audio=` hands say() the rendered frames; the text still goes to the
+        # transcript and the model exactly as before, so nothing downstream can
+        # tell the difference.
+        if cached is not None:
+            await session.say(opening, audio=cached,
+                              allow_interruptions=cfg.allow_interrupt)
+        else:
+            await session.say(opening, allow_interruptions=cfg.allow_interrupt)
+            if cache_path is not None:
+                # Started after the greeting, not before it: this call has
+                # already paid for a connection and there is no sense competing
+                # with it for the one thing the caller is waiting on.
+                asyncio.create_task(
+                    greeting_cache.store(tts_stack, opening, cache_path))
 
 
 if __name__ == "__main__":
