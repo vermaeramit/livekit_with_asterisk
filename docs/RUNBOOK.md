@@ -788,6 +788,37 @@ docker compose logs --tail=60 sip
 worker takes ~7 s to register, and `dev` mode keeps no idle processes. Wait for
 `registered worker` plus a few seconds before dialling. Real fix is Step 10.
 
+### A recording says "the browser could not decode this"
+
+Almost never the codec. Check in this order, because the first two take seconds
+and the last one is where the answer has always been:
+
+```bash
+# 1. is the file whole? -f null decodes the WHOLE thing, unlike ffprobe
+ID=$(docker exec -i postgres psql -U aivoice -d aivoice -tAc "SELECT sip_call_id FROM calls WHERE id=<CALL>")
+ffmpeg -v error -i /var/spool/asterisk/recordings/$ID.opus -f null -
+
+# 2. does the request even reach the server?
+docker logs admin-web --since 5m 2>&1 | grep recording
+```
+
+A missing log line means the browser answered from its own cache and never
+asked. That was the cause once: `Cache-Control: private, max-age=3600` with no
+validator let one bad entry stick for an hour, the empty stream decoded as
+corrupt, and `Ctrl+Shift+R` did not clear it - a hard reload governs the page
+and its assets, while a `fetch()` started by script afterwards still uses the
+default cache mode. Both sides are `no-store` now.
+
+The player reports what actually arrived ("Only 0 of 543,569 bytes"), so a
+short response no longer presents itself as a codec problem. If it ever says
+the codec again, serve the file from a plain HTTP server and open it directly -
+if Chrome plays it there, the fault is between the API and the page, not in the
+file:
+
+```bash
+cp /var/spool/asterisk/recordings/$ID.opus /tmp/t.ogg && cd /tmp && python3 -m http.server 9097
+```
+
 ### Registers but no audio
 
 Signalling is fine, RTP is not.
