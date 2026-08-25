@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 from fastapi import (APIRouter, Depends, File, HTTPException, Query, UploadFile,
@@ -20,6 +21,17 @@ from fastapi import (APIRouter, Depends, File, HTTPException, Query, UploadFile,
 from fastapi.responses import StreamingResponse
 
 from .. import audit, db, provider_keys as pk, kblib
+
+# Read from the ingester rather than repeated here: a second list would let the
+# upload accept a format nothing downstream can open, and the failure would land
+# on someone who had already waited for a 30 MB file.
+#
+# Guarded through available(), not kb() - that raises when the mount is missing,
+# and raising at import time takes the whole API down over a knowledge base
+# feature nobody may be using.
+SUPPORTED_EXT: tuple[str, ...] = (
+    tuple(getattr(kblib.kb(), "SUPPORTED", (".pdf",)))
+    if kblib.available() else (".pdf", ".docx"))
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
 from ..schemas import KbDocument, KbIngestResult
 
@@ -49,8 +61,10 @@ def safe_filename(name: str) -> str:
     base = _SAFE.sub("_", base).strip("._")
     if not base or base in {".", ".."}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unusable filename")
-    if not base.lower().endswith(".pdf"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only PDF files are supported")
+    if not base.lower().endswith(SUPPORTED_EXT):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"only {' and '.join(SUPPORTED_EXT)} files are supported")
     return base[:200]
 
 
@@ -154,9 +168,28 @@ async def upload_document(campaign_id: int,
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "the file is empty")
         # Trust the bytes, not the extension
         with staged.open("rb") as fh:
-            if fh.read(5) != b"%PDF-":
+            head = fh.read(5)
+        if base.lower().endswith(".pdf"):
+            if head[:5] != b"%PDF-":
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                     "this does not look like a PDF")
+        else:
+            # .docx is a zip. The magic bytes alone would also accept any other
+            # zip, so the member list is checked too - an .xlsx renamed to .docx
+            # gets past the extension and past PK, and would otherwise fail
+            # much later with something unreadable.
+            if head[:2] != b"PK":
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                    "this does not look like a Word file")
+            try:
+                with zipfile.ZipFile(staged) as z:
+                    if "word/document.xml" not in z.namelist():
+                        raise KeyError
+            except (zipfile.BadZipFile, KeyError):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "this is a zip but not a Word document - .doc and .xlsx "
+                    "are not supported, save it as .docx")
     except Exception:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise

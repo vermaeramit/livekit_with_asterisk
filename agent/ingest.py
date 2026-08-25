@@ -1,4 +1,4 @@
-"""Ingest every PDF in the inbox. Unchanged files are skipped by hash."""
+"""Ingest every supported document in the inbox. Unchanged files skipped by hash."""
 import asyncio, glob, os, sys
 import kb, store
 
@@ -8,9 +8,13 @@ CONFIG = os.getenv("AGENT_CONFIG", "default")
 
 async def main():
     force = "--force" in sys.argv
-    files = sorted(glob.glob(os.path.join(INBOX, "*.pdf")))
+    # Driven by kb.SUPPORTED so this never falls behind the ingester. A glob
+    # written here by hand is how a format gets added and the CLI keeps
+    # ignoring it, with nothing to say why.
+    files = sorted(f for ext in kb.SUPPORTED
+                   for f in glob.glob(os.path.join(INBOX, f"*{ext}")))
     if not files:
-        print(f"no PDFs in {INBOX}")
+        print(f"nothing to ingest in {INBOX} ({', '.join(kb.SUPPORTED)})")
         return
 
     print(f"{len(files)} file(s) in {INBOX}  (config={CONFIG})\n")

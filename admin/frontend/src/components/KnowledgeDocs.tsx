@@ -30,7 +30,7 @@ function describe(e: IngestEvent): { percent: number; label: string } {
     case 'hashing':
       return { percent: 35, label: 'Checking for an existing copy' }
     case 'extracting':
-      return { percent: 40, label: 'Reading the PDF' }
+      return { percent: 40, label: 'Reading the document' }
     case 'chunking':
       return {
         percent: 45,
@@ -67,7 +67,7 @@ function ChunkViewer({ doc, onClose }: { doc: KbDocument | null; onClose: () => 
       onClose={onClose}
       size="lg"
       title={doc?.title || doc?.filename || ''}
-      description="Exactly what the agent can retrieve, in order. A PDF that extracted badly reads as nonsense here — far easier to spot than to diagnose from a bad answer on a live call."
+      description="Exactly what the agent can retrieve, in order. A document that extracted badly reads as nonsense here — far easier to spot than to diagnose from a bad answer on a live call."
       footer={
         <Button variant="ghost" onClick={onClose}>
           Close
@@ -141,7 +141,7 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
       if (r.status === 'empty') {
         toast.warning(
           `${r.filename} produced nothing`,
-          r.error ?? 'No text could be extracted. A scanned PDF needs OCR first.',
+          r.error ?? 'No text could be extracted. A scanned PDF needs OCR first; a Word file may hold its text in images or text boxes.',
         )
       } else if (r.status === 'unchanged') {
         toast.info(`${r.filename} is already up to date`, 'The file is byte-identical to the stored copy.')
@@ -227,7 +227,7 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
         <input
           ref={fileInput}
           type="file"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -252,9 +252,11 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
         ) : (
           <>
             <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
-            <p className="mt-2 text-sm font-medium">Drop PDFs here</p>
+            <p className="mt-2 text-sm font-medium">Drop PDFs or Word files here</p>
             <p className="mt-1 text-2xs text-muted-foreground">
-              Text-based PDFs up to 30 MB. Scanned pages need OCR first — they extract as nothing.
+              PDF or .docx, up to 30 MB. Text only — a scanned PDF, or text inside an image or a
+              Word text box, extracts as nothing. Word headings become the sections the agent
+              retrieves, so a document with real headings answers better than one without.
             </p>
             <Button
               variant="outline"
@@ -286,7 +288,7 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
           <EmptyState
             icon={FileText}
             title="No documents yet"
-            hint="Upload a PDF and the agent can answer from it on the next call."
+            hint="Upload a PDF or Word document and the agent can answer from it on the next call."
           />
         ) : (
           <div className="divide-y divide-border/70">

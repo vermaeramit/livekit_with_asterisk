@@ -28,3 +28,7 @@ pymupdf==1.28.0
 pymupdf-layout==1.28.0
 pymupdf4llm==1.28.0
 tiktoken==0.13.0
+# Word documents for the knowledge base. Chosen over mammoth/pandoc: one
+# dependency, no external binary, and direct access to paragraph STYLES -
+# which is what lets a "Heading 2" become "## " for the chunker to split on.
+python-docx==1.1.2

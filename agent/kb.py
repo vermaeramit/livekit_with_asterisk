@@ -76,6 +76,95 @@ def extract_pdf(path: str) -> tuple[list[tuple[int, str]], int]:
     return out, len(pages)
 
 
+def _docx_table_md(table) -> str:
+    """A docx table as a markdown pipe table.
+
+    Emitted as markdown rather than flattened to prose because the chunker
+    recognises pipe tables and keeps them whole - a price table split across
+    two chunks retrieves as two half-answers.
+
+    The first row is treated as the header. That is wrong for a table with no
+    header, but a markdown table must have one, and losing a data row to the
+    header beats emitting something no parser reads as a table at all.
+    """
+    rows = []
+    for row in table.rows:
+        # A merged cell appears once per grid position in python-docx, so a
+        # horizontally merged one repeats its text. Left alone: collapsing it
+        # would mean guessing which column the value really belongs to.
+        cells = [c.text.replace("\n", " ").replace("|", r"\|").strip()
+                 for c in row.cells]
+        if any(cells):
+            rows.append("| " + " | ".join(cells) + " |")
+    if not rows:
+        return ""
+    header, *body = rows
+    sep = "| " + " | ".join("---" for _ in table.columns) + " |"
+    return "\n".join([header, sep, *body])
+
+
+def extract_docx(path: str) -> tuple[list[tuple[int, str]], int]:
+    """-> ([(None, markdown)], 0) - a Word document as one markdown stream.
+
+    Page is None, not 1. A .docx has no pages until something lays it out, and
+    the number would differ between Word, LibreOffice and a different paper
+    size. The console hides a null page rather than printing "p.1" on every
+    chunk of every document, and the heading path is the real locator anyway.
+
+    Walks the document BODY in order rather than iterating .paragraphs and
+    .tables separately. Those are two independent lists, so a table sitting
+    between two headings comes out after every paragraph in the document -
+    silently detaching every table from the text that explains it.
+    """
+    from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    doc = Document(path)
+    parts: list[str] = []
+
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.split("}")[-1]
+
+        if tag == "tbl":
+            md = _docx_table_md(Table(child, doc))
+            if md:
+                parts.append(md)
+            continue
+        if tag != "p":
+            continue
+
+        para = Paragraph(child, doc)
+        text = para.text.strip()
+        if not text:
+            continue
+
+        style = (para.style.name or "") if para.style is not None else ""
+
+        # "Heading 2" -> "## ". This is what the chunker splits on, and it is
+        # why Word suits this pipeline: the structure is already in the file.
+        m = _DOCX_HEADING.match(style)
+        if m:
+            parts.append("#" * min(int(m.group(1)), 6) + " " + text)
+        elif style == "Title":
+            parts.append("# " + text)
+        elif style == "Subtitle":
+            parts.append("## " + text)
+        elif "List" in style:
+            parts.append("- " + text)
+        else:
+            parts.append(text)
+
+    md = clean_md("\n\n".join(parts))
+    return ([(None, md)] if md else []), 0
+
+
+# Extension -> extractor. Everything downstream works on [(page, markdown)],
+# which is why adding a format is one function rather than a second pipeline.
+EXTRACTORS = {".pdf": extract_pdf, ".docx": extract_docx}
+SUPPORTED = tuple(EXTRACTORS)
+
+
 # ────────────────────────────── chunking ──────────────────────────────
 
 @dataclass
@@ -89,6 +178,8 @@ class Chunk:
 
 
 _H = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$")
+# Word's own heading styles, mapped onto the markdown ones above.
+_DOCX_HEADING = re.compile(r"^Heading (\d+)$")
 _TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
 
 
@@ -281,10 +372,19 @@ async def ingest_file(path: str, config_name: str = "default",
     # 50-page document. On the CLI that only makes the prompt wait; inside the
     # admin API it would freeze every other request for the length of an upload.
     await emit(stage="extracting")
-    pages, n_pages = await asyncio.to_thread(extract_pdf, str(p))
-    if not pages:
+    extractor = EXTRACTORS.get(p.suffix.lower())
+    if extractor is None:
         return {"file": p.name, "status": "empty",
-                "error": "no extractable text - scanned PDF? OCR would be needed"}
+                "error": f"{p.suffix or 'this file'} is not supported - "
+                         f"use {' or '.join(SUPPORTED)}"}
+    pages, n_pages = await asyncio.to_thread(extractor, str(p))
+    if not pages:
+        # The two formats fail emptily for different reasons, and the difference
+        # decides what the person holding the file should do next.
+        why = ("no extractable text - scanned PDF? OCR would be needed"
+               if p.suffix.lower() == ".pdf"
+               else "the document has no text - images and text boxes are not read")
+        return {"file": p.name, "status": "empty", "error": why}
 
     await emit(stage="chunking", pages=n_pages)
     title = p.stem.replace("_", " ").replace("-", " ")
