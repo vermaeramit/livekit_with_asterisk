@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Database, HardDrive, KeyRound, Play, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,26 +18,63 @@ function size(bytes: number | null | undefined): string {
 export function Backups() {
   const qc = useQueryClient()
   const toast = useToast()
-  // Normally a minute. After asking for a backup it drops to three seconds for
-  // a while, because the answer arrives as a file appearing rather than as a
-  // response - this service asks for the dump, it does not take it.
-  const [watching, setWatching] = useState(false)
+  // What `last_run` said when the button was pressed. undefined = not waiting.
+  //
+  // Compared for CHANGE rather than against a clock: last_run comes from the
+  // server and the browser's clock is its own, so "is it newer than when I
+  // clicked" is a question with two different answers depending on whose watch
+  // you use.
+  const [awaited, setAwaited] = useState<string | null | undefined>(undefined)
+  const watching = awaited !== undefined
+
+  // Normally a minute. While waiting it drops to three seconds, because the
+  // answer arrives as a run completing rather than as a response - this service
+  // asks for the dump, it does not take it.
   const q = useQuery({
     queryKey: ['backups'],
     queryFn: () => api<BackupStatus>('/system/backups'),
     refetchInterval: watching ? 3_000 : 60_000,
   })
 
+  // Stop on the run itself finishing, not on a timer. A fixed wait said
+  // "Running…" for a minute and a half after the dump had appeared, and said
+  // exactly the same thing when the run had failed.
+  useEffect(() => {
+    if (!watching || !q.data) return
+    if (q.data.last_run === awaited) return
+    setAwaited(undefined)
+    if (q.data.last_result === 'ok') {
+      toast.success('Backup taken', `${q.data.files.length} kept.`)
+    } else {
+      toast.error('The backup failed', q.data.last_detail ?? 'see the server log')
+    }
+  }, [watching, awaited, q.data, toast])
+
+  // A backstop, not the mechanism. If nothing has completed by now the trigger
+  // never reached systemd, and saying so beats spinning.
+  useEffect(() => {
+    if (!watching) return
+    const t = setTimeout(() => {
+      setAwaited(undefined)
+      toast.error(
+        'No backup ran',
+        'The request was accepted but nothing completed. Check that ' +
+          'aivoice-backup-trigger.path is enabled on the server.',
+      )
+    }, 120_000)
+    return () => clearTimeout(t)
+  }, [watching, toast])
+
   const runNow = useMutation({
     mutationFn: () => api('/system/backups/run', { method: 'POST' }),
-    onSuccess: () => {
-      setWatching(true)
-      // Long enough for a dump of this size, and it stops on its own so the
-      // page does not poll every three seconds forever after one click.
-      setTimeout(() => setWatching(false), 90_000)
-      toast.success('Backup requested', 'It appears below when it finishes.')
+    // Captured BEFORE the request is sent: a run that finishes quickly could
+    // otherwise complete before this is recorded, and then nothing would ever
+    // look changed.
+    onMutate: () => setAwaited(q.data?.last_run ?? null),
+    onError: (e) => {
+      setAwaited(undefined)
+      toast.error('Could not request a backup', (e as Error).message)
     },
-    onError: (e) => toast.error('Could not request a backup', (e as Error).message),
   })
 
   const ack = useMutation({
