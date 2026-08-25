@@ -2445,6 +2445,107 @@ and one caller's name hardcoded into the cacheable prefix.
 
 ---
 
+## Ending calls, sending them on (17–25 Aug 2026)
+
+### The call can now end itself, and knows when nobody is there
+
+`[EOC]` in the model's reply closes the call once the sentence carrying it has
+finished playing; `[TRANSFER]` hands over the same way. Both are stripped before
+TTS by a filter that holds back a tail, because an LLM streams without regard
+for token boundaries and `[EOC]` routinely arrives as `[EO` then `C]` - a naive
+filter passes both and the caller hears "bracket E O C".
+
+Neither acts inside `tts_node`. Audio is still being produced there, and ending
+or transferring would cut off the sentence the marker was attached to.
+
+Silence handling is N lines, one per attempt, then the call closes as
+`no_response`. There is no attempt-count field: the array's length IS the count,
+because two fields that must agree eventually do not.
+
+### Three faults in one handoff, each hiding the next
+
+1. Asked for `[TRANSFER]`, the model wrote `[Transfer]`. Matching was
+   case-sensitive, so nothing fired and the text was read aloud.
+2. The same reply carried both markers. Both were honoured, so the caller heard
+   a farewell and then a hold message. Transfer now wins and clears the other.
+3. **The confirmation gate was satisfied by the agent talking to itself.** Given
+   both a tool and a marker, the model used both: the tool asked, and the marker
+   milliseconds later found the flag set and transferred. The one feature whose
+   entire purpose is to let someone say "no, wait" did not let them.
+
+The gate is no longer a boolean. It records a counter that only the caller's own
+speech advances, and a transfer requires that counter to have moved. That holds
+however many routes exist. The tool is also removed when a marker is configured
+- one job, one route.
+
+### Sending each call to the client's API
+
+Split along what the agent *can* do. It extracts and queues; the console
+delivers, because the job process exits when the call ends and cannot retry
+anything.
+
+Extraction is one LLM pass over the transcript **after** the call. A mid-call
+tool would put a round trip inside a turn budget that took a day to bring down,
+and doing it afterwards means the schema can change and old calls can be
+re-processed. Every field is optional and nullable - a required field makes the
+model invent a value rather than admit the conversation never covered it.
+
+The field list does two jobs: it is the schema handed to the model and it is the
+payload shape. The payload separates `call` (measured by us), `dialer` (passed
+through untouched) and `extracted` (read by a model, and the only part that can
+be wrong). Timestamps are IST with the offset kept.
+
+**Values the caller was never told.** A dealer lookup returns a code and a name;
+the agent reads names aloud, so the code is nowhere in the transcript.
+Migration 021 stores the tool's answer - opt-in per tool, successful bodies
+only, nulled after 30 days - and extraction is given it under a labelled
+heading. The raw answer travels in the payload too, so if the model and the
+client's records ever disagree about a code, their own bytes are right there.
+
+### Word documents in the knowledge base
+
+One extractor, not a second pipeline: everything downstream already worked on
+`[(page, markdown)]`. Word suits it because the chunker splits on markdown
+headings and a `.docx` already has real ones.
+
+The document body is walked in order. `python-docx` exposes `.paragraphs` and
+`.tables` as two independent lists, and iterating them separately puts every
+table after every paragraph - silently detaching each from the text explaining
+it.
+
+**Excel was discussed and deliberately not done.** A price or dealer list is an
+exact lookup, and a vector search answers those approximately. That data belongs
+in a tool.
+
+### A recording that played from a plain server and not from the console
+
+Three days of "the browser could not decode this". The file was valid - ffmpeg
+decoded it end to end - and Chrome played the same bytes from a `python3 -m
+http.server` on the same box.
+
+`Cache-Control: private, max-age=3600` with no validator. One bad entry stuck
+for the full hour, Chrome answered from it without touching the network, and the
+empty stream decoded as corrupt. `Ctrl+Shift+R` did not help: a hard reload
+governs the page and its assets, while a `fetch()` started by script afterwards
+still uses the default cache mode. Nobody could clear it.
+
+What actually found it was making the player compare what arrived against the
+size the API had already reported: "Only 0 of 543,569 bytes arrived". The
+browser's own word for a short stream is "cannot decode", which points at the
+one thing that was never wrong.
+
+### Worth keeping
+
+- `pyflakes` is now part of editing Python here. `ast.parse` is happy with an
+  undefined name, and `NameError: name 'base' is not defined` took every upload
+  down after a change that had been "syntax checked".
+- JSONB arrives from asyncpg as **text**. That has now caused three separate
+  silent failures - a configured 404 message that never matched, and two
+  others. Every JSONB column has to be named in the parse list, and forgetting
+  one never raises.
+
+---
+
 ## ⏭️ Next
 
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
