@@ -750,6 +750,37 @@ _PROVIDER_HOSTS = {
 }
 
 
+async def _warm_tts(tts) -> None:
+    """Open the TTS connection while the cached greeting is playing.
+
+    The greeting used to do this by accident: it was the first synthesis in the
+    process, so it paid for the connection and every later turn was cheap -
+    1458-1519 ms for the greeting against 619-701 ms afterwards.
+
+    Caching the greeting removed that, and the bill did not disappear. It moved
+    onto the caller's first question, where on call 339 it cost 6286 ms. The
+    caller asked, heard nothing, said "हेलो" - and that word interrupted the
+    answer just as it began. They hung up sixteen seconds later. As the
+    greeting it was slow; as the reply it ended the call.
+
+    So it is paid here instead, inside the 7.2 s of greeting the caller is
+    already listening to. Six characters, and even a 6 s cold start finishes
+    before they have drawn breath.
+
+    Failures are ignored on purpose: this is an optimisation, and a TTS that
+    cannot be reached here will fail properly and visibly at the first reply.
+    """
+    t = time.perf_counter()
+    try:
+        async for _ in tts.synthesize("नमस्ते"):
+            pass
+    except Exception:
+        logger.debug("tts warm-up failed - the first reply will pay for it",
+                     exc_info=True)
+        return
+    logger.info("TIMING tts_warm=%dms", (time.perf_counter() - t) * 1000)
+
+
 async def _warm_providers() -> None:
     """DNS, TCP and TLS to the provider hosts, before anything needs them.
 
@@ -1428,6 +1459,11 @@ async def entrypoint(ctx: JobContext):
         # transcript and the model exactly as before, so nothing downstream can
         # tell the difference.
         if cached is not None:
+            # Started before the greeting, not after: the greeting is the only
+            # thing standing between the caller and a cold TTS, and it is 7.2
+            # seconds long. Nothing else in the call is a better place to spend
+            # a connection handshake.
+            asyncio.create_task(_warm_tts(tts_stack))
             await session.say(opening, audio=cached,
                               allow_interruptions=cfg.allow_interrupt)
         else:
