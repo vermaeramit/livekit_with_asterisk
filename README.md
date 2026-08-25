@@ -180,7 +180,7 @@ Ranked by what happens if nobody acts.
 
 | # | Decision | Why it matters |
 |---|---|---|
-| 1 | **No database backup exists** | 327 calls, every campaign's config, and the encrypted provider keys are on one disk. Nothing else in this list can cost as much. |
+| 1 | **Database backups** | Script and timer exist — see [docs/DATABASE.md](docs/DATABASE.md). Not yet installed on the server, and `SECRETS_KEY` still has to be stored somewhere off this box or the dumps are undecryptable. |
 | 2 | **`HANDOFF_EXTEN` is empty** | Transfer works end to end — the agent asks, the caller agrees, the REFER goes out — and stops at extension `800`. Needs one queue number from the dialler team. |
 | 3 | **Firewall is off, and the IAX peer is unauthenticated** | `permit=0.0.0.0/0`, `requirecalltoken=no`, `insecure=port,invite`. Fine on an isolated LAN, and a decision that should be made rather than inherited. |
 | 4 | **IAX register credential is `76SERVER:76SERVER`** | Username and password are the same string. |
@@ -237,6 +237,7 @@ livekit_with_asterisk/
 │   ├── COMMANDS.md            ← ⚡ the short list — deploy, restart, logs, health
 │   ├── RUNBOOK.md             ← 🔧 the long version: config, debugging, recovery
 │   ├── PROGRESS.md            ← full build log, including what did NOT work
+│   ├── DATABASE.md            ← 💾 backup, restore, and what a dump alone cannot restore
 │   └── SERVER.md              ← inventory, ports, credentials map
 ├── migrations/                ← numbered SQL, every one safe to re-run
 │   └── 001…021_*.sql
@@ -262,6 +263,7 @@ livekit_with_asterisk/
     ├── systemd/asterisk.service
     ├── livekit/livekit.yaml
     ├── redis/redis.conf       ← save 60 1 — see the architecture note
+    ├── backup-db.sh           ← nightly dump, verified before it is kept
     ├── loadtest.sh
     ├── tool-stub-api.py       ← /slow, /fail, /huge — for testing tools honestly
     ├── provider-catalog.py    ← ask a provider what it offers, key never on screen
@@ -320,7 +322,7 @@ Ranked by consequence, not by effort.
 
 | | Work | Why now |
 |---|---|---|
-| 1 | **Database backups** | The only item here where the downside is unrecoverable. |
+| 1 | **Install the backup timer** | Written, not running. And store `SECRETS_KEY` off this box — a dump without it restores rows nobody can decrypt. |
 | 2 | **Wire `HANDOFF_EXTEN`** | A caller who asks for a person gets confirmation, a transfer, and then nothing. Blocked on one number from the dialler team. |
 | 3 | **Decide the firewall and IAX authentication** | Currently open, on purpose, on an isolated LAN. It should stay that way by decision rather than by default. |
 | 4 | **A real recording disclosure** | Every call is recorded. Campaign 1 says nothing. |

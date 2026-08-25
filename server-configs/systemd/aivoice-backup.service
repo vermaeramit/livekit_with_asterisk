@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up the aivoice Postgres database
+# Nothing to dump if the container is not there. Wants, not Requires: a backup
+# failing must never be able to stop docker.
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/aivoice/server-configs/backup-db.sh
+# Output goes to the journal, so a failure is visible in the same place as
+# everything else on this box: journalctl -u aivoice-backup
+StandardOutput=journal
+StandardError=journal

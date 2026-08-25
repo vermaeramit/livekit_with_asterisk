@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly aivoice database backup
+
+[Timer]
+# 02:30, when nobody is calling. RandomizedDelaySec is pointless on one box but
+# harmless, and stops this landing on the same second as anything else added later.
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=300
+# If the box was off at 02:30, run on the next boot rather than skipping a day.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

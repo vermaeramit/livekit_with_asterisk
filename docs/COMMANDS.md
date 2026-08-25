@@ -153,6 +153,21 @@ tool is late.
 
 ---
 
+## Backups
+
+```bash
+# run one now
+systemctl start aivoice-backup && journalctl -u aivoice-backup -n 10 --no-pager
+
+# is the nightly one armed?
+systemctl list-timers aivoice-backup
+```
+
+Restoring, and the reason a dump alone is not enough, are in
+[DATABASE.md](DATABASE.md).
+
+---
+
 ## Rebooting the box
 
 See [RUNBOOK.md §9](RUNBOOK.md) — check what is `enabled` **before** you reboot,
