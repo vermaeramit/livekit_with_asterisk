@@ -2629,6 +2629,60 @@ nothing to clear. A call that finds the cache empty speaks the ordinary way and
 renders afterwards, so no caller ever waits for it, and every failure path falls
 back to synthesising.
 
+### The cost had not gone. It had moved.
+
+The table above was written after two calls and it was wrong about what it
+proved. The greeting had been the first synthesis in the process, so it paid for
+the connection and every later turn was cheap. Removing it did not remove that
+bill - it handed it to the caller's first question.
+
+Call 339: the caller asked, heard nothing, said "हेलो" - and that word
+interrupted the answer at the moment it finally arrived, 6286 ms of tts_ttfb
+later. 0.35 s of it was ever spoken. They hung up sixteen seconds after that. As
+the greeting this cost was merely slow; as the reply it ended the call.
+
+The greeting is 7.2 seconds of audio the caller is already listening to, and
+nothing in a call is a better place to spend a handshake. Six characters are now
+synthesised there, so the connection is open before anybody speaks.
+
+| | greeting | first reply |
+|---|---|---|
+| before any of this | 1458-6835 ms | ~650 ms |
+| cache alone | none | **6286 ms** |
+| cache + warm | none | **639 ms** |
+
+Worth keeping: the first version looked like a clean win on the numbers it
+happened to collect. It took a caller hanging up to show what those numbers had
+left out.
+
+### A ceiling on the STT, written and withdrawn
+
+Call 342 showed the sensitivity fix has a floor it cannot reach past. The caller
+trailed off with "लेकिन।" and waited **15926 ms**. Soniox will not send its end
+token until it agrees the caller has stopped, and `max_endpoint_delay_ms` bounds
+the wait *after* that agreement - so it never applies to the case that hurts.
+
+The words were in our hands throughout: the plugin streams interims and
+withholds only the FINAL. So `stt_node` was given its own ceiling - promote the
+last interim ourselves once the words stop arriving, and drop the provider's
+final when it turns up.
+
+It broke two calls. 343 replied once and went quiet; 344 never replied at all,
+and the caller said "आवाज़ नहीं आ रही". Notably the ceiling never fired - there
+is not one "STT ceiling" line in the journal - so whatever it did wrong, it did
+without ever promoting anything. `STT_FINAL_CEILING_MS=0` restored service
+immediately and it is staying off.
+
+Reverted rather than iterated on, deliberately. The 15926 ms case has appeared
+on one call; the fix for it broke two. Left in the tree behind the switch,
+because the reasoning still holds and the next attempt should start from the
+journal of call 344 rather than from another theory.
+
+Three of my hypotheses about this problem were wrong today - that level 3 caused
+the tail, that the greeting cache had removed a cost, that leaking interims were
+interrupting the agent. Each time the log said otherwise and reading it settled
+in minutes what reasoning about it had not.
+
 ### Two bugs found by reading, not by failing
 
 **The silence watchdog talked to calls that had ended.** It exited on a limit or
@@ -2656,6 +2710,10 @@ transfer behaves and needs the word lists agreed first. Deferred by the user.
 
 ## ⏭️ Next
 
+- **The STT ceiling, from the journal of call 344** - it broke two calls without
+  ever firing, and why is not yet known. `STT_FINAL_CEILING_MS=0` until it is
+- **The warm-up still bills the greeting** - the request_id filter does not
+  catch it; call 345 reports a 1782 ms greeting that was played from disk
 - **Transfer gate reads consent, not just speech** - "क्यों?" currently opens it
   (word lists to be agreed - see 25 Aug)
 - **`preemptive_generation`** - the EOU model is now the slowest leg at ~950 ms
