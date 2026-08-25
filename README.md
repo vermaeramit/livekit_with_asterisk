@@ -3,10 +3,14 @@
 Low-latency AI voice agent for an existing Asterisk SIP dialer.
 Real-time conversation with **STT → LLM → TTS**, live **barge-in**, and a **knowledge base**.
 
-> **Current status:** Step 10a complete. The agent holds a real conversation in Hindi over
-> the phone, answers from a **PDF knowledge base**, **no longer invents facts**, **hands the
-> call to a human** when asked, runs under systemd, and has been load-tested to
-> **10 concurrent calls at full quality**.
+> **Current status:** live on the client's dialler. The agent holds a real Hindi
+> conversation over the phone, answers from a **PDF and Word knowledge base**,
+> **calls the client's own APIs mid-call**, **hands over to a human** on request
+> with the caller's confirmation, **ends the call itself** when the conversation
+> is done, **closes out** when nobody answers, and **posts each finished call to
+> the client's API**. Everything is configured per campaign from a web console —
+> prompts, voices, provider keys, tools, limits.
+>
 > [docs/COMMANDS.md](docs/COMMANDS.md) is the short list — deploy, restart,
 > logs, health. [docs/RUNBOOK.md](docs/RUNBOOK.md) is the full operations
 > reference, and [docs/PROGRESS.md](docs/PROGRESS.md) is the build log,
@@ -34,39 +38,54 @@ Hard requirements:
 ## 2. Architecture
 
 ```
-                        ┌─────────── PHASE 2 (production) ───────────┐
-   PSTN / SIP Trunk ───►│  Existing Asterisk Dialer  (separate box)  │
-                        └────────────────────┬───────────────────────┘
-                                             │ SIP trunk
-   ┌─── PHASE 1 (now) ───┐                   │
-   │  Eyebeam softphone  │──── SIP ──────────┤
-   │  10.130.23.37       │                   │
-   └─────────────────────┘                   ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  Client's Asterisk dialler   10.130.8.76                     │
+   │  Places the call, waits for a human, THEN hands it to us      │
+   └──────────────────────────┬───────────────────────────────────┘
+                              │ IAX2  (not SIP - it is what they run)
+                              │ per-call context as IAX variables
+                              ▼
    ╔══════════════════════════════════════════════════════════════╗
    ║              10.130.9.243   (Rocky Linux 8.10)               ║
+   ║              32 vCPU · 48 GB                                 ║
    ║                                                              ║
-   ║   Asterisk (test)                                            ║
-   ║        │ SIP INVITE                                          ║
+   ║   Asterisk 20.20.1  (native, not a container)                ║
+   ║        │ SIP INVITE + X- headers, MixMonitor recording       ║
    ║        ▼                                                     ║
-   ║   livekit-sip  ◄──► Redis                                    ║
+   ║   livekit-sip  ◄──► Redis (persisted - see below)            ║
    ║        │ WebRTC                                              ║
    ║        ▼                                                     ║
    ║   livekit-server                                             ║
    ║        │ WebRTC                                              ║
    ║        ▼                                                     ║
-   ║   AI Agent (Python)                                          ║
+   ║   AI Agent  ×6 workers (systemd, 6 warm processes each)      ║
    ║     ├─ VAD (Silero, local)      ─┐                           ║
    ║     ├─ Turn detector (local)     │  barge-in handled here    ║
    ║     ├─ STT  ─┐                   │                           ║
    ║     ├─ LLM   ├─ streaming       ─┘                           ║
-   ║     └─ TTS  ─┘                                               ║
+   ║     ├─ TTS  ─┘                                               ║
+   ║     ├─ Knowledge base  (pgvector)                            ║
+   ║     └─ HTTP tools      (the client's own APIs)               ║
+   ║                          │                                   ║
+   ║   Admin console ─────────┤  Postgres                         ║
+   ║   (React + FastAPI)      │  config · calls · transcripts     ║
+   ║        └─ postback sweeper ──────────► the client's API      ║
    ╚═════════════════════════┬════════════════════════════════════╝
                              │ HTTPS (outbound only)
                              ▼
-                  Sarvam · Gemini · OpenAI
+                  Sarvam · Soniox · OpenAI
 ```
 
-**Media never leaves the LAN.** Only AI API calls go to the internet.
+**Media never leaves the LAN.** Only AI API calls and the client's own tool
+endpoints go out.
+
+**The dialler hands over already-connected calls.** Everything the caller hears
+before the agent speaks is dead air to a person who is already on the line,
+which is why the startup path has been measured to the millisecond.
+
+> ⚠️ Redis holds the SIP trunk and dispatch rule. It runs with `save 60 1`
+> because the first reboot of this box lost them, and every call then rang and
+> died with nothing in any log to say why.
 
 ### Why LiveKit and not raw Asterisk AudioSocket
 
@@ -90,81 +109,121 @@ LiveKit ships all four production-grade. The custom path means rebuilding them.
 | **TTS** | Sarvam `bulbul:v3` | Same 11 languages, natural Indic prosody |
 | **VAD / turn detection** | Silero + LiveKit multilingual detector | Runs locally on CPU — zero network latency |
 | **Media server** | LiveKit (self-hosted) | Keeps all media on the LAN |
-| **Config store** | Postgres (pgvector) | Prompt/model/voice changes are a SQL update, not a deploy |
+| **Config store** | Postgres (pgvector) | Everything is per campaign and edited in the console — no deploy |
+| **Provider choice** | Per campaign, keys encrypted per client | STT, TTS and their fallbacks are columns, not constants |
 
 **Rejected:** Deepgram — 286 ms TCP RTT from this server, no India edge. Disqualifying for streaming STT.
+
+**Measured and not adopted:** Soniox. Three to four times slower than Sarvam on
+every layer across 144 turns against 661. It stays wired and selectable — the
+campaign currently runs on it by choice — and finding that out produced two
+things worth having: `tts-rt-v1` is removed on 31 Aug 2026 and was the
+hardcoded default, and the console's voice list is now read from the provider
+per model rather than held as a literal that had already gone stale.
+
 **Not needed:** Anthropic, ElevenLabs — Sarvam covers Indic better for this use case.
 
-### Measured latency (Step 8, real calls)
+### Measured latency
 
-| Stage | Median | Note |
+Two numbers matter, and they are not the same one.
+
+**Before the caller hears anything** — the dialler hands over a connected human,
+so this is silence to someone already holding a phone:
+
+| Stage | Was | Now |
 |---|---|---|
-| Transport (RTP + WebRTC, both ways) | 205 ms | Measured in Step 7 |
-| **Endpointing (`eou`)** | **1030 ms** | **Largest remaining item** — includes STT |
-| ├ STT transcript | 327 ms | Was 1000 ms before `high_vad_sensitivity` |
-| ├ Turn detector inference | 200–450 ms | Local ONNX, CPU-bound |
-| └ `min_endpointing_delay` | 250 ms | |
-| LLM TTFT | 738 ms | |
-| TTS TTFB | 241 ms | |
-| **Total mouth-to-ear** | **~2.1 s** | Range 1.2–2.8 s |
+| invite → 180 Ringing (livekit-sip) | 5 ms | 5 ms |
+| invite → participant in room | 43 ms | 43 ms |
+| `ctx.connect()` | 312 ms | 312 ms |
+| config + keys + prompt | **1154 ms** | **339 ms** |
+| session build | 159 ms | 159 ms |
+| **ring the caller hears** | **~2.07 s** | **~0.75 s** |
+| **invite → first spoken word** | **~4.03 s** | **~2.4 s** |
 
-The original 830 ms estimate was optimistic on two counts: real transport is 205 ms (not
-60 ms), and `gpt-4.1-mini` TTFT is ~610–740 ms (not 250 ms). Started at 2.5–4.7 s.
+The 1154 ms was `import kb` sitting inside `build_instructions`. It pulls in
+pymupdf4llm — PyMuPDF, a large C extension used only for PDF *ingestion* — plus
+tiktoken and the OpenAI SDK. A job process handles exactly one call and then
+exits, so it was paid **once per caller**. Moved to `prewarm`, where the process
+is idle anyway.
 
-**Two findings worth carrying forward:**
+LiveKit's share of the original 4030 ms was 355 ms, which is worth knowing: the
+dialler team proposed moving off it, reasonably, based on another project.
 
-- Sarvam's **server-side VAD** was costing ~700 ms per turn — it declared end-of-speech
-  700 ms after the local Silero VAD did, and transcription only starts after that.
-  `high_vad_sensitivity=true` removes almost all of it. The fine-grained VAD params are
-  silently ignored on `saarika:*` (`supports_vad_params=False`).
-- **Consistency beats average.** `gpt-4.1-mini` won over `gpt-4o-mini` mainly on variance
-  (85 ms spread vs 800 ms) — a turn at 800 ms followed by one at 1550 ms is audible.
+**Per turn**, once talking:
 
-Sending the full knowledge base every turn would push LLM TTFT well past 1 s.
-RAG must be a **tool call or pre-fetched**, not stuffed into the prompt (Step 9).
+| Stage | Sarvam | Soniox |
+|---|---|---|
+| Turn detection (`eou`, includes STT) | ~1050 ms | 1454 → **1178 ms** |
+| STT transcript | ~240 ms | 1067 → **750 ms** |
+| TTS first byte | ~280 ms | ~950 ms |
+| **Total** | **~1.9 s** | 3076 → **2695 ms** |
 
+Soniox is the chosen provider despite the gap. Its endpointing level was at the
+default (0) and had simply never been set; level 3 took ~380 ms off every turn.
+
+**Three findings worth carrying:**
+
+- Sarvam's **server-side VAD** cost ~700 ms per turn until
+  `high_vad_sensitivity=true`. The fine-grained VAD params are silently ignored
+  on `saarika:*` (`supports_vad_params=False`).
+- **Consistency beats average.** `gpt-4.1-mini` won over `gpt-4o-mini` mainly on
+  variance (85 ms spread vs 800 ms) — a turn at 800 ms followed by one at
+  1550 ms is audible.
+- **Prompt caching is real and fragile.** 1198 ms cold against 805 ms warm, and
+  it needs a byte-identical prefix. Per-caller context therefore arrives as a
+  separate chat message, never inside `instructions`.
 ---
 
 ## 4. Open decisions
 
-| # | Decision | Status |
+Ranked by what happens if nobody acts.
+
+| # | Decision | Why it matters |
 |---|---|---|
-| 1 | Language selection per call — pass from dialer via SIP header (0 ms) vs auto-detect (+300–500 ms) | ⏳ Does the CRM have a language field? |
-| 2 | Production Asterisk flavour — vanilla / FreePBX / VICIdial | ⏳ Pending from dialer team |
-| 3 | cgroup v2 migration (better CPU control + PSI metrics, needs a reboot) | ⏳ Optional |
-| 4 | Scale-out plan for > 20 concurrent calls | 📌 Deferred — VM resize or extra worker box |
+| 1 | **No database backup exists** | 327 calls, every campaign's config, and the encrypted provider keys are on one disk. Nothing else in this list can cost as much. |
+| 2 | **`HANDOFF_EXTEN` is empty** | Transfer works end to end — the agent asks, the caller agrees, the REFER goes out — and stops at extension `800`. Needs one queue number from the dialler team. |
+| 3 | **Firewall is off, and the IAX peer is unauthenticated** | `permit=0.0.0.0/0`, `requirecalltoken=no`, `insecure=port,invite`. Fine on an isolated LAN, and a decision that should be made rather than inherited. |
+| 4 | **IAX register credential is `76SERVER:76SERVER`** | Username and password are the same string. |
+| 5 | Recording disclosure on campaign 1 is a single dot | Every call is recorded unconditionally by the dialplan. Callers are told nothing. |
+| 6 | Real DIDs are not mapped | Needs the dialler to send `${EXTEN}`, and `_7XX` widened. Everything routes through 700 today. |
+| 7 | Capacity on native Asterisk is assumed, not measured | 20/20 was proven under Docker. Deferred to last by request, to avoid spending provider credit on synthetic calls. |
 
-### Questions for the dialer team
+### Settled
 
-1. Output of `asterisk -V` (gives version and flavour)
-2. Channel driver — `chan_sip` or `chan_pjsip`?
-3. Can a new SIP trunk be added, and calls routed to it?
-4. Trunk codec — G.711 (ulaw/alaw) or G.729?
-
-> Q4 is a hidden latency cost: G.729 forces transcoding on every call (~20–30 ms + CPU). G.711 is ideal.
+- **Trunk** — the dialler runs IAX2, not SIP. A SIP trunk was built first and
+  declared working before anyone checked the channel name; it was never used.
+- **Asterisk flavour** — moved out of Docker to a native 20.20.1 build, because
+  the team who operate telephony do not work with containers. The usual argument
+  against Asterisk in Docker never applied here: `network_mode: host` meant no
+  NAT, no port mapping, and no measurable difference.
+- **Codec** — G.711 ulaw end to end. No transcoding.
+- **Language** — per campaign in the console, not auto-detected.
 
 ---
 
 ## 5. Capacity
 
-Current sizing target is **18–20 concurrent calls** on the existing 8 vCPU box.
+The box was resized mid-project to **32 vCPU / 48 GB**.
 
-Each call consumes roughly **0.35 vCPU** in the agent (VAD + turn detector + resampling).
+**20 concurrent calls, 0 dropped** — proven, but under the Docker Asterisk. The
+native install has not been re-measured.
 
-| Concurrent calls | vCPU needed |
-|---|---|
-| 20 | ~8 (current box) |
-| 50 | ~20 |
-| 100 | ~39 |
+The ceiling that mattered was never CPU. Dispatch stopped dead at 6 concurrent
+while the box sat at 12 % across 32 cores, because LiveKit weights workers by
+`1 - w.Load()` and livekit-agents reports **system-wide CPU** as that load.
+Every worker on one box therefore reports the same number and they all lose
+capacity at the same instant. The fix is on the agent side — `load_fnc` counting
+jobs instead — and concurrency is now capped by
+`MAX_JOBS_PER_WORKER × workers`, nowhere else.
 
-Agent workers are **stateless** — scaling out later is an env-var change (`LIVEKIT_URL`),
-not a redesign. Two options when the time comes:
+Agent workers are **stateless**, so scaling out is an env-var change
+(`LIVEKIT_URL`), not a redesign:
 
-- **A.** Resize this VMware VM to 24–32 vCPU (simple, but a single point of failure)
-- **B.** Split: this box = LiveKit + SIP + Redis; add dedicated agent-worker boxes ← recommended
+- **A.** Resize this VM further — simple, single point of failure
+- **B.** Split: this box = LiveKit + SIP + Redis; add agent-worker boxes ← recommended
 
-⚠️ On a single box, agent workers must have **CPU limits** so they cannot starve the LiveKit SFU.
-A starved SFU degrades audio on **every** call, not just one.
+⚠️ On a single box, agent workers need **CPU limits** so they cannot starve the
+LiveKit SFU. A starved SFU degrades audio on **every** call, not just one.
 
 ---
 
@@ -179,63 +238,108 @@ livekit_with_asterisk/
 │   ├── RUNBOOK.md             ← 🔧 the long version: config, debugging, recovery
 │   ├── PROGRESS.md            ← full build log, including what did NOT work
 │   └── SERVER.md              ← inventory, ports, credentials map
+├── migrations/                ← numbered SQL, every one safe to re-run
+│   └── 001…021_*.sql
 ├── agent/
-│   ├── voice_agent.py         ← the agent (STT → LLM → TTS, barge-in, metrics)
-│   ├── store.py               ← Postgres config + call/turn logging
-│   ├── echo_agent.py          ← transport-only echo (Step 7)
-│   ├── measure_latency.py     ← round-trip measurement via cross-correlation
-│   ├── bench_llm.py           ← per-model TTFT benchmark
+│   ├── voice_agent.py         ← the agent: pipeline, markers, silence, handoff
+│   ├── store.py               ← Postgres: config, calls, turns, tools, postbacks
+│   ├── prompt.py              ← instruction assembly (the cacheable prefix)
+│   ├── kb.py                  ← PDF + Word ingestion, chunking, hybrid retrieval
+│   ├── ingest.py              ← CLI: ingest everything in the inbox
+│   ├── tools.py               ← per-campaign HTTP tools, with fillers + timeouts
+│   ├── toolfmt.py             ← placeholder fill + response path, shared with the console
+│   ├── postback.py            ← extract a finished call into the client's fields
+│   ├── crypto.py              ← Fernet; the console imports this one, never a copy
 │   └── requirements.txt
-└── server-configs/            ← mirror of what is deployed on the server
-    ├── docker-compose.yml
+├── admin/
+│   ├── docker-compose.yml     ← its own project: rebuilding never touches a call
+│   ├── backend/               ← FastAPI: config, calls, KB, tools, postback sweeper
+│   └── frontend/              ← React console
+└── server-configs/            ← mirror of what is deployed
+    ├── docker-compose.yml     ← media stack (livekit, sip, redis, postgres)
     ├── postgres-schema.sql
-    ├── asterisk/{Dockerfile,entrypoint.sh,conf/*}
+    ├── asterisk/conf/*        ← dialplan, iax/pjsip templates, logger
+    ├── systemd/asterisk.service
     ├── livekit/livekit.yaml
-    ├── redis/redis.conf
-    └── sip/config.yaml.template
+    ├── redis/redis.conf       ← save 60 1 — see the architecture note
+    ├── loadtest.sh
+    ├── tool-stub-api.py       ← /slow, /fail, /huge — for testing tools honestly
+    ├── provider-catalog.py    ← ask a provider what it offers, key never on screen
+    └── prompt-glamourx.md     ← the live campaign prompt, and why it reads that way
 ```
 
-**Secrets are never committed.** The real `.env` lives only on the server; `.gitignore`
-blocks `.env`, `*.key`, `*.pem`, and the substituted `sip/config.yaml`.
+**Secrets are never committed.** The real `.env` lives only on the server;
+`.gitignore` blocks `.env`, `*.key`, `*.pem`, `pjsip.conf`, `iax.conf` and the
+substituted `sip/config.yaml`. Provider keys, tool auth values and the postback
+credential are Fernet-encrypted in Postgres and never returned by the API — the
+console works from a four-character hint.
 
 ### Tags
 
 | Tag | Milestone |
 |---|---|
 | `v0.3.0` | Step 8 — working AI voice pipeline |
-| `v0.4.0` | Step 9 — knowledge base + tools *(planned)* |
-| `v0.5.0` | Step 10 — production hardening *(planned)* |
-| `v1.0.0` | Step 11 — admin panel *(planned)* |
 
-> The `*(planned)*` tags were never cut. Steps 9, 10 and 11 are all done and on `main`.
+> The only tag ever cut. Steps 9 through 12 are all done and on `main`; the
+> history is in [docs/PROGRESS.md](docs/PROGRESS.md), which is the honest record
+> and considerably more useful than a tag would have been.
 
 ---
 
 ## 7. Roadmap
 
-| Step | Description | Status |
+### Done
+
+| Step | Description | Result |
 |---|---|---|
-| 1 | Server discovery — specs, network, SELinux, firewall, AI latency baseline | ✅ Done |
-| 2 | OS prep — updates, EPEL/CRB, timezone, kernel tuning, ulimits | ✅ Done |
-| 3 | Docker CE + daemon config (log rotation, live-restore) | ✅ Done |
-| 4 | Test Asterisk + Eyebeam registration, echo test | ✅ Done |
-| 5 | LiveKit Server + Redis | ✅ Done |
-| 6 | LiveKit SIP gateway + Asterisk trunk wiring | ✅ Done |
-| 7 | Echo agent — **end-to-end latency baseline** | ✅ **205 ms** |
-| 8 | Real pipeline: Sarvam STT → `gpt-4.1-mini` → Sarvam TTS + barge-in | ✅ **~1.9 s median** |
-| 9 | Knowledge base + grounding | ✅ **no hallucinations** |
-| 9b | Human transfer (SIP REFER) | ✅ verified end to end |
-| 10a | systemd, fallback route, load test | ✅ **10 concurrent** |
-| 10b | Provider fallback chains — wired for STT, TTS and LLM | ✅ |
+| 1–3 | Server prep, Docker, kernel and ulimit tuning | ✅ |
+| 4–6 | Asterisk, LiveKit Server, Redis, livekit-sip trunk | ✅ |
+| 7 | Echo agent — transport-only latency baseline | ✅ **205 ms** |
+| 8 | Real pipeline: STT → `gpt-4.1-mini` → TTS + barge-in | ✅ **~1.9 s median** |
+| 9 | Knowledge base + grounding | ✅ no hallucinations |
+| 9b | Human transfer over SIP REFER | ✅ verified end to end |
+| 10a | systemd, fallback route, load test | ✅ |
+| 10b | Provider fallback chains — STT, TTS, LLM | ✅ |
 | 10c | Cost guardrails + monitoring | ✅ |
-| 11.1 | Admin panel — auth, RBAC, tenant isolation, call review | ✅ |
-| 11.2 | Clients, users, campaigns, agent config editor, KB upload | ✅ |
-| 11.3 | Analytics in-panel, Grafana retired | ✅ |
-| 11.4 | Call recordings — Opus, 90-day retention, in-panel playback | ✅ |
-| 11.5 | Live monitor + alerting (rules, webhook, in-panel) | ✅ |
-| — | Capacity test | ✅ **20 concurrent, 0 calls dropped** |
-| — | LLM fallback chain failed at 20 concurrent — both legs down, 3 calls lost | ⏭️ deferred |
-| — | Recording disclosure in campaign greetings — callers are not told | ⏭️ **Next** |
+| 11 | Admin console — auth, RBAC, tenants, campaigns, KB, analytics, recordings, live monitor, alerting | ✅ |
+| — | Capacity | ✅ **20 concurrent, 0 dropped** (under Docker Asterisk) |
+| — | Dispatch ceiling — root cause was CPU-based load reporting | ✅ |
+| — | Asterisk out of Docker — native 20.20.1, SELinux labels, recordings migrated | ✅ |
+| 12.1 | Per-client encrypted provider keys; STT/TTS chosen per campaign | ✅ |
+| 12.2 | Dialler trunk over IAX2; per-call context into the prompt and the database | ✅ |
+| 12.3 | HTTP tools — schema, executor, console CRUD, test button, activity log | ✅ |
+| 12.4 | Call diagnostics — tool calls in the transcript, dialler context, providers used | ✅ |
+| 12.5 | Startup latency — 4.03 s to first word cut to **~2.4 s** | ✅ |
+| 12.6 | End-of-call and transfer markers, silence handling, transfer confirmation | ✅ |
+| 12.7 | Postback — extract a finished call and POST it, with retries and a log | ✅ |
+| 12.8 | Word documents in the knowledge base | ✅ |
+
+### Next
+
+Ranked by consequence, not by effort.
+
+| | Work | Why now |
+|---|---|---|
+| 1 | **Database backups** | The only item here where the downside is unrecoverable. |
+| 2 | **Wire `HANDOFF_EXTEN`** | A caller who asks for a person gets confirmation, a transfer, and then nothing. Blocked on one number from the dialler team. |
+| 3 | **Decide the firewall and IAX authentication** | Currently open, on purpose, on an isolated LAN. It should stay that way by decision rather than by default. |
+| 4 | **A real recording disclosure** | Every call is recorded. Campaign 1 says nothing. |
+| 5 | **Verify the postback against a real endpoint** | Built and deployed; nothing has actually been received by anyone yet. |
+| 6 | **Load test 20 concurrent on native Asterisk** | Deliberately last — synthetic calls spend real provider credit. |
+
+### Not planned, and why
+
+- **Excel in the knowledge base.** A price or dealer list is an exact lookup;
+  vector search answers those approximately. That data belongs in a tool, which
+  is where `dealer_by_pincode` already lives.
+- **Pre-rendered greeting audio.** The greeting carries the caller's name, so
+  there is nothing constant to cache.
+- **Shipping agent logs into the console.** The per-call diagnostics answer the
+  recurring questions. Raw logs matter when something *crashes*, which is rare —
+  if the server still gets SSH'd into regularly, that is the measurement that
+  justifies the pipeline.
+
+---
 
 ### Provider fallback — wired, and half of it is proven
 
@@ -350,12 +454,22 @@ Two results worth carrying forward:
 Injecting the KB also pushed the prompt past OpenAI's 1024-token caching threshold —
 **95 % of the prompt is now cached**, so carrying the whole KB costs only ~114 ms.
 
-### Carried into Step 10
+### Three problems from Step 8, and where they went
 
-- **First call after a worker restart only rings.** Worker startup takes ~7 s and `dev`
-  mode keeps no idle processes. Fix: systemd unit running `start` mode with
-  `num_idle_processes`, plus `Dial(...,8)` and a fallback route so a down worker fails over
-  in 8 s instead of ringing for 30 s.
-- **The LLM invents specifics** (it produced a fake Kotak missed-call number). Step 9's
-  grounding is the fix.
-- **Occasional TTS spike** — one turn at 1.26 s against a 0.23 s norm. Needs a fallback provider.
+- **First call after a worker restart only rang.** Worker startup took ~7 s and
+  `dev` mode keeps no idle processes. Fixed: systemd units running `start` mode
+  with `num_idle_processes`, plus a fallback route so a down worker fails over
+  rather than ringing for thirty seconds.
+- **The LLM invented specifics** — it produced a fake missed-call number.
+  Grounding fixed it, and the campaign prompt now says plainly what may not be
+  invented.
+- **Occasional TTS spike** — one turn at 1.26 s against a 0.23 s norm. Fallback
+  chains cover it, and `providers_used` records per call which provider actually
+  served it, so a fallback that fired is visible instead of being inferred from
+  a resampling line in a worker log.
+
+---
+
+The sections above are the short version. [docs/PROGRESS.md](docs/PROGRESS.md)
+is the long one — every step, every measurement, and the wrong answers that
+were tried first, which is usually the part worth reading.
