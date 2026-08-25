@@ -1533,9 +1533,15 @@ async def entrypoint(ctx: JobContext):
             bits = "  ".join(f"{k[:-3]}={v}ms" for k, v in t.items() if k.endswith("_ms"))
             logger.info("[%-9s] %s%s", role, text,
                         f"\n            {bits}{extra}" if bits else "")
+            # Named, not matched on a suffix. log_turn has read kb_chunk_ids
+            # and kb_scores since the table was created, the API has returned
+            # them and the console has rendered them - and this comprehension,
+            # keeping only keys ending in "_ms", dropped them on the floor every
+            # time. Four working pieces and one silent filter in the middle.
             asyncio.create_task(store.log_turn(
                 call_id, seq, "agent" if role == "assistant" else "user", text,
-                **{k: v for k, v in t.items() if k.endswith("_ms")}))
+                **{k: v for k, v in t.items()
+                   if k.endswith("_ms") or k in ("kb_chunk_ids", "kb_scores")}))
         except Exception:
             logger.exception("transcript handler failed")
 
