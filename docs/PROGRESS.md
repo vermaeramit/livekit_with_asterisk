@@ -2771,6 +2771,40 @@ tell every caller the wrong time in a zone nobody chose.
 
 ---
 
+### Noise cancellation: measured, and declined
+
+Raised as a campaign-wise toggle, and worth taking seriously for a reason beyond
+audio quality - the standing explanation for call 342's 15926 ms wait was that
+constant line noise stopped Soniox accepting the caller had gone quiet. If true,
+removing the noise treats it at the source.
+
+It is not true. From that call's own recording:
+
+| window | RMS | peak |
+|---|---|---|
+| 16-30 s, the wait | **-79.88 dB** | -65.16 dB |
+| 5-13 s, caller speaking | -24.73 dB | -3.21 dB |
+
+`-79.88 dB` is digital silence, 55 dB below speech, and ffmpeg's own
+`silencedetect` recorded one unbroken silence from 14.26 s to 33.33 s. Soniox
+was given **nineteen seconds of nothing** and still did not send an end token,
+under a `max_endpoint_delay_ms` of 1500.
+
+So there is nothing to cancel, and the theory the feature rested on is dead.
+Declined: the plugin is not installed and is very likely LiveKit Cloud only,
+this deployment is self-hosted, and 8 kHz telephony would blunt it even if both
+of those went the other way.
+
+Worth revisiting only on evidence, and the evidence is transcripts: today's are
+clean. Real customers calling from a street or a room with a television are a
+different case, and one that cannot be measured from a quiet desk.
+
+The finding matters more than the decision. It rules out the line and leaves the
+provider - which puts the withdrawn stt_node ceiling back as the right idea
+badly executed, rather than the wrong idea.
+
+---
+
 ## ⏭️ Next
 
 - **The STT ceiling, from the journal of call 344** - it broke two calls without
