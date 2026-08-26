@@ -2805,6 +2805,40 @@ badly executed, rather than the wrong idea.
 
 ---
 
+### Something to say while it searches, and a payload the client can parse
+
+Two small things, both from watching the knowledge base go live.
+
+**A filler on `search_knowledge_base`.** Campaign tools have had one since
+migration 018; the built-in KB tool never did, because it was the rarer path
+then. It is now the common one - a search costs 810-1860 ms and runs on very
+nearly every question - so that is a second of silence each time, and silence is
+what makes a caller say "hello?". Same shape as the tool filler: started rather
+than awaited, cancelled the moment the answer lands, so a fast search stays
+quiet. Kept out of the chat context, unlike the tool version - it is a noise
+made while waiting, not something the agent said.
+
+**The postback envelope became optional, and the field set became stable.**
+
+`call / dialer / extracted / tools` exists so a reader can tell a measured fact
+from a model's reading of a conversation. That is right when the reader is ours.
+The client's endpoint is a different reader: it asked for six fields and wants
+an object with six keys. With `postback_full_payload` off it gets exactly that.
+Defaults to on, so nothing already delivering changes shape on the morning of a
+migration, and the console states what is lost - a flat payload carries no id,
+so the receiving end cannot tie the record back to a call. Chosen anyway, with
+that understood.
+
+Every configured field is now present on every call, `null` where the
+conversation did not establish one. They used to be dropped, on the reasoning
+that "absent" is the honest description of a field never reached. It is - but it
+made the payload a different shape each time, so a client has to guard every key
+and still cannot tell "not discussed" from "the field list changed". A stable
+object with nulls says the same thing and can just be read. That holds when
+extraction fails outright too: the full shape with nulls, never an empty object.
+
+---
+
 ## ⏭️ Next
 
 - **The STT ceiling, from the journal of call 344** - it broke two calls without
