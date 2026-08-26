@@ -2708,12 +2708,79 @@ transfer behaves and needs the word lists agreed first. Deferred by the user.
 
 ---
 
+## Where an answer came from, and what day it is (26 Aug 2026)
+
+The knowledge base went live - 26 documents, 524 chunks, **108,273 tokens**.
+Eighteen times what fits in a prompt, so `index` mode, and the index itself is
+only **726 tokens**. Every product question now goes through search: five
+searches in five turns on the first real call, scores 0.51-0.78, and the answers
+carried real figures rather than plausible ones.
+
+### Four working pieces and a filter in the middle
+
+The console could always have shown which documents answered a turn. There is an
+endpoint that resolves chunk ids to a filename, heading and page; a component
+that renders them under the turn with their scores; a column in the schema; and
+`store.log_turn` reading both fields. None of it had ever run, because the turn
+was written with
+
+    **{k: v for k, v in t.items() if k.endswith("_ms")}
+
+and the two fields do not end in `_ms`. They were dropped without a word, every
+turn, since the table was created. The whole feature looked unbuilt when it was
+90% built and disconnected by one comprehension.
+
+It matters now more than it did. With 108k tokens behind a search, the first
+question about a wrong answer is whether the documents are wrong or the model
+read them wrong, and there was no way to tell from the console.
+
+The very first call after it worked showed why:
+
+    TOOL search_knowledge_base('engine capacity Lender Plus Flex')
+      -> 3 hit(s)  ['0.57', '0.53', '0.52']
+
+The caller asked about **Splendor Plus Flex**. Soniox heard "लेंडा प्लस फ्लेक्स",
+the model searched for "Lender Plus Flex", and retrieval confidently returned
+**Pleasure Plus XTEC** at 0.57. The agent then quoted the wrong bike's engine.
+Retrieval was not at fault and neither was the prompt - STT mangled the model
+name and nothing anywhere said so. Soniox's `context` option can be given the
+model names; noted, not touched.
+
+### The agent did not know the date
+
+Callers asked outright on call 345 and were told it could not say. The larger
+cost was quieter: "कल आ जाऊँगा, सुबह 10 बजे" cannot become a real date without
+knowing today's, so the postback carried the words and not the appointment.
+
+One line, appended at the very end of the prompt, once per call. Two decisions
+worth keeping:
+
+**Outside `build_instructions`, not in it.** That module exists because the
+agent and the cache warmer must emit a byte-identical prefix - a clock inside
+would differ by a second each time and silently create a second cache, the exact
+failure its own docstring warns about. Appended afterwards, the warmer's output
+stays an exact PREFIX of the agent's, so the index and every rule still cache.
+
+**Once per call, not per turn.** A clock that ticked every turn would make every
+turn a cache miss. The price is that on a three-minute call the time can be two
+minutes old, which matters to nobody asking about tomorrow morning.
+
+The timezone is validated by the API rather than left to the agent, which falls
+back to +05:30 and carries on. A typo would raise nothing at all - it would just
+tell every caller the wrong time in a zone nobody chose.
+
+---
+
 ## ⏭️ Next
 
 - **The STT ceiling, from the journal of call 344** - it broke two calls without
   ever firing, and why is not yet known. `STT_FINAL_CEILING_MS=0` until it is
 - **The warm-up still bills the greeting** - the request_id filter does not
   catch it; call 345 reports a 1782 ms greeting that was played from disk
+- **STT mangles model names** - "Splendor Plus Flex" reached search as "Lender
+  Plus Flex" and matched a different bike at 0.57. Soniox takes a `context` list
+- **Click-to-insert placeholder chips** on greeting and messages, filled from
+  the `dialer.*` fields real calls actually carry
 - **Transfer gate reads consent, not just speech** - "क्यों?" currently opens it
   (word lists to be agreed - see 25 Aug)
 - **`preemptive_generation`** - the EOU model is now the slowest leg at ~950 ms
