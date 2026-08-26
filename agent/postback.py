@@ -119,11 +119,12 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
     schema = build_schema(fields)
     if not schema:
         return {}
+    keys = list(schema["properties"])
 
     text = transcript_text(turns)
     if not text.strip():
         log.info("postback: nothing said on this call, skipping extraction")
-        return {}
+        return {k: None for k in keys}
 
     # Appended rather than mixed in, and labelled, so the model can tell what a
     # person said from what a system returned. Rule 5 below leans on that.
@@ -149,22 +150,37 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
             },
         )
         data = json.loads(resp.choices[0].message.content or "{}")
-        # Drop nulls rather than sending them. A field the conversation never
-        # reached is absent, which most APIs treat differently from an explicit
-        # null - and "absent" is the honest description.
-        out = {k: v for k, v in data.items() if v is not None and v != ""}
-        log.info("postback: extracted %d of %d fields", len(out),
-                 len(schema["properties"]))
+        # Every configured key, every time, null where the conversation did not
+        # establish one.
+        #
+        # These used to be dropped, on the reasoning that "absent" is the honest
+        # description of a field never reached. It is - but it made the payload
+        # a different shape on every call, and a client parsing it has to guard
+        # each key separately and cannot tell "not discussed" from "we changed
+        # the field list". A stable object with nulls in it says the same thing
+        # and can be read without guarding.
+        out = {k: (None if data.get(k) == "" else data.get(k)) for k in keys}
+        found = sum(1 for v in out.values() if v is not None)
+        log.info("postback: extracted %d of %d fields", found, len(keys))
         return out
     except Exception:
+        # Still the full shape. A failed extraction must not look to the client
+        # like a different message from a call where nothing was established.
         log.exception("postback extraction failed - sending the facts anyway")
-        return {}
+        return {k: None for k in keys}
 
 
 def envelope(*, call_row: dict, dialler: dict, extracted: dict,
              turns: list[dict] | None,
-             tool_calls: list[dict] | None = None) -> dict:
+             tool_calls: list[dict] | None = None,
+             full: bool = True) -> dict:
     """The payload.
+
+    `full=False` sends the extracted fields alone, flat, and nothing else. That
+    is what a client's existing endpoint usually expects - it asked for six
+    fields and wants an object with six keys in it. Everything below exists for
+    a consumer who wants to know where each value came from, which is a
+    different reader with a different need.
 
     Split into three parts on purpose, because they have three different levels
     of trust and whoever consumes this needs to know which is which:
@@ -180,6 +196,12 @@ def envelope(*, call_row: dict, dialler: dict, extracted: dict,
     bytes their API sent - so if the extraction and this disagree, this is the
     one to believe.
     """
+    if not full:
+        # Deliberately not merged with anything. Adding an id here would be
+        # helpful right up until it collided with a field of the same name that
+        # the campaign had configured.
+        return dict(extracted or {})
+
     body: dict[str, Any] = {
         "call": {
             "id": call_row.get("id"),

@@ -72,6 +72,8 @@ class AgentConfig:
     postback_enabled: bool
     postback_fields: Optional[list]
     postback_include_transcript: bool
+    # false = send the extracted fields alone, flat. See migration 025.
+    postback_full_payload: bool
     # NULL = no marker-driven handoff on this campaign. The tool still works.
     transfer_marker: Optional[str]
     # Spoken with the greeting on every call. Recording is unconditional in the

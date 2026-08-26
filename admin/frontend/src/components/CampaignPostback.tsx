@@ -207,11 +207,24 @@ export function CampaignPostback({
           <FieldList fields={fields} onChange={(f) => set('postback_fields', f as never)} />
 
           <Toggle
-            label="Include the full transcript"
-            checked={value.postback_include_transcript}
-            onChange={(v) => set('postback_include_transcript', v)}
-            hint="Off by default — it is by far the largest part of the payload, and most APIs do not want it."
+            label="Send the call details too"
+            checked={value.postback_full_payload}
+            onChange={(v) => set('postback_full_payload', v)}
+            hint={
+              value.postback_full_payload
+                ? 'On: the fields arrive under "extracted", alongside "call" (duration, outcome, recording id), "dialer" (whatever your dialler sent) and "tools" (what your own APIs answered).'
+                : 'Off: the payload is just the fields above, flat, and nothing else — { "payment_mode": "cash", "pincode": "122015" }. Note there is then no id in it, so the receiving end cannot tie the record back to a call.'
+            }
           />
+
+          {value.postback_full_payload && (
+            <Toggle
+              label="Include the full transcript"
+              checked={value.postback_include_transcript}
+              onChange={(v) => set('postback_include_transcript', v)}
+              hint="Off by default — it is by far the largest part of the payload, and most APIs do not want it."
+            />
+          )}
 
           <div className="grid gap-5 sm:grid-cols-2">
             <NumberField

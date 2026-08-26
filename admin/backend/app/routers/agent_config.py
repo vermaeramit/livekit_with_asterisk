@@ -37,7 +37,8 @@ FIELDS = (
     "prompt_datetime", "prompt_timezone",
     "postback_enabled", "postback_url", "postback_auth_header",
     "postback_auth_value_hint", "postback_fields",
-    "postback_include_transcript", "postback_max_attempts",
+    "postback_include_transcript", "postback_full_payload",
+    "postback_max_attempts",
     "postback_retry_after_sec",
     "recording_disclosure",
 )

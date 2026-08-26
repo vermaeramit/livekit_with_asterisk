@@ -203,6 +203,8 @@ class AgentConfigOut(BaseModel):
     postback_auth_value_hint: str | None
     postback_fields: list[dict] | None
     postback_include_transcript: bool
+    # false = the extracted fields alone, flat.
+    postback_full_payload: bool
     postback_max_attempts: int
     postback_retry_after_sec: int
 
@@ -303,6 +305,7 @@ class AgentConfigUpdate(BaseModel):
     postback_auth_value: str | None = Field(default=None, max_length=2000)
     postback_fields: list[dict] | None = None
     postback_include_transcript: bool | None = None
+    postback_full_payload: bool | None = None
     postback_max_attempts: int | None = Field(default=None, ge=1, le=20)
     postback_retry_after_sec: int | None = Field(default=None, ge=10, le=3600)
 

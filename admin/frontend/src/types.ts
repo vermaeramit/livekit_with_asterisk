@@ -219,6 +219,8 @@ export interface AgentConfig {
   postback_auth_value_hint: string | null
   postback_fields: { key: string; type: string; description: string }[] | null
   postback_include_transcript: boolean
+  // false = just the extracted fields, flat. true = the full envelope.
+  postback_full_payload: boolean
   postback_max_attempts: number
   postback_retry_after_sec: number
   // Write-only: sent on save, never returned. Present on the type so the

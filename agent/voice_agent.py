@@ -1099,7 +1099,8 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             dialler=dialler,
             extracted=extracted,
             turns=turns if cfg.postback_include_transcript else None,
-            tool_calls=tool_calls)
+            tool_calls=tool_calls,
+            full=getattr(cfg, "postback_full_payload", True))
 
         await store.save_postback(call_id, cfg.campaign_id, payload)
         logger.info("postback queued for call %s (%d extracted fields)",
