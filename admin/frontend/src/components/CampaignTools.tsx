@@ -179,11 +179,13 @@ function pretty(raw: string | null | undefined): string | null {
  * missing comma, and an unquoted placeholder filled with `04` — and the model's
  * arguments were faultless in both. Nothing on this page showed it.
  *
- * Open by default when the call failed, because that is the only time anybody
- * comes looking, and shut otherwise so the list stays readable.
+ * Shut by default, on every row. It was opened automatically on failures at
+ * first, on the reasoning that a failure is when anybody looks - but a run of
+ * them turned the list into a wall of JSON and made the one being read harder
+ * to find, not easier. `failed` still colours it once opened.
  */
 function ActivityDetail({ a, failed }: { a: ToolActivityItem; failed: boolean }) {
-  const [open, setOpen] = useState(failed)
+  const [open, setOpen] = useState(false)
   const request = pretty(a.request)
   const response = pretty(a.response)
   const args = a.arguments && Object.keys(a.arguments).length
