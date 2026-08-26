@@ -857,6 +857,19 @@ class ToolBase(BaseModel):
                 "asked for something it was never told about.")
         return v
 
+
+class ToolWrite(ToolBase):
+    """Everything that rejects a BADLY WRITTEN tool, and nothing that reads one.
+
+    These checks used to live on ToolBase, which ToolOut inherits - so the
+    moment one of them started rejecting a template that was already saved, the
+    tools page went blank. A rule meant to stop a bad tool being written had
+    closed the only page from which it could be fixed.
+
+    Validation that refuses input must never sit where output passes through it.
+    The stored value may be wrong; that is exactly when you need to see it.
+    """
+
     @model_validator(mode="after")
     def _placeholders_are_declared(self):
         """Every {{arg}} in the URL or body must be an argument the model has.
@@ -942,11 +955,11 @@ class ToolBase(BaseModel):
         return self
 
 
-class ToolCreate(ToolBase):
+class ToolCreate(ToolWrite):
     auth_value: str | None = Field(default=None, max_length=2000)
 
 
-class ToolUpdate(ToolBase):
+class ToolUpdate(ToolWrite):
     # Omitted means "leave the stored secret alone"; sending "" clears it.
     auth_value: str | None = Field(default=None, max_length=2000)
 
