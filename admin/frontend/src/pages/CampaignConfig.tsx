@@ -513,6 +513,23 @@ export function CampaignConfig() {
                 </>
               }
             />
+
+            <Toggle
+              label="Tell the agent the date and time"
+              checked={value.prompt_datetime}
+              onChange={(v) => set('prompt_datetime', v)}
+              hint="Adds one line to the very end of the prompt at the start of each call. Without it the agent cannot answer “what's the time?”, and — the part that costs you — it cannot turn “कल सुबह 10 बजे” into an actual date for the postback."
+            />
+
+            {value.prompt_datetime && (
+              <TextField
+                label="Timezone"
+                value={value.prompt_timezone}
+                onChange={(v) => set('prompt_timezone', v.trim())}
+                placeholder="Asia/Kolkata"
+                hint="An IANA name. Read once when the call starts, not on every turn — a clock that changed mid-call would make every turn a fresh prompt and throw away the cache, so on a long call it can be a couple of minutes behind."
+              />
+            )}
           </CardBody>
         </Card>
       )}

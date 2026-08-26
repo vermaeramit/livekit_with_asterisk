@@ -58,6 +58,11 @@ class AgentConfig:
     # migration 017 for why these are per-campaign and not constants.
     stt_endpoint_level: Optional[int]
     stt_endpoint_sensitivity: Optional[float]
+    # Appended to the end of the prompt, once per call. Off by default - see
+    # migration 023. Read here because _as_config only keeps declared fields:
+    # a column the dataclass has not heard of is silently dropped.
+    prompt_datetime: bool
+    prompt_timezone: str
     # Where the call's result goes afterwards. Only what the AGENT needs is
     # here: it extracts and stores, it never delivers. The url, auth and retry
     # settings are read by admin-api at send time, so changing them fixes calls

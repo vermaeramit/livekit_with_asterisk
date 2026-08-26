@@ -33,6 +33,7 @@ FIELDS = (
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "transfer_marker",
     "stt_endpoint_level", "stt_endpoint_sensitivity",
+    "prompt_datetime", "prompt_timezone",
     "postback_enabled", "postback_url", "postback_auth_header",
     "postback_auth_value_hint", "postback_fields",
     "postback_include_transcript", "postback_max_attempts",

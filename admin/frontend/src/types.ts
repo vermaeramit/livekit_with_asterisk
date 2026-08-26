@@ -204,6 +204,11 @@ export interface AgentConfig {
   stt_endpoint_level: number | null
   stt_endpoint_sensitivity: number | null
 
+  // One line at the very end of the prompt, stamped once per call. Kept at the
+  // end on purpose: everything above it stays a cacheable prefix.
+  prompt_datetime: boolean
+  prompt_timezone: string
+
   // Where the call's result is sent afterwards. The auth value never comes
   // back — only the last four characters.
   postback_enabled: boolean

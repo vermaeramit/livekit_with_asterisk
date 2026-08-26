@@ -188,6 +188,10 @@ class AgentConfigOut(BaseModel):
     stt_endpoint_level: int | None
     stt_endpoint_sensitivity: float | None
 
+    # Whether the agent is told the date and time, and in which zone.
+    prompt_datetime: bool
+    prompt_timezone: str
+
     # Where the call's result is sent afterwards. The auth VALUE is never
     # returned - only the four-character hint, exactly like a provider key.
     postback_enabled: bool
@@ -265,6 +269,26 @@ class AgentConfigUpdate(BaseModel):
     # utterance of a live call.
     stt_endpoint_level: int | None = Field(default=None, ge=0, le=3)
     stt_endpoint_sensitivity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+    prompt_datetime: bool | None = None
+    prompt_timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("prompt_timezone")
+    @classmethod
+    def _known_timezone(cls, v: str | None) -> str | None:
+        # Checked here rather than left to the agent. A name it cannot resolve
+        # falls back to +05:30 and keeps answering - so a typo would not raise
+        # anything, it would just tell every caller the wrong time in a zone
+        # nobody chose. Better to refuse it while somebody is looking.
+        if v is None or not v.strip():
+            return v
+        import zoneinfo
+        try:
+            zoneinfo.ZoneInfo(v)
+        except Exception:
+            raise ValueError(
+                f"unknown timezone {v!r} - use an IANA name such as Asia/Kolkata")
+        return v
 
     postback_enabled: bool | None = None
     postback_url: str | None = Field(default=None, max_length=2000)

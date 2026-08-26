@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime
 import functools
 import logging
 import os
 import re
 import time
+import zoneinfo
 
 import aiohttp
 
@@ -904,6 +906,33 @@ _PROVIDER_HOSTS = {
 }
 
 
+def _now_line(tz_name: str | None) -> str:
+    """The one line that tells the agent what day it is.
+
+    Spelled out - weekday, month by name, 12-hour clock - because the model has
+    to reason with it ("कल" means tomorrow's date, not the string "tomorrow") and
+    an ISO stamp invites it to read the digits aloud to the caller.
+
+    An unknown timezone falls back to +05:30, not to UTC. Every caller on this
+    system is in India, and a clock silently five and a half hours out looks
+    like it is working right up until somebody books a morning appointment.
+    """
+    tz = None
+    if tz_name:
+        try:
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            logger.warning("unknown timezone %r - using +05:30", tz_name)
+    if tz is None:
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30), "IST")
+    now = datetime.datetime.now(tz)
+    return ("CURRENT DATE AND TIME: "
+            + now.strftime("%A, %d %B %Y, %I:%M %p ").replace(" 0", " ")
+            + (tz_name or "IST")
+            + "\nUse this to work out what the caller means by today, "
+              "tomorrow, this evening, next week and so on.")
+
+
 async def _warm_tts(tts, seen: set[str]) -> None:
     """Open the TTS connection while the cached greeting is playing.
 
@@ -1147,6 +1176,19 @@ async def entrypoint(ctx: JobContext):
 
     # built in prompt.py so the cache warmer emits a byte-identical prefix
     instructions, kb_mode, kb_tokens = await prompt_mod.build_instructions(cfg)
+
+    # Appended AFTER that call, never inside it. The warmer runs the same
+    # function and must produce a byte-identical string; a clock in there would
+    # differ by a second and quietly create a second cache entry, which is the
+    # exact failure the module docstring warns about.
+    #
+    # Out here it stays safe, because what the warmer produces remains an exact
+    # PREFIX of this. Everything above - the whole knowledge base index, every
+    # rule - still caches. Only the last few tokens are new, and only once per
+    # call: a clock that ticked every turn would make every turn a cache miss,
+    # and a three-minute call is not worth 97% of the prompt.
+    if getattr(cfg, "prompt_datetime", False):
+        instructions += "\n\n" + _now_line(getattr(cfg, "prompt_timezone", None))
 
     logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
                 cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
