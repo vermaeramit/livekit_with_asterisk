@@ -121,6 +121,11 @@ export interface ToolInvocation {
   // The resolved URL. Arguments alone were not enough — a placeholder written
   // with single braces leaves them looking correct and sends `{pin}` verbatim.
   url: string | null
+  // The resolved body actually sent. Arguments can be faultless while the
+  // template that carries them is malformed — two 400s on call 365 were that.
+  request: string | null
+  // The endpoint's own words. Always present on a 4xx/5xx.
+  response: string | null
   status_code: number | null
   duration_ms: number | null
   error: string | null

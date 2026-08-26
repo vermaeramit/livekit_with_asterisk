@@ -184,7 +184,8 @@ async def tool_activity(campaign_id: int,
 
     rows = await db.pool().fetch(
         f"""SELECT ti.id, ti.call_id, ti.name, ti.arguments, ti.url,
-                   ti.status_code, ti.duration_ms, ti.error, ti.created_at
+                   ti.request, ti.response, ti.status_code, ti.duration_ms,
+                   ti.error, ti.created_at
               FROM tool_invocations ti
               JOIN calls c ON c.id = ti.call_id
               {where}

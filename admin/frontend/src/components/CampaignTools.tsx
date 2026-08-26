@@ -10,7 +10,7 @@ import { Badge, EmptyState, Input, Label, Skeleton } from '@/components/ui/primi
 import { NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
-import type { CampaignTool, ToolActivityResponse, ToolTestResult } from '@/types'
+import type { CampaignTool, ToolActivityItem, ToolActivityResponse, ToolTestResult } from '@/types'
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))
 
@@ -159,6 +159,79 @@ function toDraft(t: CampaignTool): Draft {
     keep_response: t.keep_response,
     enabled: t.enabled,
   }
+}
+
+/** Pretty-print if it is JSON, leave it alone if it is not. */
+function pretty(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+/**
+ * What actually went out, and what came back.
+ *
+ * Arguments alone are not enough and never were. On call 365 three tool calls
+ * returned 400: two because the body template did not produce valid JSON — a
+ * missing comma, and an unquoted placeholder filled with `04` — and the model's
+ * arguments were faultless in both. Nothing on this page showed it.
+ *
+ * Open by default when the call failed, because that is the only time anybody
+ * comes looking, and shut otherwise so the list stays readable.
+ */
+function ActivityDetail({ a, failed }: { a: ToolActivityItem; failed: boolean }) {
+  const [open, setOpen] = useState(failed)
+  const request = pretty(a.request)
+  const response = pretty(a.response)
+  const args = a.arguments && Object.keys(a.arguments).length
+    ? JSON.stringify(a.arguments, null, 2)
+    : null
+  if (!request && !response && !args) return null
+
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-2xs font-medium text-primary hover:underline"
+      >
+        {open ? 'hide request' : 'show request'}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          {args && (
+            <Block label="Arguments the model chose" body={args} />
+          )}
+          {request && (
+            <Block label="Body sent" body={request} tone={failed ? 'danger' : undefined} />
+          )}
+          {response && (
+            <Block
+              label={failed ? 'What the API said' : 'Response'}
+              body={response}
+              tone={failed ? 'danger' : undefined}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Block({ label, body, tone }: { label: string; body: string; tone?: 'danger' }) {
+  return (
+    <div>
+      <p className={`text-2xs font-medium ${tone === 'danger' ? 'text-danger' : 'text-muted-foreground'}`}>
+        {label}
+      </p>
+      {/* Its own scroll container: a long body must not push the page sideways. */}
+      <pre className="mt-0.5 max-h-56 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-2xs leading-relaxed text-foreground/80">
+        {body}
+      </pre>
+    </div>
+  )
 }
 
 export function CampaignTools({ campaignId }: { campaignId: number }) {
@@ -442,6 +515,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
                     {a.error && a.error !== 'timeout' && (
                       <p className="mt-1 break-words text-2xs text-danger">{a.error}</p>
                     )}
+                    <ActivityDetail a={a} failed={failed} />
                   </div>
                 )
               })}

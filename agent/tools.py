@@ -167,13 +167,19 @@ def build(spec: dict, call_id: int | None, record: Callable,
         t0 = time.perf_counter()
         url = toolfmt.fill(spec["url"], args) or ""
 
-        async def done(status=None, err=None, body=None):
+        # Declared before done() closes over it: the private-address path calls
+        # done() before the body is built, and an unbound name there would turn
+        # a blocked request into a NameError mid-call.
+        data = None
+
+        async def done(status=None, err=None, body=None, force_body=False):
             # The resolved url, not the template. A placeholder that did not
             # substitute is invisible in the arguments - they are correct - and
             # only shows up here, in what was actually requested.
             await record(tool_id=spec.get("id"), name=name, arguments=args,
                          status_code=status, error=err, url=url,
-                         response=body if keep_response else None,
+                         response=body if (keep_response or force_body) else None,
+                         request=data,
                          duration_ms=int((time.perf_counter() - t0) * 1000))
 
         if BLOCK_PRIVATE and _host_is_private(url):
@@ -196,7 +202,6 @@ def build(spec: dict, call_id: int | None, record: Callable,
         if method != "GET" and call_id is not None:
             headers["Idempotency-Key"] = _idempotency_key(call_id, name, args)
 
-        data = None
         if method != "GET" and spec.get("body_template"):
             data = toolfmt.fill(spec["body_template"], args)
             headers.setdefault("Content-Type", "application/json")
@@ -241,10 +246,15 @@ def build(spec: dict, call_id: int | None, record: Callable,
             if waiting is not None:
                 waiting.cancel()
 
-        # Only the successful body. An error body is whatever the endpoint felt
-        # like emitting - a stack trace, a login page - and is not what anyone
-        # turned this on to keep.
-        await done(status=status, body=text if status < 400 else None)
+        # A successful body is kept only if the campaign asked for it - that is
+        # business data, and migration 021 made it a deliberate choice.
+        #
+        # An error body is kept regardless. It is not business data; it is the
+        # endpoint explaining what it disliked, and it is the only thing that
+        # explains a 400. Call 365 had three of them and not one recorded reason
+        # - two turned out to be malformed JSON in a template and the third is
+        # still unknown, because this line threw the answer away.
+        await done(status=status, body=text, force_body=status >= 400)
 
         if status >= 400:
             log.warning("tool %s -> HTTP %s", name, status)

@@ -239,13 +239,15 @@ async def load_tools(campaign_id: int) -> list[dict]:
 
 async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
                            status_code=None, error=None, duration_ms=None,
-                           url=None, response=None) -> None:
+                           url=None, response=None, request=None) -> None:
     """Never let recording a tool call break the call it describes.
 
-    `url` is the RESOLVED url, after placeholder substitution. Storing the
-    template instead would be pointless - it is already on the tool. What is
-    worth keeping is what actually went out, because that is where a
-    substitution that did not happen becomes visible.
+    `url` and `request` are both RESOLVED, after placeholder substitution.
+    Storing the templates instead would be pointless - they are already on the
+    tool. What is worth keeping is what actually went out, because that is where
+    a substitution that did not happen, or a template that does not produce
+    valid JSON, becomes visible. Neither is visible from `arguments`, which can
+    be entirely correct while the request is malformed.
     """
     import json
 
@@ -253,10 +255,10 @@ async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
         await (await pool()).execute(
             """INSERT INTO tool_invocations
                    (call_id, tool_id, name, arguments, status_code, error,
-                    duration_ms, url, response)
-               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9)""",
+                    duration_ms, url, response, request)
+               VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10)""",
             call_id, tool_id, name, json.dumps(arguments, default=str),
-            status_code, error, duration_ms, url, response,
+            status_code, error, duration_ms, url, response, request,
         )
     except Exception:
         import logging

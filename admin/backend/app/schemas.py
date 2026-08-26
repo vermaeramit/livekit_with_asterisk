@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Annotated, Literal
@@ -628,9 +629,13 @@ class ToolInvocationOut(BaseModel):
     reading: a tool that "did not work" is usually a tool the model called with
     the wrong argument, and that is invisible from the transcript alone.
 
-    The response body is deliberately absent - it is not stored. A client API
-    answers with customer data, and keeping it here would put personal records
-    in a table nobody thinks of as holding them.
+    A successful response body is stored only when the campaign asked for it.
+    A client API answers with customer data, and keeping it by default would put
+    personal records in a table nobody thinks of as holding them.
+
+    An ERROR body is always kept and always returned. It is not customer data -
+    it is the endpoint saying what it disliked - and it is usually the only
+    thing that explains a 4xx.
     """
     id: int
     name: str
@@ -639,6 +644,13 @@ class ToolInvocationOut(BaseModel):
     # with single braces leaves the arguments looking perfectly correct and
     # sends `?pincode={pin}` to the API.
     url: str | None = None
+    # The RESOLVED body actually sent, for the same reason as the url: on call
+    # 365 two tools returned 400 because their templates did not produce valid
+    # JSON, and the arguments were faultless. NULL for GET.
+    request: str | None = None
+    # The endpoint's own words. Present on any 4xx/5xx, and on a success only
+    # when the campaign chose to keep responses.
+    response: str | None = None
     status_code: int | None = None
     duration_ms: int | None = None
     # NULL on success. "timeout" is the one that cost the caller silence.
@@ -886,6 +898,47 @@ class ToolBase(BaseModel):
                         f"the {where} has {{{m.group(1)}}} with single braces. "
                         f"Placeholders need two: {{{{{m.group(1)}}}}}. As "
                         "written it is sent to the API literally.")
+
+        # A JSON body must still be JSON once the placeholders are filled.
+        #
+        # Call 365 lost three tool calls to 400s and two were this: `price` was
+        # missing a comma after "city", and neither the arguments nor the URL
+        # showed it - the model had chosen perfectly good values and the request
+        # was malformed on the way out. Caught here, it never reaches a caller.
+        body = (self.body_template or "").strip()
+        if body.startswith(("{", "[")):
+            # Every placeholder becomes 1, which is valid both bare and inside
+            # quotes - so this tests the template's own punctuation and nothing
+            # about the values.
+            probe = re.sub(r"\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}", "1", body)
+            try:
+                json.loads(probe)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"the body is not valid JSON: {e.msg} at line {e.lineno}, "
+                    f"column {e.colno}. Placeholders were replaced with 1 to "
+                    "check it, so this is the template's own punctuation - "
+                    "usually a missing or extra comma.")
+
+            # An unquoted placeholder holding a string cannot survive.
+            #
+            # `exchange_price` had "month": {{month}} with month declared a
+            # string, and the model duly sent "04". JSON numbers may not have a
+            # leading zero, so the body became invalid on the one call where it
+            # mattered - and looked fine on every one before it.
+            props = (self.parameters or {}).get("properties") or {}
+            for m in re.finditer(
+                    r'(.?)\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}(.?)', body):
+                before, key, after = m.group(1), m.group(2), m.group(3)
+                if before == '"' and after == '"':
+                    continue                    # quoted, always safe
+                kind = (props.get(key) or {}).get("type")
+                if kind in (None, "string"):
+                    raise ValueError(
+                        f'the body has {{{{{key}}}}} without quotes, but {key} '
+                        f'is a {kind or "string"}. Write "{{{{{key}}}}}" - '
+                        "unquoted, a value like 04 or an empty answer makes "
+                        "the whole body invalid JSON and the API returns 400.")
         return self
 
 
