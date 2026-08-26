@@ -180,6 +180,8 @@ export interface AgentConfig {
   kb_min_score: number
   kb_inline_max_tokens: number
   kb_summary: string | null
+  // Spoken while a search runs. null = silence.
+  kb_filler_message: string | null
 
   max_turns: number
   max_duration_sec: number

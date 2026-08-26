@@ -63,6 +63,8 @@ class AgentConfig:
     # a column the dataclass has not heard of is silently dropped.
     prompt_datetime: bool
     prompt_timezone: str
+    # Spoken while the knowledge base is being searched. NULL = say nothing.
+    kb_filler_message: Optional[str]
     # Where the call's result goes afterwards. Only what the AGENT needs is
     # here: it extracts and stores, it never delivers. The url, auth and retry
     # settings are read by admin-api at send time, so changing them fixes calls

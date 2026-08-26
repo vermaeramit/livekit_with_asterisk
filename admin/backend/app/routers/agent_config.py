@@ -27,6 +27,7 @@ FIELDS = (
     "tts_provider", "tts_model", "tts_voice", "tts_fallback_provider",
     "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
+    "kb_filler_message",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     "transfer_enabled", "transfer_to", "transfer_message",
     "transfer_confirm", "transfer_confirm_message",

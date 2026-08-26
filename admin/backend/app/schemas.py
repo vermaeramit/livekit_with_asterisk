@@ -192,6 +192,9 @@ class AgentConfigOut(BaseModel):
     prompt_datetime: bool
     prompt_timezone: str
 
+    # Spoken while search_knowledge_base runs. None = silence.
+    kb_filler_message: str | None
+
     # Where the call's result is sent afterwards. The auth VALUE is never
     # returned - only the four-character hint, exactly like a provider key.
     postback_enabled: bool
@@ -272,6 +275,9 @@ class AgentConfigUpdate(BaseModel):
 
     prompt_datetime: bool | None = None
     prompt_timezone: str | None = Field(default=None, max_length=64)
+    # Short on purpose. It has to finish before the search does, or the caller
+    # hears a sentence about waiting and then waits anyway.
+    kb_filler_message: str | None = Field(default=None, max_length=200)
 
     @field_validator("prompt_timezone")
     @classmethod

@@ -551,7 +551,7 @@ class KBAgent(Agent):
     # ────────────────────────── knowledge ──────────────────────────
 
     @function_tool
-    async def search_knowledge_base(self, query: str) -> str:
+    async def search_knowledge_base(self, context: RunContext, query: str) -> str:
         """Look up details in the company documents.
 
         Use this ONLY when the REFERENCE INFORMATION in your instructions does not
@@ -566,6 +566,32 @@ class KBAgent(Agent):
         import kb
         self.tool_calls += 1
         t0 = time.perf_counter()
+
+        # Same shape as a campaign tool's filler, and for the same reason: it
+        # overlaps the search rather than being added in front of it, and it is
+        # cancelled the instant the answer lands, so a fast search says nothing.
+        #
+        # This one earns its place more than the tool version did. A search now
+        # costs 810-1860 ms and, with 108k tokens behind an index, runs on very
+        # nearly every question the caller asks - that is a second of silence
+        # each time, and silence is what makes a caller say "hello?".
+        filler = (getattr(self.cfg, "kb_filler_message", None) or "").strip()
+
+        async def hold_on() -> None:
+            try:
+                await asyncio.sleep(tools_mod.FILLER_AFTER_S)
+                # Kept out of the chat context on purpose. It is a noise made
+                # while waiting, not something the agent said: the model should
+                # not see itself having spoken, and the transcript should not
+                # gain a turn that carries no answer.
+                await context.session.say(filler, allow_interruptions=True,
+                                          add_to_chat_ctx=False)
+            except asyncio.CancelledError:
+                pass        # the search answered first, which is the good case
+            except Exception:
+                logger.exception("kb filler failed")
+
+        waiting = asyncio.create_task(hold_on()) if filler else None
         try:
             hits = await kb.search(query, self.cfg.name,
                                    self.cfg.kb_top_k, self.cfg.kb_min_score,
@@ -573,6 +599,9 @@ class KBAgent(Agent):
         except Exception:
             logger.exception("kb search failed")
             return "The knowledge base is unavailable right now."
+        finally:
+            if waiting is not None:
+                waiting.cancel()
         self.last_kb_ms = int((time.perf_counter() - t0) * 1000)
         # Kept per turn rather than per call: a model that searches twice for one
         # answer used both, and the reader wants to see both. Best score wins on

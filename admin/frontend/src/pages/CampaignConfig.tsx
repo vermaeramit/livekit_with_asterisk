@@ -783,6 +783,14 @@ export function CampaignConfig() {
               />
             </div>
 
+            <TextField
+              label="Say this while searching"
+              value={value.kb_filler_message ?? ''}
+              onChange={(v) => set('kb_filler_message', v.trim() || null)}
+              placeholder="एक मिनट, देखती हूँ…"
+              hint="Spoken only if the search is still running after ~600ms, and cut off the moment it answers. A search costs 810–1860ms and now runs on nearly every question, so this is a second of silence each time — and silence is what makes a caller say “hello?”. Keep it short: it has to finish before the answer arrives. Leave empty for silence."
+            />
+
             <TextArea
               label="Knowledge summary"
               value={value.kb_summary ?? ''}
