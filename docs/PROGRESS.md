@@ -2817,7 +2817,20 @@ badly executed, rather than the wrong idea.
   the `dialer.*` fields real calls actually carry
 - **Transfer gate reads consent, not just speech** - "क्यों?" currently opens it
   (word lists to be agreed - see 25 Aug)
-- **`preemptive_generation`** - the EOU model is now the slowest leg at ~950 ms
+- **`preemptive_generation`** - hides llm_ttft entirely, at no cost to quality.
+  The first turn of a call pays ~2950 ms on a cold prompt cache, later turns
+  ~1000-1400 ms, and on a KB turn the console under-reports it: a tool call
+  makes two LLM round trips and only the first TTFT is kept
+- **`MAX_ENDPOINTING` is now the single largest number** - 1501, 1501, 1500 on
+  three consecutive turns of the 26 Aug date-and-time call, against stt of 108,
+  244 and 549 ms. The transcript was ready in a tenth of a second and the turn
+  detector then spent the full ceiling being unsure. Lowering it trades against
+  cutting off callers who pause, which is what it was put there to prevent
+- A model change was considered and left: gpt-4.1-nano would save perhaps 400 ms
+  of ~1200, and gpt-4.1-mini was chosen for VARIANCE, not average - it cut the
+  spread from 800 ms to 85 ms. 25 Aug showed why that matters more: one 6286 ms
+  turn ended a call whose average was 650 ms. A weaker model also loosens the
+  grounding rules, on a knowledge base full of prices and specifications
 - Move off `min/max_endpointing_delay`, deprecated in 1.6.7 for
   `turn_handling=TurnHandlingOptions(...)`
 - **Why the LLM FallbackAdapter failed at 20 concurrent** — both legs down at
