@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -310,6 +310,9 @@ export function CampaignConfig() {
 
   const [tab, setTab] = useState<TabKey>('conversation')
   const [draft, setDraft] = useState<Partial<AgentConfig>>({})
+  // Counted server-side with the model's own tokeniser rather than guessed at
+  // in the browser, and debounced so it is not recounted on every keystroke.
+  const [countable, setCountable] = useState('')
 
   const campaign = useQuery({
     queryKey: ['campaign', campaignId],
@@ -328,6 +331,27 @@ export function CampaignConfig() {
     [config.data, draft],
   )
   const dirty = Object.keys(draft).length > 0
+
+  // Settles 500ms after typing stops. Counting on every keystroke would put a
+  // request behind each character for no gain - nobody reads a number that is
+  // moving.
+  const instructions = value.instructions ?? ''
+  useEffect(() => {
+    const t = setTimeout(() => setCountable(instructions), 500)
+    return () => clearTimeout(t)
+  }, [instructions])
+
+  const tokens = useQuery({
+    queryKey: ['prompt-tokens', campaignId, countable],
+    queryFn: () =>
+      api<{ tokens: number; exact: boolean }>(
+        `/campaigns/${campaignId}/prompt-tokens`,
+        { method: 'POST', body: JSON.stringify({ text: countable }) },
+      ),
+    enabled: Boolean(campaignId) && countable.length > 0,
+    // The same text always counts the same, so it never needs recounting.
+    staleTime: Infinity,
+  })
 
   // Models and voices read from the provider, not held as a list here.
   //
@@ -507,9 +531,20 @@ export function CampaignConfig() {
               mono
               hint={
                 <>
-                  The system prompt. Grounding and transfer rules are appended automatically — do not
-                  repeat them here. Keep it stable: the first ~1024 tokens are what OpenAI caches, and
-                  editing them throws that cache away.
+                  <span className="font-medium text-foreground/70 tnum">
+                    {tokens.data
+                      ? `${tokens.data.tokens.toLocaleString()} tokens`
+                      : `${instructions.length.toLocaleString()} characters`}
+                  </span>
+                  {/* Said plainly, because this number is smaller than the one
+                      on the bill and anyone comparing the two deserves to know
+                      why rather than to wonder. */}
+                  {' — the knowledge base and the rules are added on top, so the prompt that is '}
+                  {'actually sent is larger.'}
+                  <br />
+                  The system prompt. Do not repeat the grounding or transfer rules here; they are
+                  appended for you. Keep it stable: the first ~1024 tokens are what OpenAI caches,
+                  and editing them throws that cache away.
                 </>
               }
             />

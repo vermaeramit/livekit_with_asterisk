@@ -622,6 +622,11 @@ class TurnOut(BaseModel):
     kb_scores: list[float] | None = None
 
 
+class PromptTokens(BaseModel):
+    """Text to count. Capped well above any sane prompt."""
+    text: str = Field(default="", max_length=200_000)
+
+
 class KnowledgeGapOut(BaseModel):
     """One QUESTION the bot could not answer, however many times it was asked.
 

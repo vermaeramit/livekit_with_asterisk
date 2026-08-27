@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from .. import audit, db, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
-                       CampaignRoute, CampaignRouteCreate, PostbackOut)
+                       CampaignRoute, CampaignRouteCreate, PostbackOut,
+                       PromptTokens)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -251,3 +252,44 @@ async def retry_postback(campaign_id: int, postback_id: int,
     if isinstance(d.get("payload"), str):
         d["payload"] = json.loads(d["payload"])
     return PostbackOut(**d)
+
+
+# Loaded once, not per request. The encoding is a few megabytes and building it
+# on every keystroke would make the counter the slowest thing on the page.
+_ENC = None
+
+
+def _tokens(text: str) -> int:
+    global _ENC
+    if _ENC is None:
+        try:
+            import tiktoken
+            # o200k_base, which is what gpt-4o and the 4.1 family actually use.
+            # Deliberately NOT the cl100k_base that kb.py counts with: this
+            # number exists to be compared against what the journal reports as
+            # prompt=Ntok and against the bill, and both of those come from the
+            # model's own tokeniser. Matching kb.py would make it consistent
+            # with the console and wrong about the thing it is measuring.
+            _ENC = tiktoken.get_encoding("o200k_base")
+        except Exception:
+            _ENC = False
+    if _ENC is False:
+        # Four characters to a token is the usual rule of thumb. Wrong enough
+        # that the caller is told so rather than being shown a precise-looking
+        # number that is not.
+        return max(1, len(text) // 4)
+    return len(_ENC.encode(text))
+
+
+@router.post("/prompt-tokens")
+async def prompt_tokens(campaign_id: int, body: PromptTokens,
+                        user: CurrentUser = Depends(active_user)):
+    """Count the tokens in a piece of prompt text.
+
+    Only the text it is given. The knowledge base and the grounding and transfer
+    rules are appended by prompt.py at call time, and counting them here would
+    mean writing that assembly a second time - which is the exact drift that
+    module exists to prevent. The console says what else is added instead.
+    """
+    await assert_campaign_visible(user, campaign_id)
+    return {"tokens": _tokens(body.text), "exact": _ENC is not False}
