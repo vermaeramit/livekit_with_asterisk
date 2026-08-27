@@ -1386,7 +1386,9 @@ async def entrypoint(ctx: JobContext):
     # renamed event degrades into "the timer never fires" instead of a task
     # wedged forever on something that will not arrive.
     last_activity = time.monotonic()
-    agent_speaking = False
+    # True unless the agent is sitting waiting for the caller. Not "is it
+    # speaking": see the handler below for why that was not enough.
+    agent_busy = False
     silence_attempts = 0
     # Set the moment the session ends, whatever ended it. The watchdog's other
     # exit conditions - a limit, a transfer - do not cover the ordinary case of
@@ -1400,9 +1402,28 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev):
-        nonlocal agent_speaking, last_activity
+        nonlocal agent_busy, last_activity
         state = getattr(ev, "new_state", None)
-        agent_speaking = state == "speaking"
+        # Anything that is not "listening" means the agent has the floor -
+        # thinking counts as much as speaking.
+        #
+        # It used to be `state == "speaking"`, and that let the prompt fire on
+        # top of the agent's own voice. When a model answers AND calls a tool in
+        # one turn, the preamble is still playing out when the state moves to
+        # "thinking" for the tool - so the flag went false mid-sentence, the
+        # clock had been running since the caller last spoke, and the caller
+        # heard "क्या आप मुझे सुन पा रहे हो?" over the top of the answer they
+        # had asked for.
+        #
+        # Three times on call 368, every one of them on a turn that spoke and
+        # called a tool together:
+        #
+        #   15:51:02  [assistant] ...ईएमआई की गणना करता हूँ
+        #   15:51:02  silence 10s - prompt 1/2
+        #
+        # Same second. And correct by the old rule, which is what made it worth
+        # writing down.
+        agent_busy = state != "listening"
         if state == "listening":
             # The clock starts when the AGENT stops, not when the caller last
             # spoke. Otherwise a long answer from the agent counts as the
@@ -1458,7 +1479,7 @@ async def entrypoint(ctx: JobContext):
         # went unnoticed.
         while not agent.limit_hit and agent.transferred is None and not closed:
             await asyncio.sleep(1)
-            if agent_speaking:
+            if agent_busy:
                 continue
 
             # A marker was seen. Acted on HERE and not in tts_node, because that
@@ -1592,7 +1613,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("conversation_item_added")
     def _on_item(ev):
-        nonlocal seq
+        nonlocal seq, last_activity
         try:
             item = ev.item
             role = getattr(item, "role", "?")
@@ -1631,6 +1652,11 @@ async def entrypoint(ctx: JobContext):
                 pending.clear()
 
             if role == "assistant":
+                # Independently of the state machine. If the agent said
+                # something, the caller has not gone quiet - and a flag that
+                # flips at the wrong moment must not be the only thing standing
+                # between them and being talked over.
+                last_activity = time.monotonic()
                 agent.turn_count += 1
                 if agent.turn_count >= cfg.max_turns and not agent.limit_hit:
                     asyncio.create_task(enforce_limit(f"max_turns={cfg.max_turns}"))
