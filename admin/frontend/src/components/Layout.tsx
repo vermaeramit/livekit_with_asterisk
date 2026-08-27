@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, Building2, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
@@ -19,7 +19,7 @@ type NavLinkItem = {
   roles?: Role[]
   soon?: boolean
   /** which live counter to show alongside the label */
-  badge?: 'alerts'
+  badge?: 'alerts' | 'gaps'
 }
 type NavItem = NavSection | NavLinkItem
 
@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio },
   { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts' },
+  { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps' },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'] },
   { kind: 'link', to: '/users', label: 'Users', icon: Users2, roles: ['tenant_admin'] },
@@ -77,6 +78,15 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const unread = useQuery({
     queryKey: ['alerts-unread'],
     queryFn: () => api<{ count: number }>('/alerts/unread-count'),
+    refetchInterval: 60_000,
+  })
+
+  // Counts QUESTIONS, not occurrences: twenty callers asking the same thing is
+  // one document to write, and a badge reading 20 would send someone looking
+  // for twenty pieces of work that do not exist.
+  const gaps = useQuery({
+    queryKey: ['gaps-unread'],
+    queryFn: () => api<{ count: number }>('/gaps/unread-count'),
     refetchInterval: 60_000,
   })
 
@@ -147,6 +157,13 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
                 {item.badge === 'alerts' && (unread.data?.count ?? 0) > 0 && (
                   <span className="ml-auto tnum rounded-full bg-danger px-1.5 py-px text-2xs font-semibold text-danger-foreground">
                     {unread.data!.count}
+                  </span>
+                )}
+                {/* Muted, not red. A gap is work to do, not something on
+                    fire - and a red badge that never clears stops being read. */}
+                {item.badge === 'gaps' && (gaps.data?.count ?? 0) > 0 && (
+                  <span className="ml-auto tnum rounded-full bg-muted px-1.5 py-px text-2xs font-semibold text-muted-foreground">
+                    {gaps.data!.count}
                   </span>
                 )}
               </>

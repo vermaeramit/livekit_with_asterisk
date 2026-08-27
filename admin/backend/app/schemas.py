@@ -622,6 +622,50 @@ class TurnOut(BaseModel):
     kb_scores: list[float] | None = None
 
 
+class KnowledgeGapOut(BaseModel):
+    """One QUESTION the bot could not answer, however many times it was asked.
+
+    The rows behind this are one per occurrence - each tied to a call, so it can
+    be listened to. They are grouped before they get here because the unit of
+    work is the question: twenty callers asking the same thing is one document
+    to write, not twenty.
+    """
+    tenant_id: int
+    tenant_name: str | None = None
+    campaign_id: int | None = None
+    campaign_name: str | None = None
+    # kb_miss | kb_weak | tool_failed
+    kind: str
+    # The most recent spelling of it. This is the field somebody reads to decide
+    # what to write.
+    query: str
+    # Lowercased and collapsed. Identifies the group when acknowledging.
+    query_key: str
+    detail: str | None = None
+    occurrences: int
+    # What is still open. A group half handled still shows, with this smaller.
+    open_occurrences: int
+    first_seen: datetime
+    last_seen: datetime
+    # The best we managed on a kb_weak - so "we answered from a 0.31 match" is
+    # visible rather than being counted as a success.
+    worst_score: float | None = None
+    # A handful, newest first. Enough to go and listen to.
+    call_ids: list[int] = []
+    acknowledged_at: datetime | None = None
+    acknowledged_by_email: str | None = None
+    note: str | None = None
+
+
+class GapAcknowledge(BaseModel):
+    """Acknowledge every open occurrence of one question."""
+    campaign_id: int | None = None
+    kind: str = Field(pattern="^[a-z_]{3,20}$")
+    query_key: str = Field(min_length=1, max_length=500)
+    # What was done about it. Read by whoever finds it open again.
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class ToolInvocationOut(BaseModel):
     """One HTTP tool call the agent made during a call.
 

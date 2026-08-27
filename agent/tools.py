@@ -106,7 +106,8 @@ FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
 
 
 def build(spec: dict, call_id: int | None, record: Callable,
-          speak: Callable | None = None):
+          speak: Callable | None = None,
+          note_gap: Callable | None = None):
     """-> a livekit function tool for one campaign_tools row.
 
     `record` is awaited with the outcome of every invocation. It is passed in
@@ -172,6 +173,26 @@ def build(spec: dict, call_id: int | None, record: Callable,
         # a blocked request into a NameError mid-call.
         data = None
 
+        def gap(detail: str) -> None:
+            """A lookup the caller was waiting on did not answer.
+
+            Grouped by tool NAME rather than by arguments: "exchange_price
+            failed fourteen times" is the sentence somebody acts on, whereas
+            fourteen rows differing only by pincode is a list to scroll past.
+            The arguments and the reason are in `detail` and on the call.
+
+            Fire and forget, like every other note here. The caller is waiting
+            on an apology, not on a record of why.
+            """
+            if note_gap is None:
+                return
+            try:
+                asyncio.create_task(note_gap(
+                    kind="tool_failed", query=name,
+                    detail=f"{args} -> {detail}"[:500]))
+            except Exception:
+                log.exception("could not note a failed lookup for %s", name)
+
         async def done(status=None, err=None, body=None, force_body=False):
             # The resolved url, not the template. A placeholder that did not
             # substitute is invisible in the arguments - they are correct - and
@@ -224,6 +245,7 @@ def build(spec: dict, call_id: int | None, record: Callable,
                 status = r.status
         except asyncio.TimeoutError:
             await done(err="timeout")
+            gap("timed out after %sms" % spec.get("timeout_ms"))
             log.warning("tool %s timed out after %sms", name, spec.get("timeout_ms"))
             # ToolError, not an exception: the model needs something it can say.
             # Raising anything else here ends the turn and the caller hears
@@ -234,6 +256,7 @@ def build(spec: dict, call_id: int | None, record: Callable,
                 "not fetch it and offer to continue without it."))
         except Exception as e:
             await done(err=f"{type(e).__name__}: {e}"[:200])
+            gap(f"{type(e).__name__}: {e}"[:200])
             log.exception("tool %s failed", name)
             raise lk_llm.ToolError(
                 "That lookup failed. Tell the caller you could not check it "
@@ -257,6 +280,7 @@ def build(spec: dict, call_id: int | None, record: Callable,
         await done(status=status, body=text, force_body=status >= 400)
 
         if status >= 400:
+            gap(f"HTTP {status}: {text[:160]}" if text else f"HTTP {status}")
             log.warning("tool %s -> HTTP %s", name, status)
             raise lk_llm.ToolError(what_to_say(
                 str(status),
@@ -288,7 +312,8 @@ def build(spec: dict, call_id: int | None, record: Callable,
 
 
 def build_all(specs: list[dict], call_id: int | None, record: Callable,
-              speak: Callable | None = None) -> list:
+              speak: Callable | None = None,
+              note_gap: Callable | None = None) -> list:
     """One bad tool must not take the others down.
 
     A campaign with five tools and one malformed schema should lose one tool,
@@ -298,7 +323,7 @@ def build_all(specs: list[dict], call_id: int | None, record: Callable,
     out = []
     for spec in specs:
         try:
-            out.append(build(spec, call_id, record, speak))
+            out.append(build(spec, call_id, record, speak, note_gap))
         except Exception:
             log.exception("tool %r could not be built - skipping",
                           spec.get("name"))

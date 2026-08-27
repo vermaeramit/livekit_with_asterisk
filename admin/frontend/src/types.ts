@@ -505,3 +505,33 @@ export interface SystemAck {
   // longer describes anything real.
   stale: boolean
 }
+
+/**
+ * One QUESTION the bot could not answer, however many times it was asked.
+ *
+ * The rows behind this are one per occurrence, each tied to a call so it can be
+ * listened to. They arrive grouped because the unit of work is the question:
+ * twenty callers asking the same thing is one document to write.
+ */
+export interface KnowledgeGap {
+  tenant_id: number
+  tenant_name: string | null
+  campaign_id: number | null
+  campaign_name: string | null
+  // kb_miss — nothing came back at all
+  // kb_weak — something did, but only just
+  // tool_failed — a lookup the caller was waiting on did not answer
+  kind: 'kb_miss' | 'kb_weak' | 'tool_failed' | string
+  query: string
+  query_key: string
+  detail: string | null
+  occurrences: number
+  open_occurrences: number
+  first_seen: string
+  last_seen: string
+  worst_score: number | null
+  call_ids: number[]
+  acknowledged_at: string | null
+  acknowledged_by_email: string | null
+  note: string | null
+}

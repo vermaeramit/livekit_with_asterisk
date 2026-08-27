@@ -62,6 +62,10 @@ MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
 # max_endpoint_delay_ms cannot help: that bounds the wait AFTER cessation is
 # detected, so it never applies to the case that hurts.
 STT_FINAL_CEILING = float(os.getenv("STT_FINAL_CEILING_MS", "2000")) / 1000
+# A knowledge-base hit below this is recorded as a gap even though it was used.
+# Above kb_min_score, so it catches the band where an answer is technically
+# grounded and practically a guess.
+GAP_WEAK_BELOW = float(os.getenv("GAP_WEAK_BELOW", "0.45"))
 
 
 def prewarm(proc: JobProcess):
@@ -292,6 +296,11 @@ class KBAgent(Agent):
         self.kb_mode = kb_mode
         self.room = room
         self.tool_calls = 0
+        # Set by the entrypoint once the row exists. A gap is worth recording
+        # even without it - the question is the point, not the call - so this
+        # stays None-tolerant rather than becoming a constructor argument that
+        # has to be threaded through every path that builds an agent.
+        self.call_id: int | None = None
         self.last_kb_ms = 0
         # Which chunks answered the current turn, best score first. Cleared when
         # the turn is written down, so it never carries into the next one.
@@ -564,6 +573,7 @@ class KBAgent(Agent):
                 in English and an English query matches them far better.
         """
         import kb
+        import store
         self.tool_calls += 1
         t0 = time.perf_counter()
 
@@ -615,6 +625,27 @@ class KBAgent(Agent):
         logger.info("  TOOL search_knowledge_base(%r) -> %d hit(s) in %d ms  %s",
                     query, len(hits), self.last_kb_ms,
                     [f"{h['score']:.2f}" for h in hits])
+        # What the caller wanted and did not get, written down so it can be
+        # taught. Not awaited - it is a note about the call, and the caller is
+        # waiting on the answer, not on the note.
+        #
+        # The query rather than the transcript, deliberately: it is already the
+        # question distilled to what was being looked for, which is what someone
+        # filling the gap needs to read.
+        best = max((h["score"] for h in hits), default=None)
+        if not hits:
+            asyncio.create_task(store.record_gap(
+                self.call_id, self.cfg.campaign_id, kind="kb_miss", query=query,
+                detail="no chunk scored above %.2f" % self.cfg.kb_min_score))
+        elif best is not None and best < GAP_WEAK_BELOW:
+            # Found, but only just. RidgeMax MR came back at 0.34 against a 0.25
+            # floor and the agent answered from a chunk that barely matched -
+            # which reads exactly like a good answer until somebody checks it.
+            asyncio.create_task(store.record_gap(
+                self.call_id, self.cfg.campaign_id, kind="kb_weak", query=query,
+                best_score=float(best),
+                detail="best match %.2f" % best))
+
         if not hits:
             # Say it explicitly. Returning an empty string reads as permission to
             # answer from general knowledge - that is where invented phone numbers
@@ -1280,13 +1311,15 @@ async def entrypoint(ctx: JobContext):
             extra_tools = tools_mod.build_all(
                 specs, call_id,
                 functools.partial(store.record_tool_call, call_id),
-                _tool_says)
+                _tool_says,
+                functools.partial(store.record_gap, call_id, cfg.campaign_id))
             logger.info("campaign tools: %s",
                         ", ".join(s["name"] for s in specs))
 
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys,
                     chat_ctx=_caller_context(dialler),
                     extra_tools=extra_tools)
+    agent.call_id = call_id
 
     vad = ctx.proc.userdata["vad"]
     # Held rather than passed inline: the greeting cache renders through this

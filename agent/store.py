@@ -237,6 +237,35 @@ async def load_tools(campaign_id: int) -> list[dict]:
     return out
 
 
+async def record_gap(call_id: Optional[int], campaign_id: Optional[int], *,
+                     kind: str, query: str, best_score: float | None = None,
+                     detail: str | None = None) -> None:
+    """Write down something the bot could not answer. Never raises.
+
+    Best effort by design, like every other record here: a call must not fail
+    because we could not note what it failed to answer.
+
+    tenant_id is read from the campaign rather than passed in. The agent does
+    not otherwise care which tenant a call belongs to, and a second source for
+    it is a second thing to get wrong.
+    """
+    q = " ".join((query or "").split())
+    if not q or campaign_id is None:
+        return
+    try:
+        await (await pool()).execute(
+            """INSERT INTO knowledge_gaps
+                   (tenant_id, campaign_id, call_id, kind, query, query_key,
+                    best_score, detail)
+               SELECT c.tenant_id, $1, $2, $3, $4, lower($4), $5, $6
+                 FROM campaigns c WHERE c.id = $1""",
+            campaign_id, call_id, kind, q[:500], best_score, detail)
+    except Exception:
+        import logging
+        logging.getLogger("voice-agent").exception(
+            "could not record a knowledge gap (%s: %r)", kind, q[:80])
+
+
 async def record_tool_call(call_id: Optional[int], *, tool_id, name, arguments,
                            status_code=None, error=None, duration_ms=None,
                            url=None, response=None, request=None) -> None:
