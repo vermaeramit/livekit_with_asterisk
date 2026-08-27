@@ -5,33 +5,30 @@ import { BookOpenCheck, Check, SearchX, TriangleAlert, Unplug } from 'lucide-rea
 import { PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
-import { Badge, Card, CardBody, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
+import { Badge, Card, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
-import { formatDateTime, formatRelative } from '@/lib/utils'
+import { cn, formatDateTime, formatRelative } from '@/lib/utils'
 import type { Campaign, KnowledgeGap } from '@/types'
 
 type KindMeta = {
   label: string
   icon: React.ComponentType<{ className?: string }>
-  tone: 'danger' | 'warning'
+  /** Matches the severity dot on Alerts, so the two pages read the same way. */
+  dot: string
 }
 
 const KIND: Record<string, KindMeta> = {
-  kb_miss: { label: 'Nothing found', icon: SearchX, tone: 'danger' },
-  kb_weak: { label: 'Barely found', icon: TriangleAlert, tone: 'warning' },
-  tool_failed: { label: 'Lookup failed', icon: Unplug, tone: 'danger' },
-}
-
-function kindOf(k: string): KindMeta | undefined {
-  return KIND[k]
+  kb_miss: { label: 'Nothing found', icon: SearchX, dot: 'bg-danger' },
+  kb_weak: { label: 'Barely found', icon: TriangleAlert, dot: 'bg-warning' },
+  tool_failed: { label: 'Lookup failed', icon: Unplug, dot: 'bg-danger' },
 }
 
 export function KnowledgeGaps() {
   const toast = useToast()
   const qc = useQueryClient()
-  const [campaign, setCampaign] = useState<string>('')
-  const [kind, setKind] = useState<string>('')
+  const [campaign, setCampaign] = useState('')
+  const [kind, setKind] = useState('')
   const [openOnly, setOpenOnly] = useState(true)
   const [handling, setHandling] = useState<KnowledgeGap | null>(null)
   const [note, setNote] = useState('')
@@ -73,127 +70,168 @@ export function KnowledgeGaps() {
       toast.error(e instanceof ApiError ? e.message : 'Could not save that'),
   })
 
-  const items = gaps.data ?? []
-
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-[1100px] space-y-5 p-5 lg:p-7">
       <PageHeader
         title="Knowledge gaps"
         description="Questions the agent could not answer, most asked first — so the top of this list is the next thing worth writing."
+        actions={
+          <Button variant="outline" size="sm" onClick={() => setOpenOnly((o) => !o)}>
+            {openOnly ? 'Show handled too' : 'Hide handled'}
+          </Button>
+        }
       />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-56">
-          <Label>Campaign</Label>
-          <Select value={campaign} onChange={(e) => setCampaign(e.target.value)}>
-            <option value="">All campaigns</option>
-            {campaigns.data?.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
-        </div>
-        <div className="w-52">
-          <Label>Kind</Label>
-          <Select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="">Everything</option>
-            <option value="kb_miss">Nothing found</option>
-            <option value="kb_weak">Barely found</option>
-            <option value="tool_failed">Lookup failed</option>
-          </Select>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => setOpenOnly((o) => !o)}>
-          {openOnly ? 'Show handled too' : 'Hide handled'}
-        </Button>
-      </div>
+      <Card className="p-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="gap-campaign">Campaign</Label>
+            <Select
+              id="gap-campaign"
+              value={campaign}
+              onChange={(e) => setCampaign(e.target.value)}
+            >
+              <option value="">All campaigns</option>
+              {campaigns.data?.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
+          </div>
 
-      {gaps.isLoading ? (
-        <Skeleton className="h-40" />
-      ) : !items.length ? (
-        <EmptyState
-          icon={BookOpenCheck}
-          title={openOnly ? 'Nothing outstanding' : 'Nothing recorded yet'}
-          hint={
-            openOnly
-              ? 'Every question the agent could not answer has been dealt with.'
-              : 'This fills itself as calls come in — when a search finds nothing, when it barely finds something, or when a lookup fails.'
-          }
-        />
-      ) : (
-        <div className="space-y-2.5">
-          {items.map((g) => {
-            const meta = kindOf(g.kind)
-            const Icon = meta?.icon ?? BookOpenCheck
-            const handled = g.open_occurrences === 0
-            return (
-              <Card key={g.campaign_id + '-' + g.kind + '-' + g.query_key}>
-                <CardBody className="space-y-2.5">
-                  <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
-                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <p className="min-w-0 flex-1 break-words text-sm font-medium leading-snug">
+          <div className="space-y-1.5">
+            <Label htmlFor="gap-kind">Kind</Label>
+            <Select id="gap-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+              <option value="">Everything</option>
+              <option value="kb_miss">Nothing found</option>
+              <option value="kb_weak">Barely found</option>
+              <option value="tool_failed">Lookup failed</option>
+            </Select>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        {gaps.isLoading ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full" />
+            ))}
+          </div>
+        ) : gaps.isError ? (
+          <EmptyState
+            icon={TriangleAlert}
+            title="Could not load knowledge gaps"
+            hint={(gaps.error as Error).message}
+          />
+        ) : !gaps.data?.length ? (
+          <EmptyState
+            icon={BookOpenCheck}
+            title={openOnly ? 'Nothing outstanding' : 'Nothing recorded yet'}
+            hint={
+              openOnly
+                ? 'Every question the agent could not answer has been dealt with.'
+                : 'This fills itself as calls come in — when a search finds nothing, when it barely finds something, or when a lookup fails.'
+            }
+          />
+        ) : (
+          <div className="divide-y divide-border/70">
+            {gaps.data.map((g) => {
+              const meta = KIND[g.kind]
+              const handled = g.open_occurrences === 0
+              return (
+                <div
+                  key={g.campaign_id + '-' + g.kind + '-' + g.query_key}
+                  className="flex items-start gap-3 px-4 py-3"
+                >
+                  <span
+                    className={cn(
+                      'mt-1.5 h-2 w-2 shrink-0 rounded-full',
+                      meta?.dot ?? 'bg-muted-foreground',
+                      handled && 'opacity-30',
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">
+                        {meta?.label ?? g.kind}
+                      </span>
+                      <span className="text-2xs text-muted-foreground">
+                        {g.campaign_name ?? 'no campaign'}
+                      </span>
+                      {/* The count is why this page groups at all: it is what
+                          says which gap to fill first, and it sets the order. */}
+                      <Badge tone={handled ? 'muted' : 'default'} className="tnum">
+                        asked {g.occurrences}×
+                      </Badge>
+                      {g.worst_score != null && (
+                        <span className="tnum text-2xs text-muted-foreground">
+                          best match {g.worst_score.toFixed(2)}
+                        </span>
+                      )}
+                      <span
+                        className="ml-auto tnum text-2xs text-muted-foreground"
+                        title={formatDateTime(g.last_seen)}
+                      >
+                        {formatRelative(g.last_seen)}
+                      </span>
+                    </div>
+
+                    <p className="mt-0.5 break-words text-sm text-muted-foreground">
                       {g.query}
                     </p>
-                    <Badge tone={handled ? 'muted' : meta?.tone ?? 'muted'}>
-                      {meta?.label ?? g.kind}
-                    </Badge>
-                    {/* The count is the whole reason this page groups. It is
-                        what tells you which gap to fill first. */}
-                    <Badge tone={handled ? 'muted' : 'default'} className="tnum">
-                      asked {g.occurrences}×
-                    </Badge>
+
+                    {g.detail && (
+                      <p className="mt-1 break-words font-mono text-2xs text-muted-foreground">
+                        {g.detail}
+                      </p>
+                    )}
+
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
+                      {/* Listening to one is faster than reading about it —
+                          the caller's own words say what they wanted. */}
+                      {g.call_ids.slice(0, 4).map((id) => (
+                        <Link
+                          key={id}
+                          to={'/calls/' + id}
+                          className="text-primary hover:underline"
+                        >
+                          call {id}
+                        </Link>
+                      ))}
+                      {g.open_occurrences > 0 && g.open_occurrences < g.occurrences && (
+                        <span>{g.open_occurrences} since it was last handled</span>
+                      )}
+                    </div>
+
+                    {g.note && (
+                      <p className="mt-1 text-2xs text-muted-foreground">
+                        handled by {g.acknowledged_by_email ?? 'someone'}
+                        {g.acknowledged_at ? ' ' + formatRelative(g.acknowledged_at) : ''}
+                        {' — '}
+                        {g.note}
+                      </p>
+                    )}
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
-                    {g.campaign_name && <span>{g.campaign_name}</span>}
-                    <span>last {formatRelative(g.last_seen)}</span>
-                    <span title={formatDateTime(g.first_seen)}>
-                      first {formatRelative(g.first_seen)}
-                    </span>
-                    {g.worst_score != null && (
-                      <span className="tnum">best match {g.worst_score.toFixed(2)}</span>
-                    )}
-                    {g.open_occurrences > 0 && g.open_occurrences < g.occurrences && (
-                      <span>{g.open_occurrences} since it was last handled</span>
-                    )}
-                  </div>
-
-                  {g.detail && (
-                    <p className="break-words font-mono text-2xs text-muted-foreground">
-                      {g.detail}
-                    </p>
+                  {!handled && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setHandling(g)
+                        setNote('')
+                      }}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      Mark handled
+                    </Button>
                   )}
-
-                  {g.note && (
-                    <p className="rounded-md border border-border bg-muted/40 p-2 text-2xs text-muted-foreground">
-                      <span className="font-medium text-foreground/80">Handled</span>
-                      {g.acknowledged_by_email ? ' by ' + g.acknowledged_by_email : ''}
-                      {g.acknowledged_at ? ' · ' + formatRelative(g.acknowledged_at) : ''}
-                      {' — '}{g.note}
-                    </p>
-                  )}
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* Listening to one is usually faster than reading about
-                        it: the caller's own words say what they wanted. */}
-                    {g.call_ids.slice(0, 4).map((id) => (
-                      <Link key={id} to={'/calls/' + id}
-                            className="text-2xs text-primary hover:underline">
-                        call {id}
-                      </Link>
-                    ))}
-                    {!handled && (
-                      <Button size="sm" variant="outline" className="ml-auto"
-                              onClick={() => { setHandling(g); setNote('') }}>
-                        <Check className="size-3.5" />
-                        Mark handled
-                      </Button>
-                    )}
-                  </div>
-                </CardBody>
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
 
       <Dialog
         open={handling !== null}
@@ -205,27 +243,30 @@ export function KnowledgeGaps() {
             <p className="text-sm leading-relaxed text-muted-foreground">
               “{handling.query}” — asked {handling.occurrences} times.
             </p>
-            <div>
-              <Label>What did you do about it?</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="gap-note">What did you do about it?</Label>
               <Input
+                id="gap-note"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="Uploaded the Splendor Flex brochure"
                 autoFocus
               />
-              <p className="mt-1.5 text-2xs leading-relaxed text-muted-foreground">
-                Read by whoever finds this open again. If the question comes back
-                it reappears as a new entry — that is the point: it means whatever
-                was done did not close the gap.
+              <p className="text-2xs leading-relaxed text-muted-foreground">
+                Read by whoever finds this open again. If the question comes back it
+                reappears as a new entry — that is the point: it means whatever was
+                done did not close the gap.
               </p>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setHandling(null)}>
                 Cancel
               </Button>
-              <Button onClick={() => acknowledge.mutate(handling)}
-                      disabled={acknowledge.isPending}>
-                {acknowledge.isPending ? 'Saving…' : 'Mark handled'}
+              <Button
+                onClick={() => acknowledge.mutate(handling)}
+                loading={acknowledge.isPending}
+              >
+                Mark handled
               </Button>
             </div>
           </div>
