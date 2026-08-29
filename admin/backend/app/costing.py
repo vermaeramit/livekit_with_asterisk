@@ -166,9 +166,21 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
 
     total = sum(legs.values(), Decimal(0))
     priced_any = bool(priced_layers)
+
+    # Cost per minute of CALL, not per minute of audio. It is the figure a
+    # per-minute budget is written in and the only one that compares two calls
+    # of different lengths.
+    #
+    # None rather than zero when there is no duration to divide by. A call that
+    # never connected has no rate; inventing one from a division by nothing
+    # would put an infinity or a zero on the page, and both are lies.
+    minutes = Decimal(str(call.get("duration_ms") or 0)) / Decimal(60_000)
+    per_min = (total / minutes) if minutes > 0 and priced_any else None
+
     out = {
         "usd": {k: float(round(v, 6)) for k, v in legs.items()},
         "usd_total": float(round(total, 6)),
+        "usd_per_minute": float(round(per_min, 6)) if per_min is not None else None,
         # Named, not counted. "add a rate for soniox · stt_seconds" is a job;
         # "3 rates missing" is a puzzle.
         "missing_rates": sorted(set(missing)),
@@ -182,5 +194,7 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
     if usd_to_inr:
         out["inr"] = {k: float(round(v * usd_to_inr, 4)) for k, v in legs.items()}
         out["inr_total"] = float(round(total * usd_to_inr, 4))
+        out["inr_per_minute"] = (float(round(per_min * usd_to_inr, 4))
+                                 if per_min is not None else None)
         out["usd_to_inr"] = float(usd_to_inr)
     return out

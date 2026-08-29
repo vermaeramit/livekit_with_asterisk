@@ -787,12 +787,23 @@ function CostCard({ cost }: { cost: CallCost }) {
                 <span className="tnum font-medium">{money(usd, inr)}</span>
               </div>
             ))}
-            <div className="flex justify-between gap-4 pt-0.5">
+            <div className="flex justify-between gap-4 border-b border-border/40 pb-1.5 pt-0.5">
               <span className="font-medium">Total</span>
               <span className="tnum font-semibold">
                 {money(cost.usd_total, cost.inr_total)}
               </span>
             </div>
+
+            {/* The figure that compares two calls of different lengths, and the
+                one a per-minute budget is written in. */}
+            {cost.usd_per_minute != null && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Per minute of call</span>
+                <span className="tnum font-medium">
+                  {money(cost.usd_per_minute, cost.inr_per_minute)}
+                </span>
+              </div>
+            )}
 
             {cost.missing_rates.length > 0 && (
               <p className="text-2xs leading-relaxed text-warning">

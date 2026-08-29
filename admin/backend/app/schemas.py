@@ -687,8 +687,11 @@ class CallCost(BaseModel):
     """
     usd: dict[str, float]
     usd_total: float
+    # Per minute of call. None when the call has no duration to divide by.
+    usd_per_minute: float | None = None
     inr: dict[str, float] | None = None
     inr_total: float | None = None
+    inr_per_minute: float | None = None
     usd_to_inr: float | None = None
     # Named, not counted: "add a rate for soniox / stt_seconds" is a job.
     missing_rates: list[str] = []

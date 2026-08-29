@@ -541,8 +541,11 @@ export interface KnowledgeGap {
 export interface CallCost {
   usd: { llm: number; tts: number; stt: number }
   usd_total: number
+  // Per minute of call. null when there is no duration to divide by.
+  usd_per_minute?: number | null
   inr?: { llm: number; tts: number; stt: number } | null
   inr_total?: number | null
+  inr_per_minute?: number | null
   usd_to_inr?: number | null
   // Named, so the console can say which row to go and add.
   missing_rates: string[]
