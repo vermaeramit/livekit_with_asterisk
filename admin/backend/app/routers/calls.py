@@ -9,9 +9,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
-from .. import db
+from .. import costing, db
+from . import rates
 from ..deps import CurrentUser, active_user, tenant_scope
-from ..schemas import (CallDetail, CallListItem, CallListResponse, CallUsage,
+from ..schemas import (CallCost, CallDetail, CallListItem, CallListResponse, CallUsage,
                        ToolInvocationOut, TurnOut)
 
 router = APIRouter(prefix="/calls", tags=["calls"])
@@ -117,6 +118,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
                    c.llm_prompt_cached_tokens, c.llm_completion_tokens,
                    c.tts_characters, c.tts_audio_seconds, c.stt_audio_seconds,
                    c.stt_provider_used, c.llm_provider_used, c.tts_provider_used,
+                   c.llm_model_used, c.stt_model_used, c.tts_model_used,
                    c.dialer_context
               FROM calls c LEFT JOIN campaigns cam ON cam.id = c.campaign_id
              WHERE c.id = $1""", call_id)
@@ -152,9 +154,16 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     if isinstance(d.get("dialer_context"), str):
         d["dialer_context"] = json.loads(d["dialer_context"])
 
+    # Priced BEFORE the usage fields are popped off, and from the same row, so
+    # the figures on the page and the figures they were derived from cannot
+    # disagree.
+    cost = costing.price_call(d, await rates.load_rates(), await rates.usd_to_inr())
+
     usage = CallUsage(**{k: d.pop(k) for k in (
         "llm_prompt_tokens", "llm_prompt_cached_tokens", "llm_completion_tokens",
         "tts_characters", "tts_audio_seconds", "stt_audio_seconds")})
+    for k in ("llm_model_used", "stt_model_used", "tts_model_used"):
+        d.pop(k, None)
 
     # Checked here rather than trusted from a column: retention deletes files
     # without touching the database, so a stored flag would go stale.
@@ -166,7 +175,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
             t["arguments"] = json.loads(t["arguments"])
         return ToolInvocationOut(**t)
 
-    return CallDetail(**d, usage=usage,
+    return CallDetail(**d, usage=usage, cost=CallCost(**cost),
                       recording_available=audio is not None,
                       recording_bytes=audio.stat().st_size if audio else None,
                       turns=[TurnOut(**dict(t)) for t in turns],

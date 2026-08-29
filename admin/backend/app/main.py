@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import alerting, db, postback
 from .config import settings
 from .routers import (agent_config, alerts, analytics, auth, calls, gaps,
+                      rates,
                       campaigns, kb, live, provider_keys, system, tenants,
                       tools, users)
 
@@ -68,6 +69,7 @@ app.include_router(analytics.router, prefix="/api")
 app.include_router(live.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(gaps.router, prefix="/api")
+app.include_router(rates.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")

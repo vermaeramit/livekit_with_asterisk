@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
-import type { CallDetail as CallDetailType, KbChunk, ToolInvocation, Turn } from '@/types'
+import type { CallCost, CallDetail as CallDetailType, KbChunk, ToolInvocation, Turn } from '@/types'
 import { EndReasonBadge } from './Calls'
 
 function Stat({
@@ -736,6 +736,80 @@ export function CallDetail() {
           ))}
         </CardBody>
       </Card>
+
+      {c.cost && <CostCard cost={c.cost} />}
     </div>
+  )
+}
+
+/**
+ * What the call cost.
+ *
+ * Three states, and they must look different from each other. A priced call
+ * shows the money; a call with no rates says so and points at the page that
+ * fixes it; a call priced through a fallback says the figure is approximate.
+ *
+ * The one thing it must never do is show 0.00 for "we do not know", which is
+ * how a costing page loses the reader's trust for good.
+ */
+function CostCard({ cost }: { cost: CallCost }) {
+  const money = (usd: number, inr?: number | null) =>
+    cost.inr && inr != null
+      ? `$${usd.toFixed(4)}  ·  ₹${inr.toFixed(2)}`
+      : `$${usd.toFixed(4)}`
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Cost</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-2 text-sm">
+        {!cost.priced ? (
+          <p className="text-muted-foreground">
+            No prices are set for the providers this call used, so it cannot be
+            costed. Add them under{' '}
+            <Link to="/rates" className="text-primary hover:underline">
+              Provider rates
+            </Link>
+            .
+          </p>
+        ) : (
+          <>
+            {(
+              [
+                ['LLM', cost.usd.llm, cost.inr?.llm],
+                ['Text to speech', cost.usd.tts, cost.inr?.tts],
+                ['Speech to text', cost.usd.stt, cost.inr?.stt],
+              ] as const
+            ).map(([label, usd, inr]) => (
+              <div key={label} className="flex justify-between gap-4 border-b border-border/40 pb-1.5">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="tnum font-medium">{money(usd, inr)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between gap-4 pt-0.5">
+              <span className="font-medium">Total</span>
+              <span className="tnum font-semibold">
+                {money(cost.usd_total, cost.inr_total)}
+              </span>
+            </div>
+
+            {cost.missing_rates.length > 0 && (
+              <p className="text-2xs leading-relaxed text-warning">
+                Short by whatever these cost — no rate is set for{' '}
+                {cost.missing_rates.join(', ')}.
+              </p>
+            )}
+            {cost.approximate && (
+              <p className="text-2xs leading-relaxed text-muted-foreground">
+                A fallback provider served part of this call. It is priced at the
+                primary's rate, because how much of the call each one carried is
+                not recorded.
+              </p>
+            )}
+          </>
+        )}
+      </CardBody>
+    </Card>
   )
 }

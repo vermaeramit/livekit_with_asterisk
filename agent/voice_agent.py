@@ -1716,7 +1716,11 @@ async def entrypoint(ctx: JobContext):
                       else "completed")
             await store.end_call_usage(
                 call_id, reason, agent.limit_hit, agent.turn_count, u,
-                providers={k: ",".join(sorted(v)) for k, v in providers_used.items() if v})
+                providers={k: ",".join(sorted(v)) for k, v in providers_used.items() if v},
+                # From the config this call ran with, not from the row - the
+                # config can be edited between the call and anyone reading it.
+                models={"llm": cfg.llm_model, "stt": cfg.stt_model,
+                        "tts": cfg.tts_model})
             if agent.transferred:
                 dest, why = agent.transferred
                 await (await store.pool()).execute(

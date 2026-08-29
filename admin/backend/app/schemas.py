@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -627,6 +628,75 @@ class PromptTokens(BaseModel):
     text: str = Field(default="", max_length=200_000)
 
 
+_RATE_KINDS = ("llm_input", "llm_cached", "llm_output",
+               "tts_characters", "tts_seconds", "stt_seconds")
+_RATE_UNITS = ("per_million", "per_hour", "per_minute", "per_unit")
+
+
+class ProviderRateIn(BaseModel):
+    """One price, as the provider quotes it."""
+    provider: str = Field(min_length=2, max_length=40)
+    # None means "any model from this provider". A row naming the model wins.
+    model: str | None = Field(default=None, max_length=80)
+    kind: Literal[_RATE_KINDS]  # type: ignore[valid-type]
+    unit: Literal[_RATE_UNITS]  # type: ignore[valid-type]
+    usd_price: Decimal = Field(ge=0, max_digits=16, decimal_places=8)
+    note: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _unit_suits_the_kind(self):
+        """A token price per hour is not a typo anybody catches later.
+
+        It would simply produce a cost three thousand times out, on a page
+        nobody has a second opinion about.
+        """
+        time_based = self.kind in ("tts_seconds", "stt_seconds")
+        time_units = self.unit in ("per_hour", "per_minute")
+        if time_based and not time_units and self.unit != "per_unit":
+            raise ValueError(
+                f"{self.kind} is measured in seconds - price it per_hour, "
+                "per_minute or per_unit")
+        if not time_based and time_units:
+            raise ValueError(
+                f"{self.kind} is counted, not timed - price it per_million or "
+                "per_unit")
+        return self
+
+
+class ProviderRateOut(BaseModel):
+    id: int
+    provider: str
+    model: str | None
+    kind: str
+    unit: str
+    usd_price: Decimal
+    note: str | None = None
+    updated_at: datetime
+    updated_by_email: str | None = None
+
+
+class PlatformSetting(BaseModel):
+    value: Decimal = Field(gt=0, max_digits=16, decimal_places=6)
+
+
+class CallCost(BaseModel):
+    """What a call cost, and what could not be priced.
+
+    `priced` false means no leg had a rate at all - the console must show that
+    differently from a genuine zero, because a confident 0.00 reads as free.
+    """
+    usd: dict[str, float]
+    usd_total: float
+    inr: dict[str, float] | None = None
+    inr_total: float | None = None
+    usd_to_inr: float | None = None
+    # Named, not counted: "add a rate for soniox / stt_seconds" is a job.
+    missing_rates: list[str] = []
+    priced: bool
+    # A fallback provider served part of the call; it is priced as the primary.
+    approximate: bool = False
+
+
 class KnowledgeGapOut(BaseModel):
     """One QUESTION the bot could not answer, however many times it was asked.
 
@@ -775,6 +845,9 @@ class CallDetail(CallListItem):
     # added seven fields once without telling anyone.
     dialer_context: dict | None = None
     usage: CallUsage
+    # What that usage cost, at today's rates. See costing.py for why it is
+    # calculated on the way out rather than stamped on the call.
+    cost: CallCost | None = None
     turns: list[TurnOut]
     tools: list[ToolInvocationOut] = []
 

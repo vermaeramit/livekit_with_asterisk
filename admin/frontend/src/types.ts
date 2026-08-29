@@ -108,6 +108,7 @@ export interface CallDetail extends CallListItem {
   // Free-form on purpose — the key set is theirs to change.
   dialer_context: Record<string, string> | null
   usage: CallUsage
+  cost?: CallCost | null
   turns: Turn[]
   tools: ToolInvocation[]
 }
@@ -534,4 +535,33 @@ export interface KnowledgeGap {
   acknowledged_at: string | null
   acknowledged_by_email: string | null
   note: string | null
+}
+
+/** What a call cost, at the rates set when it was looked at. */
+export interface CallCost {
+  usd: { llm: number; tts: number; stt: number }
+  usd_total: number
+  inr?: { llm: number; tts: number; stt: number } | null
+  inr_total?: number | null
+  usd_to_inr?: number | null
+  // Named, so the console can say which row to go and add.
+  missing_rates: string[]
+  // false = no leg had a rate at all. Must not be shown as a zero: a confident
+  // 0.00 reads as free.
+  priced: boolean
+  // A fallback provider served part of the call; it is priced as the primary.
+  approximate: boolean
+}
+
+export interface ProviderRate {
+  id: number
+  provider: string
+  // null = any model from this provider. A row naming the model wins.
+  model: string | null
+  kind: 'llm_input' | 'llm_cached' | 'llm_output' | 'tts_characters' | 'tts_seconds' | 'stt_seconds'
+  unit: 'per_million' | 'per_hour' | 'per_minute' | 'per_unit'
+  usd_price: string
+  note: string | null
+  updated_at: string
+  updated_by_email: string | null
 }
