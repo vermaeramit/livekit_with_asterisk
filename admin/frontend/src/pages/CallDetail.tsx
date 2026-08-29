@@ -800,13 +800,11 @@ function CostCard({ cost }: { cost: CallCost }) {
                 {cost.missing_rates.join(', ')}.
               </p>
             )}
-            {cost.approximate && (
-              <p className="text-2xs leading-relaxed text-muted-foreground">
-                A fallback provider served part of this call. It is priced at the
-                primary's rate, because how much of the call each one carried is
-                not recorded.
+            {cost.caveats.map((c) => (
+              <p key={c} className="text-2xs leading-relaxed text-muted-foreground">
+                {c}
               </p>
-            )}
+            ))}
           </>
         )}
       </CardBody>

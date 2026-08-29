@@ -75,25 +75,56 @@ def quantities(call: dict) -> dict[str, Decimal]:
 
 
 def pick_rate(rates: list[dict], provider: str | None, model: str | None,
-              kind: str) -> dict | None:
-    """The rate that applies, model-specific first.
+              kind: str) -> tuple[dict | None, bool]:
+    """-> (the rate that applies, whether the model had to be assumed).
 
     A row naming the model beats one that does not, so a campaign on gpt-4.1 is
-    not priced at gpt-4.1-mini's rate just because someone set a provider-wide
-    default first.
+    not priced at gpt-4.1-mini's rate just because a provider-wide default was
+    set first.
+
+    When the call does not say which model ran - every call made before the
+    model was recorded - a single candidate is still used, because there is
+    nothing else it could have been. Several candidates are not guessed at: a
+    provider with rates for tts-rt-v1 and tts-rt-v2 gives no way to tell which
+    an old call used, and picking one would put a made-up number in a bill.
     """
     if not provider:
-        return None
+        return None, False
     exact = None
     generic = None
+    candidates = []
     for r in rates:
         if r["provider"] != provider or r["kind"] != kind:
             continue
+        candidates.append(r)
         if r["model"] and model and r["model"] == model:
             exact = r
         elif not r["model"]:
             generic = r
-    return exact or generic
+    if exact or generic:
+        return (exact or generic), False
+    if not model and len(candidates) == 1:
+        return candidates[0], True
+    return None, False
+
+
+def _caveats(call: dict, assumed_models: set[str]) -> list[str]:
+    """Everything that makes this figure less than exact, in words."""
+    out = []
+    fell_back = [c.split("_")[0] for c in
+                 ("llm_provider_used", "tts_provider_used", "stt_provider_used")
+                 if "," in (call.get(c) or "")]
+    if fell_back:
+        out.append(
+            f"A fallback provider served part of the {', '.join(fell_back)} "
+            "leg. It is priced at the primary's rate, because how much of the "
+            "call each one carried is not recorded.")
+    if assumed_models:
+        out.append(
+            "This call predates the model being recorded, so "
+            + ", ".join(sorted(assumed_models))
+            + " was assumed - it is the only rate that could have applied.")
+    return out
 
 
 def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dict:
@@ -108,13 +139,16 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
                                 "stt": Decimal(0)}
     unpriced: dict[str, list[str]] = {"llm": [], "tts": [], "stt": []}
     priced_layers: set[str] = set()
+    assumed_models: set[str] = set()
 
     for layer, kind, provider_col, model_col in _LEGS:
         amount = qty.get(kind, Decimal(0))
         if amount <= 0:
             continue
         provider = _first_provider(call.get(provider_col))
-        rate = pick_rate(rates, provider, call.get(model_col), kind)
+        rate, assumed = pick_rate(rates, provider, call.get(model_col), kind)
+        if assumed and rate is not None:
+            assumed_models.add(f"{provider} · {rate['model']}")
         if rate is None:
             unpriced[layer].append(f"{provider or 'unknown'} · {kind}")
             continue
@@ -141,12 +175,9 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
         # False means every leg was unpriced: there is no figure at all, which
         # the console must show differently from a genuine zero.
         "priced": priced_any,
-        # A fallback fired, so the call was partly served by a provider it is
-        # not being priced at.
-        "approximate": any(
-            "," in (call.get(c) or "")
-            for c in ("llm_provider_used", "tts_provider_used", "stt_provider_used")
-        ),
+        # Written out rather than flagged, because "approximate" alone tells a
+        # reader to distrust the number without telling them how far.
+        "caveats": _caveats(call, assumed_models),
     }
     if usd_to_inr:
         out["inr"] = {k: float(round(v * usd_to_inr, 4)) for k, v in legs.items()}

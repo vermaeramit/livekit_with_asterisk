@@ -693,8 +693,10 @@ class CallCost(BaseModel):
     # Named, not counted: "add a rate for soniox / stt_seconds" is a job.
     missing_rates: list[str] = []
     priced: bool
-    # A fallback provider served part of the call; it is priced as the primary.
-    approximate: bool = False
+    # Everything that makes the figure less than exact, written out. A bare
+    # "approximate" tells a reader to distrust the number without telling them
+    # how far, which is the least useful thing it could say.
+    caveats: list[str] = []
 
 
 class KnowledgeGapOut(BaseModel):

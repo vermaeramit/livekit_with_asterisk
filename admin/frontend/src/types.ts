@@ -549,8 +549,8 @@ export interface CallCost {
   // false = no leg had a rate at all. Must not be shown as a zero: a confident
   // 0.00 reads as free.
   priced: boolean
-  // A fallback provider served part of the call; it is priced as the primary.
-  approximate: boolean
+  // Everything that makes the figure less than exact, in words.
+  caveats: string[]
 }
 
 export interface ProviderRate {
