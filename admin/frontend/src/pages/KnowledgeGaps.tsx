@@ -50,14 +50,17 @@ export function KnowledgeGaps() {
 
   const acknowledge = useMutation({
     mutationFn: (g: KnowledgeGap) =>
+      // api() serialises the body itself - stringifying here as well sends a
+      // JSON string where the endpoint expects an object, and pydantic answers
+      // "Input should be a valid dictionary".
       api('/gaps/acknowledge', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           campaign_id: g.campaign_id,
           kind: g.kind,
           query_key: g.query_key,
           note: note.trim() || null,
-        }),
+        },
       }),
     onSuccess: () => {
       setHandling(null)

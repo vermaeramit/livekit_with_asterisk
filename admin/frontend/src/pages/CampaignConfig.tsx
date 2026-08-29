@@ -346,7 +346,9 @@ export function CampaignConfig() {
     queryFn: () =>
       api<{ tokens: number; exact: boolean }>(
         `/campaigns/${campaignId}/prompt-tokens`,
-        { method: 'POST', body: JSON.stringify({ text: countable }) },
+        // Not stringified here: api() does that, and doing it twice sends a
+        // JSON string rather than an object.
+        { method: 'POST', body: { text: countable } },
       ),
     enabled: Boolean(campaignId) && countable.length > 0,
     // The same text always counts the same, so it never needs recounting.
