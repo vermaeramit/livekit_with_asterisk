@@ -15,6 +15,7 @@ it is the one that is still running a minute later.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -62,8 +63,36 @@ _SYSTEM = (
     "2. Record what the CALLER said, not what the agent offered. An agent "
     "asking about finance is not the caller choosing it.\n"
     "3. If the caller changed their mind, record the last thing they said.\n"
-    "4. Values go in the language and form the field description asks for."
+    "4. Values go in the language and form the field description asks for.\n"
+    "5. Dates and times are relative to CURRENT DATE below. Work out what "
+    "\"kal\", \"parso\", \"agle somvar\", \"28 tareekh\" and so on mean from "
+    "it, and record the result as an absolute date. Never carry a year over "
+    "from anywhere else."
 )
+
+
+def _now_line() -> str:
+    """Tell the extractor what day it is.
+
+    Without it the model has to invent a year, and it invents the one it was
+    trained around: call 373 recorded a test ride as 2024-04-28 from a
+    conversation held in August 2026. Nothing in that conversation was wrong -
+    the caller said a date the way people say dates, and the model had no year
+    to attach it to.
+
+    POSTBACK_TZ, the same zone every timestamp in the payload is rendered in.
+    A different one here would let a call end at one hour and its test ride be
+    worked out against another, inside a single message.
+
+    Always sent, unlike the agent's own date line which is a campaign setting.
+    That one sits in a cached prompt and is paid for on every call; this runs
+    once, afterwards - and a record carrying the wrong year is worse than no
+    record, because it is a booking somebody will act on.
+    """
+    now = datetime.datetime.now(POSTBACK_TZ)
+    return ("\n\nCURRENT DATE AND TIME: "
+            + now.strftime("%A, %d %B %Y, %I:%M %p ").replace(" 0", " ")
+            + str(getattr(POSTBACK_TZ, "key", "IST")))
 
 
 def transcript_text(turns: list[dict], limit: int = 120) -> str:
@@ -141,7 +170,7 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
             # Deterministic: the same conversation must produce the same record
             # twice, or re-running an extraction becomes a coin toss.
             temperature=0,
-            messages=[{"role": "system", "content": _SYSTEM},
+            messages=[{"role": "system", "content": _SYSTEM + _now_line()},
                       {"role": "user", "content": text}],
             response_format={
                 "type": "json_schema",
