@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+import { Maximize2, Minimize2 } from 'lucide-react'
 import { Input, Label, Select } from '@/components/ui/primitives'
 import { cn } from '@/lib/utils'
 
@@ -141,6 +143,15 @@ export function TextArea({
   onChange,
   rows = 6,
   mono,
+  /**
+   * Offer a full-screen editor.
+   *
+   * For the fields nobody actually writes in a box: the system prompt runs to
+   * five thousand tokens, and editing it sixteen rows at a time means scrolling
+   * to find the section you meant to change and losing your place on the way
+   * back.
+   */
+  expandable,
   ...props
 }: {
   label: string
@@ -150,26 +161,98 @@ export function TextArea({
   onChange: (v: string) => void
   rows?: number
   mono?: boolean
+  expandable?: boolean
 } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange' | 'rows'>) {
   const id = props.id ?? `f-${label.replace(/\W+/g, '-').toLowerCase()}`
+  const [full, setFull] = useState(false)
+  const boxRef = useRef<HTMLTextAreaElement>(null)
+
+  // Escape closes it, and the page behind must not scroll while it is open -
+  // otherwise closing returns you somewhere you never scrolled to.
+  useEffect(() => {
+    if (!full) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFull(false)
+    }
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    boxRef.current?.focus()
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [full])
+
+  // `id` is stripped in the full-screen copy: the collapsed one is still in the
+  // tree behind the overlay, and two elements sharing an id is how a <label>
+  // ends up pointing at whichever the browser finds first.
+  const { id: _idProp, ...rest } = props
+
+  const box = (fullscreen: boolean) => (
+    <textarea
+      id={fullscreen ? undefined : id}
+      ref={fullscreen ? boxRef : undefined}
+      rows={fullscreen ? undefined : rows}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-invalid={error ? true : undefined}
+      className={cn(
+        'scrollbar-thin w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs',
+        'placeholder:text-muted-foreground',
+        'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
+        'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/20',
+        mono && 'font-mono text-xs leading-relaxed',
+        fullscreen && 'min-h-0 flex-1 resize-none',
+      )}
+      {...(fullscreen ? rest : props)}
+    />
+  )
+
   return (
-    <Field label={label} hint={hint} error={error} htmlFor={id}>
-      <textarea
-        id={id}
-        rows={rows}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-invalid={error ? true : undefined}
-        className={cn(
-          'scrollbar-thin w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs',
-          'placeholder:text-muted-foreground',
-          'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
-          'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/20',
-          mono && 'font-mono text-xs leading-relaxed',
-        )}
-        {...props}
-      />
-    </Field>
+    <>
+      <Field label={label} hint={hint} error={error} htmlFor={id}>
+        <div className="relative">
+          {box(false)}
+          {expandable && (
+            <button
+              type="button"
+              onClick={() => setFull(true)}
+              title="Edit full screen"
+              aria-label="Edit full screen"
+              className="absolute right-2 top-2 rounded-md border border-border bg-card/90 p-1 text-muted-foreground shadow-xs transition-colors hover:text-foreground"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </Field>
+
+      {full && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background p-4 lg:p-6">
+          <div className="mb-3 flex items-center gap-3">
+            <Label className="text-sm">{label}</Label>
+            <button
+              type="button"
+              onClick={() => setFull(false)}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+              Done
+              <kbd className="ml-1 rounded border border-border px-1 text-2xs">Esc</kbd>
+            </button>
+          </div>
+          {box(true)}
+          {/* The hint comes too - on the prompt it carries the token count, and
+              that is the number you are watching while you cut it down. */}
+          {hint && (
+            <p className="mt-2 shrink-0 text-2xs leading-relaxed text-muted-foreground">
+              {hint}
+            </p>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 

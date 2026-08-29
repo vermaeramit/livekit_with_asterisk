@@ -531,6 +531,7 @@ export function CampaignConfig() {
               onChange={(v) => set('instructions', v)}
               rows={16}
               mono
+              expandable
               hint={
                 <>
                   <span className="font-medium text-foreground/70 tnum">
