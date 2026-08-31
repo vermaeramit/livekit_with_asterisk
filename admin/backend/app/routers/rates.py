@@ -24,7 +24,7 @@ router = APIRouter(tags=["rates"])
 superadmin = require_roles()
 
 _SELECT = """
-    SELECT r.id, r.provider, r.model, r.kind, r.unit, r.usd_price, r.note,
+    SELECT r.id, r.provider, r.model, r.kind, r.unit, r.price, r.currency, r.note,
            r.updated_at, u.email AS updated_by_email
       FROM provider_rates r
       LEFT JOIN users u ON u.id = r.updated_by
@@ -71,23 +71,24 @@ async def upsert_rate(body: ProviderRateIn,
     """
     row = await db.pool().fetchrow(
         """INSERT INTO provider_rates
-               (provider, model, kind, unit, usd_price, note, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (provider, model, kind, unit, price, currency, note, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (provider, coalesce(model, ''), kind) DO UPDATE
                SET unit = EXCLUDED.unit,
-                   usd_price = EXCLUDED.usd_price,
+                   price = EXCLUDED.price,
+                   currency = EXCLUDED.currency,
                    note = EXCLUDED.note,
                    updated_at = now(),
                    updated_by = EXCLUDED.updated_by
            RETURNING id""",
         body.provider, body.model, body.kind, body.unit,
-        body.usd_price, body.note, actor.id)
+        body.price, body.currency, body.note, actor.id)
 
     await audit.record(actor, entity="provider_rate",
                        entity_id=f"{body.provider}/{body.model or '*'}/{body.kind}",
                        action="set",
-                       changes={"usd_price": {"from": None,
-                                              "to": f"{body.usd_price} {body.unit}"}})
+                       changes={"price": {"from": None,
+                                          "to": f"{body.price} {body.currency} {body.unit}"}})
     out = await db.pool().fetchrow(
         _SELECT.replace("ORDER BY", "WHERE r.id = $1 ORDER BY"), row["id"])
     return ProviderRateOut(**dict(out))

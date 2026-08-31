@@ -39,7 +39,8 @@ const BLANK = {
   model: '',
   kind: 'llm_input' as ProviderRate['kind'],
   unit: 'per_million' as ProviderRate['unit'],
-  usd_price: '',
+  price: '',
+  currency: 'USD' as ProviderRate['currency'],
   note: '',
 }
 
@@ -72,7 +73,8 @@ export function Rates() {
           model: r.model.trim() || null,
           kind: r.kind,
           unit: r.unit,
-          usd_price: r.usd_price,
+          price: r.price,
+          currency: r.currency,
           note: r.note.trim() || null,
         },
       }),
@@ -199,7 +201,8 @@ export function Rates() {
                     </p>
                   </div>
                   <span className="tnum shrink-0 text-sm font-medium">
-                    ${Number(r.usd_price).toFixed(4)}
+                    {r.currency === 'INR' ? '₹' : '$'}
+                    {Number(r.price).toFixed(r.currency === 'INR' ? 2 : 4)}
                     <span className="ml-1 text-2xs font-normal text-muted-foreground">
                       {unit?.label ?? r.unit}
                     </span>
@@ -213,7 +216,8 @@ export function Rates() {
                         model: r.model ?? '',
                         kind: r.kind,
                         unit: r.unit,
-                        usd_price: String(r.usd_price),
+                        price: String(r.price),
+                        currency: r.currency,
                         note: r.note ?? '',
                       })
                     }
@@ -303,12 +307,32 @@ export function Rates() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rv">Price in USD</Label>
+                <Label htmlFor="rc">Currency</Label>
+                <Select
+                  id="rc"
+                  value={editing.currency}
+                  onChange={(e) =>
+                    setEditing({ ...editing, currency: e.target.value as ProviderRate['currency'] })
+                  }
+                >
+                  <option value="USD">USD — $</option>
+                  <option value="INR">INR — ₹</option>
+                </Select>
+                <p className="text-2xs leading-relaxed text-muted-foreground">
+                  {/* Held in the billing currency on purpose. */}
+                  What the provider actually charges in. Sarvam bills rupees and
+                  will still bill the same rupees when the exchange rate moves;
+                  storing it as dollars would make its cost drift every time that
+                  rate was edited.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rv">Price</Label>
                 <Input
                   id="rv"
-                  value={editing.usd_price}
-                  onChange={(e) => setEditing({ ...editing, usd_price: e.target.value })}
-                  placeholder="0.40"
+                  value={editing.price}
+                  onChange={(e) => setEditing({ ...editing, price: e.target.value })}
+                  placeholder={editing.currency === 'INR' ? '30' : '0.40'}
                   inputMode="decimal"
                 />
               </div>

@@ -563,7 +563,10 @@ export interface ProviderRate {
   model: string | null
   kind: 'llm_input' | 'llm_cached' | 'llm_output' | 'tts_characters' | 'tts_seconds' | 'stt_seconds'
   unit: 'per_million' | 'per_hour' | 'per_minute' | 'per_unit'
-  usd_price: string
+  price: string
+  // What the provider bills in. Sarvam charges rupees and always will, so its
+  // price is held in rupees rather than converted on the way in.
+  currency: 'USD' | 'INR'
   note: string | null
   updated_at: string
   updated_by_email: string | null

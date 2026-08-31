@@ -640,7 +640,9 @@ class ProviderRateIn(BaseModel):
     model: str | None = Field(default=None, max_length=80)
     kind: Literal[_RATE_KINDS]  # type: ignore[valid-type]
     unit: Literal[_RATE_UNITS]  # type: ignore[valid-type]
-    usd_price: Decimal = Field(ge=0, max_digits=16, decimal_places=8)
+    price: Decimal = Field(ge=0, max_digits=16, decimal_places=8)
+    # What the provider bills in. Sarvam charges rupees and always will.
+    currency: Literal['USD', 'INR'] = 'USD'
     note: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
@@ -669,7 +671,8 @@ class ProviderRateOut(BaseModel):
     model: str | None
     kind: str
     unit: str
-    usd_price: Decimal
+    price: Decimal
+    currency: str
     note: str | None = None
     updated_at: datetime
     updated_by_email: str | None = None

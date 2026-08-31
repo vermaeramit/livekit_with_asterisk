@@ -108,9 +108,19 @@ def pick_rate(rates: list[dict], provider: str | None, model: str | None,
     return None, False
 
 
-def _caveats(call: dict, assumed_models: set[str]) -> list[str]:
+def _caveats(call: dict, assumed_models: set[str], *,
+             mixed_no_fx: bool = False, rupee_only: bool = False) -> list[str]:
     """Everything that makes this figure less than exact, in words."""
     out = []
+    if mixed_no_fx:
+        out.append(
+            "This call used a provider that bills in rupees and one that bills "
+            "in dollars, and no exchange rate is set. Set one under Provider "
+            "rates - the two cannot be added up without it.")
+    if rupee_only:
+        out.append(
+            "Priced in rupees, as the provider bills. Set an exchange rate "
+            "under Provider rates to see it in dollars as well.")
     fell_back = [c.split("_")[0] for c in
                  ("llm_provider_used", "tts_provider_used", "stt_provider_used")
                  if "," in (call.get(c) or "")]
@@ -135,8 +145,14 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
     is silently short.
     """
     qty = quantities(call)
-    legs: dict[str, Decimal] = {"llm": Decimal(0), "tts": Decimal(0),
-                                "stt": Decimal(0)}
+    # Two ledgers, because a provider's price is in the currency it bills in and
+    # nothing else. Sarvam charges Rs 30/hour and will still charge Rs 30/hour
+    # when the exchange rate moves; folding it into dollars on the way in would
+    # make its rupee cost drift every time somebody edited that rate.
+    usd_legs: dict[str, Decimal] = {"llm": Decimal(0), "tts": Decimal(0),
+                                    "stt": Decimal(0)}
+    inr_legs: dict[str, Decimal] = {"llm": Decimal(0), "tts": Decimal(0),
+                                    "stt": Decimal(0)}
     unpriced: dict[str, list[str]] = {"llm": [], "tts": [], "stt": []}
     priced_layers: set[str] = set()
     assumed_models: set[str] = set()
@@ -153,7 +169,11 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
             unpriced[layer].append(f"{provider or 'unknown'} · {kind}")
             continue
         per = _PER.get(rate["unit"], Decimal(1))
-        legs[layer] += (amount / per) * Decimal(str(rate["usd_price"]))
+        cost = (amount / per) * Decimal(str(rate["price"]))
+        if (rate.get("currency") or "USD").upper() == "INR":
+            inr_legs[layer] += cost
+        else:
+            usd_legs[layer] += cost
         priced_layers.add(layer)
 
     # Only complain about a layer that got NO price at all.
@@ -164,8 +184,24 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
     missing = [name for layer, names in unpriced.items()
                if layer not in priced_layers for name in names]
 
-    total = sum(legs.values(), Decimal(0))
     priced_any = bool(priced_layers)
+    has_inr = any(v for v in inr_legs.values())
+    has_usd = any(v for v in usd_legs.values())
+
+    # One currency is needed to add them up. Without a rate, a call priced in
+    # both can be shown in neither - and saying so beats adding rupees to
+    # dollars, which is what a silently missing conversion amounts to.
+    if usd_to_inr:
+        legs = {k: usd_legs[k] + inr_legs[k] / usd_to_inr for k in usd_legs}
+    elif has_inr and has_usd:
+        legs = {k: Decimal(0) for k in usd_legs}
+        priced_any = False
+    elif has_inr:
+        legs = dict(inr_legs)          # rupee-only: report it as the "usd" leg
+    else:
+        legs = dict(usd_legs)
+
+    total = sum(legs.values(), Decimal(0))
 
     # Cost per minute of CALL, not per minute of audio. It is the figure a
     # per-minute budget is written in and the only one that compares two calls
@@ -189,7 +225,9 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
         "priced": priced_any,
         # Written out rather than flagged, because "approximate" alone tells a
         # reader to distrust the number without telling them how far.
-        "caveats": _caveats(call, assumed_models),
+        "caveats": _caveats(call, assumed_models,
+                            mixed_no_fx=has_inr and has_usd and not usd_to_inr,
+                            rupee_only=has_inr and not has_usd and not usd_to_inr),
     }
     if usd_to_inr:
         out["inr"] = {k: float(round(v * usd_to_inr, 4)) for k, v in legs.items()}
