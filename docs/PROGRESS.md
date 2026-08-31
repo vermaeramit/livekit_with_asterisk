@@ -2839,8 +2839,119 @@ extraction fails outright too: the full shape with nulls, never an empty object.
 
 ---
 
+## What a call costs, and what it could not answer (26-29 Aug 2026)
+
+### Costing
+
+Everything needed was already recorded per call. What was missing was the price
+of each unit, and which model incurred it - `llm_model` lives on agent_config,
+so moving a campaign from gpt-4.1-mini to gpt-4.1 would have re-priced every
+call ever made at about five times what it cost. Three columns now record what
+actually ran.
+
+Three ways the arithmetic goes wrong, none of which announce themselves:
+
+- **`llm_prompt_tokens` already includes the cached ones.** On one call that is
+  3,06,984 against a true uncached 14,376 - twenty times over.
+- **Providers quote per million tokens and per audio hour**; we count tokens and
+  seconds.
+- **A missing rate is not a zero.** 0.00 reads as free.
+
+Prices are data. Nothing is seeded by a migration, because a migration runs on
+every deployment forever and a price in one reinstates itself long after it
+stopped being true. `server-configs/seed-rates.sql` was run once, on a date, and
+the date is on every row.
+
+**Soniox's rates were solved from the account's own usage page** rather than
+copied from a price list - better evidence, because it is what was actually
+charged. Three models gave three equations agreeing to the last cent: $4.00/1M
+text tokens, $2.00/1M STT audio tokens, $21.50/1M TTS audio tokens.
+
+**And Sarvam bills rupees.** Holding its Rs 30/hour as a converted dollar figure
+would have made its rupee cost drift every time the exchange rate was edited,
+while Sarvam went on charging Rs 30. The currency now belongs to the rate. A
+call using both - the Sarvam campaigns run OpenAI for the LLM - reports as
+unpriced without an exchange rate rather than adding rupees to dollars.
+
+Worth knowing from the first real figures: **TTS is the expensive leg, not the
+LLM.** Soniox TTS is $0.74 per audio hour against STT's $0.076 - ten times. And
+the prompt cache is doing most of the work on the LLM side.
+
+### Refusing to guess was the wrong instinct once
+
+`pick_rate` declined to choose between two candidate rates when a call did not
+record its model, on the reasoning that a guess does not belong in a bill.
+
+The two rates were **1.5% apart**. So the price of that rigour was showing
+Rs 0.00 for text-to-speech on every historical call - and 0.00 does not read as
+"we are unsure", it reads as free. A wrong number wearing a straight face.
+
+The rule is not "never assume". It is **measure what the assumption costs and
+say so**, which is what the backfill script and the caveats on the page now do.
+
+### Knowledge gaps
+
+Three signals, all already flowing through code we control and none costing
+anything: a search that found nothing, one that barely found something
+(RidgeMax MR scored 0.34 against a 0.25 floor and answered from it), and a
+lookup that failed.
+
+Deliberately not inferred from what the agent SAID. The grounding rules make it
+admit when it does not know, but the wording varies by language and turn, and a
+feature that decides what to teach the bot cannot rest on a string match against
+Hindi.
+
+Grouped by question before it reaches the console, because nobody works from
+occurrences - they work from "asked fourteen times", and that number is the sort
+order.
+
+### Four working pieces and a filter in the middle
+
+The console could always have shown which documents answered a turn: an endpoint
+that resolves chunk ids to a filename and page, a component that renders them, a
+column, and a writer that reads it. None of it had ever run, because the turn
+was written with
+
+    **{k: v for k, v in t.items() if k.endswith("_ms")}
+
+and the two fields do not end in `_ms`. The feature looked unbuilt when it was
+90% built and disconnected by one comprehension.
+
+The first call after it worked showed why it was worth having: the caller asked
+about **Splendor Plus Flex**, Soniox heard "लेंडा प्लस फ्लेक्स", the model
+searched "Lender Plus Flex", and retrieval confidently returned **Pleasure Plus
+XTEC** at 0.57. Neither retrieval nor the prompt was at fault.
+
+### Two bugs of the same shape, a week apart
+
+**The silence prompt talked over the agent.** Three times on call 368, each on a
+turn that spoke and called a tool together: the preamble was still playing as
+the state moved to "thinking", the watchdog only skipped while "speaking", and
+the caller was asked whether they could hear us over the answer they had asked
+for. "Is it speaking" was never the question; "is it waiting on the caller" was.
+
+**The extractor did not know the date.** Call 373 recorded a test ride as
+2024-04-28 from a conversation held in August 2026. The agent got a date line
+last week; the extractor is a separate call with its own system prompt and never
+got one. The same gap, one layer along - and this is the layer where it matters
+more, because the agent's answer is heard once while this becomes a row somebody
+acts on.
+
+### Seven widths across twelve pages
+
+896px to 1500px. Each defensible on its own page, none defensible next to each
+other: moving between Campaigns and Campaign config the content jumped 400px.
+One `PAGE` constant now, at 1300px. Calls and Dashboard lose 200px of table; a
+console that looks like one thing is worth more than that.
+
+---
+
 ## ⏭️ Next
 
+- **Aggregate cost** - per campaign and per day, on the Dashboard. The per-call
+  figure is in; the roll-up is not
+- **Sarvam's own usage page**, to check the seeded rupee rates the way Soniox's
+  were checked - solved from a bill rather than read from a page
 - **The STT ceiling, from the journal of call 344** - it broke two calls without
   ever firing, and why is not yet known. `STT_FINAL_CEILING_MS=0` until it is
 - **The warm-up still bills the greeting** - the request_id filter does not
