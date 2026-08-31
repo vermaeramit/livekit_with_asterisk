@@ -2946,8 +2946,88 @@ console that looks like one thing is worth more than that.
 
 ---
 
+## The load test, and where the ceiling actually is (31 Aug 2026)
+
+Run on campaign 1 rather than the load-test campaign, because 709's knowledge
+base holds 1,144 tokens against 700's 108k - and that decides whether a search
+runs at all. A run on 709 would have measured a system we do not operate.
+Transfer, tools and postback were turned off around the run by
+`loadtest-prepare.sql`, and restored from the snapshot it takes.
+
+### The pipeline did not bend
+
+| | 5 | 10 | 20 |
+|---|---|---|---|
+| p50 | 2,423 ms | 2,476 ms | 2,475 ms |
+| p95 | 3,726 | 3,994 | 4,272 |
+| eou | 770 | 764 | 741 |
+| llm | 1,168 | 1,221 | 1,309 |
+| tts | 777 | 784 | 831 |
+| errors | 0 | 0 | **9 of 20** |
+
+Read that row of p50s again: **flat at four times the load.** No `full capacity`,
+no `DECLINED`, `originated 20/20`. Every call that ran, ran at full speed. The
+failures were total, not gradual - which is the signature of a hard limit rather
+than saturation, and it is why the averages hid it.
+
+### The ceiling belongs to OpenAI, not to us
+
+    Rate limit reached for gpt-4.1-mini on tokens per min (TPM):
+    Limit 200000, Used 200000, Requested 8277
+
+Tier 1 is 200,000 TPM. Each request carries 8,277 tokens, so the account serves
+**about 24 requests a minute**. A live call takes a turn every ~13 seconds, or
+4.5 requests a minute, which puts the sustained ceiling at:
+
+    200,000 / 8,277 / 4.5  =  ~5 concurrent calls
+
+Five and ten passed only because those runs lasted 24 seconds and never filled
+the minute. The true ceiling was always five, and nothing before today would
+have shown it - the system has never carried more than two calls at once.
+
+**Cached tokens count toward TPM.** The prompt cache makes a call ten times
+cheaper and does nothing whatever for this limit, which is exactly the sort of
+thing that reads as obvious once seen and is invisible until then.
+
+Tier 2 is 2,000,000 TPM, reached at $50 of cumulative credit purchases against
+$20 bought so far. Ten times the headroom for $30, and the balance needed
+topping up regardless - $6.10 remained, about 65 calls.
+
+The other lever is prompt size: 5,136 of those 8,277 tokens are the campaign's
+instructions. Halving them buys roughly 8 concurrent instead of 5. Useful, and
+not the answer.
+
+### The fallback had never worked
+
+    livekit.plugins.google.llm.LLM failed:
+    "Manually set deadline 3s is too short. Minimum allowed deadline is 10s."
+    status_code=400, retryable=False
+
+`FALLBACK_ATTEMPT_TIMEOUT` is 3 seconds. Google's floor is 10. So the Gemini leg
+has returned 400 on every attempt it has ever made, on every call.
+
+The note in Next said "both legs down at once, 3 calls lost" and read as a load
+problem. It was not: the second leg was never up. Load did not break it, load
+made it visible - and the same 400 would have appeared on the very first call
+anyone looked at closely.
+
+A fallback that has never caught anything is worse than none, because it is
+counted on. Left as it is for now, deliberately, because the decision is whether
+to fix the deadline or take the leg out and that is not a load-test question.
+
+---
+
 ## ⏭️ Next
 
+- **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
+  sustained concurrent calls. Then re-run `loadtest.sh 20 0.7 700` and find out
+  where OUR ceiling is, which today's run never reached
+- **Decide the LLM fallback**: raise the attempt timeout to Google's 10s floor,
+  or take the leg out. As it stands it is a safety net that has never caught
+  anything, and is counted on
+- **Refuse calls above the token budget** rather than failing them mid
+  conversation. Nine of twenty callers today got a greeting, an answer, then
+  silence. Turning a call away at the door is a better failure than that
 - **Aggregate cost** - per campaign and per day, on the Dashboard. The per-call
   figure is in; the roll-up is not
 - **Sarvam's own usage page**, to check the seeded rupee rates the way Soniox's
