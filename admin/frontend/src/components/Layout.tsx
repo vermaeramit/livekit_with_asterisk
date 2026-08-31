@@ -10,6 +10,18 @@ import { useAuth } from '@/lib/auth'
 import { cn, initials } from '@/lib/utils'
 import type { Role } from '@/types'
 
+/**
+ * The page shell. Every page uses this and nothing sets its own width.
+ *
+ * There were seven different widths across twelve pages - 896px to 1500px - and
+ * the console read as several products stitched together. Each one was a
+ * defensible choice on its own page and none of them were defensible next to
+ * each other.
+ *
+ * A wide table is worth less than a console that looks like one thing.
+ */
+export const PAGE = 'mx-auto max-w-[1300px] space-y-5 p-5 lg:p-7'
+
 type NavSection = { kind: 'section'; label: string }
 type NavLinkItem = {
   kind: 'link'

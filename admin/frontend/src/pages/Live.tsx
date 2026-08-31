@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { PhoneOff, Radio, TriangleAlert } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
@@ -105,7 +105,7 @@ export function Live() {
   const overCapacity = (data?.active ?? 0) > (data?.verified_capacity ?? 10)
 
   return (
-    <div className="mx-auto max-w-[1300px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Live monitor"
         description={

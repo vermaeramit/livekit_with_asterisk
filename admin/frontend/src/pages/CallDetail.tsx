@@ -17,6 +17,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { RecordingPlayer } from '@/components/RecordingPlayer'
+import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
@@ -444,7 +445,7 @@ export function CallDetail() {
 
   if (call.isLoading) {
     return (
-      <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
+      <div className={PAGE}>
         <Skeleton className="h-8 w-48" />
         <div className="grid gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -458,7 +459,7 @@ export function CallDetail() {
 
   if (call.isError || !call.data) {
     return (
-      <div className="mx-auto max-w-5xl p-6">
+      <div className={PAGE}>
         <EmptyState
           icon={TriangleAlert}
           title="Call not found"
@@ -514,7 +515,7 @@ export function CallDetail() {
   const toolsFailed = tools.filter((t) => t.error || (t.status_code ?? 0) >= 400).length
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link

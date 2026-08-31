@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, KeyRound, Pause, Play, Plus } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { ProviderKeys } from '@/components/ProviderKeys'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -211,7 +211,7 @@ export function Tenants() {
   ]
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Clients"
         description="Each client is a hard isolation boundary — campaigns, users, knowledge base and call history."

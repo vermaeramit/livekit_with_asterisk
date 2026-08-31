@@ -24,7 +24,7 @@ import {
   PhoneCall,
   TriangleAlert,
 } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, EmptyState, Select, Skeleton } from '@/components/ui/primitives'
 import { api, buildQuery } from '@/lib/api'
@@ -194,7 +194,7 @@ export function Dashboard() {
 
   if (summary.isLoading) {
     return (
-      <div className="mx-auto max-w-[1500px] space-y-5 p-5 lg:p-7">
+      <div className={PAGE}>
         <Skeleton className="h-10 w-64" />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -208,7 +208,7 @@ export function Dashboard() {
 
   if (summary.isError) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
+      <div className={PAGE}>
         <EmptyState
           icon={TriangleAlert}
           title="Could not load analytics"
@@ -224,7 +224,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Dashboard"
         description="Call volume, response latency and cost across the selected window."

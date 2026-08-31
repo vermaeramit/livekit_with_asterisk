@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
 import { api, buildQuery } from '@/lib/api'
@@ -124,7 +124,7 @@ export function Calls() {
   const td = 'whitespace-nowrap px-4 py-3'
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Calls"
         description={

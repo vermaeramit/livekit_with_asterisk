@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { IndianRupee, Plus, Trash2, Wallet } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
@@ -105,7 +105,7 @@ export function Rates() {
   })
 
   return (
-    <div className="mx-auto max-w-[1100px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Provider rates"
         description="What each provider charges, in their own units. Nothing is filled in for you — a price copied from a page months ago is worse than a blank, because a blank asks to be checked."

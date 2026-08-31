@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Plus, Trash2, UserCog, Users2 } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -402,7 +402,7 @@ export function Users() {
   ]
 
   return (
-    <div className="mx-auto max-w-[1300px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Users"
         description={

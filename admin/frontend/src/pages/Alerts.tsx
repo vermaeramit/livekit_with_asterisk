@@ -8,7 +8,7 @@ import {
   TriangleAlert,
   Webhook,
 } from 'lucide-react'
-import { PageHeader } from '@/components/Layout'
+import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { NumberField, Toggle } from '@/components/ui/field'
@@ -285,7 +285,7 @@ export function Alerts() {
   })
 
   return (
-    <div className="mx-auto max-w-[1100px] space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <PageHeader
         title="Alerts"
         description="Raised automatically when a rule starts breaching."

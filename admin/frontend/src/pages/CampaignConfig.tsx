@@ -25,6 +25,7 @@ import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
 import { CampaignTools } from '@/components/CampaignTools'
 import { ProviderKeys } from '@/components/ProviderKeys'
+import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
@@ -406,7 +407,7 @@ export function CampaignConfig() {
 
   if (config.isLoading || campaign.isLoading) {
     return (
-      <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
+      <div className={PAGE}>
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-96 w-full" />
@@ -416,7 +417,7 @@ export function CampaignConfig() {
 
   if (config.isError) {
     return (
-      <div className="mx-auto max-w-4xl p-6">
+      <div className={PAGE}>
         <EmptyState
           icon={TriangleAlert}
           title="No agent configuration"
@@ -434,7 +435,7 @@ export function CampaignConfig() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7 pb-24">
+    <div className={cn(PAGE, "pb-24")}>
       <div>
         <Link
           to="/campaigns"
@@ -452,7 +453,10 @@ export function CampaignConfig() {
         </p>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border">
+      {/* Nine tabs fit at the standard width; the scroll is the fallback for a
+          narrow window, and `scrollbar-thin` keeps it from drawing a grey bar
+          across the page when it is not needed. */}
+      <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b border-border">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}

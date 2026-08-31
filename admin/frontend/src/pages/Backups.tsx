@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Database, HardDrive, KeyRound, Play, TriangleAlert } from 'lucide-react'
+import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
@@ -88,7 +89,7 @@ export function Backups() {
 
   if (q.isLoading) {
     return (
-      <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
+      <div className={PAGE}>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-32" />
       </div>
@@ -101,7 +102,7 @@ export function Backups() {
   // player had - a component that cannot say why it is empty.
   if (q.isError || !q.data) {
     return (
-      <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
+      <div className={PAGE}>
         <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
           <Database className="h-5 w-5 text-muted-foreground" />
           Backups
@@ -130,7 +131,7 @@ export function Backups() {
   const healthy = s.configured && !s.problem
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5 p-5 lg:p-7">
+    <div className={PAGE}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
