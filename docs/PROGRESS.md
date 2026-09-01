@@ -3017,6 +3017,72 @@ to fix the deadline or take the leg out and that is not a load-test question.
 
 ---
 
+## A pincode that ended calls, and the cost of a minute (1 Sep 2026)
+
+### The loop
+
+Call 424 died with the caller repeating themselves five times:
+
+    user   1467.47।
+    agent  कृपया एक वैध 6-अंकों का पिनकोड बताएं।
+    user   2467.47।
+    agent  कृपया एक वैध 6-अंकों का पिनकोड बताएं।     (x4 more)
+
+Soniox renders a dictated six-digit number as a decimal. Every digit is present
+and in order - 2467.47 IS 246747 - only the shape is wrong. Its STTOptions carry
+no number-formatting control, so there was nothing to turn off at that end.
+
+The prompt was not missing a rule. It had one, and the model obeyed it:
+
+    If the PIN code is invalid:
+    "Could you please provide a valid 6-digit PIN code?"
+    Do not call 'dealer_by_pincode' until a valid 6-digit PIN code is available.
+
+What it never said was what "valid" means.
+
+**And the first fix I wrote would have made it worse.** It appended a
+normalisation rule to the end of the prompt - written without reading the
+prompt, which the user stopped to ask about before running it. Two rules would
+then have pulled opposite ways on the same decision, in a 29,000-character
+prompt, with nothing to say which was meant to win.
+
+The definition now sits immediately above the rule that uses the word. One
+instruction, where the model already looks. Every edit in the script is guarded:
+if the anchor text is not there exactly once, the transaction aborts and changes
+nothing.
+
+The tool's `pin` description, meanwhile, read `"pincode"`. One word - under a
+field whose own hint warns that a vague description produces a value the API
+will not match. It now says what the transcript looks like and what to strip.
+
+`tools.py` strips characters a parameter's schema forbids, but only where that
+schema says digits and nothing else, and it logs every value it changes. The
+list of patterns it will act on is short and literal rather than an attempt to
+read arbitrary regex - guessing what a pattern means is how a normaliser starts
+quietly corrupting a name or a model code.
+
+### AHT, and what a minute costs
+
+Both on the dashboard now, with two decisions that change what the numbers mean.
+
+**Cost per minute is total spend over total minutes**, not the average of each
+call's rate. On four real calls that is Rs 1.29 against Rs 1.49: averaging rates
+over-weights the short ones, and a budget is written against the blended figure.
+
+**Worst per minute ignores calls under 30 seconds.** A ten-second call carries a
+whole greeting and divides it by almost nothing, so without a floor the metric
+reliably finds whichever call dropped fastest. On the same four a 22-second one
+would have won at Rs 2.18/min. The floor and the winning call id are both shown.
+
+**"Priced 60 of 65" is not decoration.** If five calls have no rate the total is
+short by whatever they cost, and a total that is quietly short is worse than
+none because it will be believed.
+
+AHT is also correct for the first time: `avg_duration_ms` had been dividing by
+every call including those that never connected, counting them as zero-length.
+
+---
+
 ## ⏭️ Next
 
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
