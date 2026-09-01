@@ -341,7 +341,7 @@ export function Dashboard() {
             />
             <Stat
               icon={Wallet}
-              label="Worst per minute"
+              label="Highest per minute"
               value={
                 s.cost.per_minute_max != null
                   ? money(s.cost.currency, s.cost.per_minute_max, 2)
