@@ -120,7 +120,12 @@ say "checking for static peers with the same name"
 # visible. That is a bad afternoon, so it is removed rather than warned about.
 MANAGED=$(psql_ -c "SELECT name FROM iax_peers")
 if [ -z "$MANAGED" ]; then
-    echo "no managed diallers yet - nothing can be shadowed"
+    echo "no managed diallers yet - nothing to shadow YET"
+    echo
+    echo "!! RUN THIS SCRIPT AGAIN once you have filled in a dialler's host and"
+    echo "!! password on the console. If a section of the same name is still in"
+    echo "!! iax.conf, Asterisk finds it first and the database row is ignored -"
+    echo "!! silently. Editing the console would then appear to do nothing."
 else
     REMOVED=0
     for name in $MANAGED; do
