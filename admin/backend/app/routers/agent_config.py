@@ -121,8 +121,9 @@ async def _get(campaign_id: int) -> dict:
     # asyncpg returns JSONB as text without a codec. Named explicitly, because
     # forgetting one does not fail - the value arrives as a string and whatever
     # reads it quietly does the wrong thing.
-    if isinstance(d.get("postback_fields"), str):
-        d["postback_fields"] = json.loads(d["postback_fields"])
+    for col in ("postback_fields", "transfer_hours", "transfer_holidays"):
+        if isinstance(d.get(col), str):
+            d[col] = json.loads(d[col])
     # Computed on the way out, so a mismatch already in the database shows the
     # moment somebody opens the page rather than only after the next save.
     d["warnings"] = _warnings(d)
@@ -163,10 +164,13 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     unknown = set(fields) - set(FIELDS) - {"postback_auth_value_enc"}
     assert not unknown, f"schema and FIELDS disagree: {unknown}"
 
-    # postback_fields is JSONB and asyncpg will not accept a Python list for
-    # it without the cast. Missing this is the same silent-wrong-type bug that
-    # has now bitten three times in the tools path.
-    JSON_COLS = ("postback_fields",)
+    # These are JSONB and asyncpg will not accept a Python list or dict for
+    # them without the cast. Missing it is the same silent-wrong-type bug that
+    # had bitten three times in the tools path when this comment was written,
+    # and took transfer_hours the day it was added - the config page returned
+    # 500 for every campaign until both this tuple and the decode above knew
+    # about the new columns. Add a JSONB column, add it in BOTH places.
+    JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays")
     values = [json.dumps(v) if k in JSON_COLS and v is not None else v
               for k, v in fields.items()]
     sets = ", ".join(

@@ -1,6 +1,7 @@
 """Postgres-backed config + call logging. The admin UI (Step 11) will CRUD these tables."""
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, fields
 from typing import Optional
@@ -123,8 +124,20 @@ class CampaignUnavailable(Exception):
     """
 
 
+# asyncpg hands JSONB back as text unless a codec is registered, and the
+# dataclass would then hold a string where the agent expects a dict. hours.py
+# would see no days and close the campaign - a silent refusal of every handoff,
+# discovered only by a caller asking for a person. Named explicitly, because
+# the failure of forgetting one is not an exception.
+_JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays")
+
+
 def _as_config(row) -> AgentConfig:
-    return AgentConfig(**{f.name: row[f.name] for f in fields(AgentConfig)})
+    d = {f.name: row[f.name] for f in fields(AgentConfig)}
+    for col in _JSON_COLS:
+        if isinstance(d.get(col), str):
+            d[col] = json.loads(d[col])
+    return AgentConfig(**d)
 
 
 async def load_config(name: str = "default") -> AgentConfig:
