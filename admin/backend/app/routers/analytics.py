@@ -7,12 +7,15 @@ thirty-turn one.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 
-from .. import db
+from .. import costing, db
 from ..deps import CurrentUser, active_user, tenant_scope
-from ..schemas import AnalyticsSummary, LatencySplit, Percentiles, TimeBucket
+from . import rates as rates_router
+from ..schemas import (AnalyticsCost, AnalyticsSummary, LatencySplit,
+                       Percentiles, TimeBucket)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -36,6 +39,81 @@ def _filters(user: CurrentUser, tenant_id: int | None, campaign_id: int | None,
     return " AND ".join(where), args
 
 
+# A call shorter than this is not a call. Without a floor, "the worst cost per
+# minute" reliably finds whichever one dropped fastest: the greeting is paid for
+# in full and then divided by almost nothing.
+PER_MINUTE_FLOOR_SEC = 30
+
+
+async def _window_cost(clause: str, args: list) -> AnalyticsCost | None:
+    """Price every call in the window and blend it.
+
+    Priced in Python rather than SQL because the rules - cached tokens excluded
+    from the input leg, per-provider currency, a model-specific rate beating a
+    general one - live in costing.py, and a second copy of them in SQL would
+    drift from the per-call figures on the very first change.
+
+    Cheap enough: one narrow query and arithmetic. If a window ever gets big
+    enough for that to hurt, the answer is a nightly roll-up, not a second
+    implementation of the pricing.
+    """
+    rows = await db.pool().fetch(f"""
+        SELECT c.id, c.duration_ms,
+               c.llm_prompt_tokens, c.llm_prompt_cached_tokens,
+               c.llm_completion_tokens, c.tts_characters,
+               c.tts_audio_seconds, c.stt_audio_seconds,
+               c.llm_provider_used, c.tts_provider_used, c.stt_provider_used,
+               c.llm_model_used, c.tts_model_used, c.stt_model_used
+          FROM calls c WHERE {clause}""", *args)
+    if not rows:
+        return None
+
+    rates = await rates_router.load_rates()
+    fx = await rates_router.usd_to_inr()
+    if not rates:
+        return None
+
+    # One currency for the whole panel. Rupees when there is a rate to get
+    # there, dollars otherwise - never a column with both in it.
+    currency = "INR" if fx else "USD"
+    total = Decimal(0)
+    minutes = Decimal(0)
+    priced = 0
+    unpriced = 0
+    worst: tuple[Decimal, int] | None = None
+
+    for r in rows:
+        call = dict(r)
+        c = costing.price_call(call, rates, fx)
+        if not c["priced"]:
+            unpriced += 1
+            continue
+        priced += 1
+        amount = Decimal(str(c["inr_total"] if fx else c["usd_total"]))
+        total += amount
+        mins = Decimal(str(call.get("duration_ms") or 0)) / Decimal(60_000)
+        minutes += mins
+        if mins > 0 and (call.get("duration_ms") or 0) >= PER_MINUTE_FLOOR_SEC * 1000:
+            rate = amount / mins
+            if worst is None or rate > worst[0]:
+                worst = (rate, call["id"])
+
+    if not priced:
+        return None
+
+    return AnalyticsCost(
+        currency=currency,
+        total=float(round(total, 4)),
+        per_call=float(round(total / priced, 4)),
+        per_minute_avg=float(round(total / minutes, 4)) if minutes > 0 else 0.0,
+        per_minute_max=float(round(worst[0], 4)) if worst else None,
+        per_minute_max_call_id=worst[1] if worst else None,
+        per_minute_max_floor_sec=PER_MINUTE_FLOOR_SEC,
+        priced_calls=priced,
+        unpriced_calls=unpriced,
+    )
+
+
 @router.get("/summary", response_model=AnalyticsSummary)
 async def summary(
     user: CurrentUser = Depends(active_user),
@@ -52,6 +130,11 @@ async def summary(
                count(*) FILTER (WHERE c.limit_hit IS NOT NULL)            AS limit_hit,
                count(*) FILTER (WHERE c.end_reason = 'error')             AS errors,
                COALESCE(sum(c.duration_ms), 0)                            AS total_duration_ms,
+               -- AHT over calls that HAVE a duration. Dividing the sum by
+               -- every call counts the ones that never connected as zero-length
+               -- and drags the average down.
+               avg(c.duration_ms) FILTER (WHERE c.duration_ms IS NOT NULL)  AS aht_ms,
+               max(c.duration_ms)                                          AS max_duration_ms,
                COALESCE(sum(c.turn_count), 0)                             AS total_turns,
                COALESCE(sum(c.llm_prompt_tokens), 0)                      AS prompt_tokens,
                COALESCE(sum(c.llm_prompt_cached_tokens), 0)               AS cached_tokens,
@@ -82,10 +165,20 @@ async def summary(
           FROM calls c WHERE {clause}
          GROUP BY 1 ORDER BY 2 DESC""", *args)
 
+    longest = await db.pool().fetchval(f"""
+        SELECT c.id FROM calls c
+         WHERE {clause} AND c.duration_ms IS NOT NULL
+         ORDER BY c.duration_ms DESC LIMIT 1""", *args)
+
+    cost = await _window_cost(clause, args)
+
     d = dict(totals)
+    aht = d.pop("aht_ms", None)
     return AnalyticsSummary(
         **d,
-        avg_duration_ms=round(d["total_duration_ms"] / d["calls"]) if d["calls"] else None,
+        avg_duration_ms=round(aht) if aht is not None else None,
+        longest_call_id=longest,
+        cost=cost,
         latency=Percentiles(
             p50=lat["p50"], p90=lat["p90"], p95=lat["p95"],
             worst=lat["worst"], turns=lat["turns"]),

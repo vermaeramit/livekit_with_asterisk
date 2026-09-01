@@ -290,13 +290,32 @@ export interface LatencySplit {
   tts_ttfb_ms: number | null
 }
 
+/** What the calls in a window cost, blended. */
+export interface AnalyticsCost {
+  currency: string
+  total: number
+  per_call: number
+  // Total cost over total minutes, not the average of per-call rates.
+  per_minute_avg: number
+  per_minute_max: number | null
+  per_minute_max_call_id: number | null
+  per_minute_max_floor_sec: number
+  // If these disagree, the total is short by whatever the unpriced ones cost.
+  priced_calls: number
+  unpriced_calls: number
+}
+
 export interface AnalyticsSummary {
   calls: number
   transferred: number
   limit_hit: number
   errors: number
   total_duration_ms: number
+  // Average handle time, over calls that have a duration.
   avg_duration_ms: number | null
+  max_duration_ms: number | null
+  longest_call_id: number | null
+  cost: AnalyticsCost | null
   total_turns: number
   prompt_tokens: number
   cached_tokens: number

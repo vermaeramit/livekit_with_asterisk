@@ -518,13 +518,43 @@ class LatencySplit(BaseModel):
     tts_ttfb_ms: float | None
 
 
+class AnalyticsCost(BaseModel):
+    """What the calls in this window cost, and how much of it we can see.
+
+    `priced_calls` and `unpriced_calls` are not decoration. If half the calls
+    have no rate for their provider, the total is half the truth - and a total
+    that is quietly short is worse than no total, because it will be believed.
+    """
+    currency: str
+    total: float
+    per_call: float
+    # Total cost over total minutes, NOT the average of each call's rate.
+    # Averaging rates over-weights the short calls, and a budget is written
+    # against the blended figure.
+    per_minute_avg: float
+    # The worst rate among calls long enough to mean anything. A ten-second
+    # call carries a whole greeting and amortises it over nothing, so without a
+    # floor this metric just finds the shortest call every time.
+    per_minute_max: float | None = None
+    per_minute_max_call_id: int | None = None
+    per_minute_max_floor_sec: int
+    priced_calls: int
+    unpriced_calls: int
+
+
 class AnalyticsSummary(BaseModel):
     calls: int
     transferred: int
     limit_hit: int
     errors: int
     total_duration_ms: int
+    # Average handle time, over calls that have a duration. The old
+    # avg_duration_ms divided by EVERY call including those that never
+    # connected, which understated it.
     avg_duration_ms: int | None
+    max_duration_ms: int | None = None
+    longest_call_id: int | None = None
+    cost: AnalyticsCost | None = None
     total_turns: int
     prompt_tokens: int
     cached_tokens: int

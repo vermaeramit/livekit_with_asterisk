@@ -22,7 +22,9 @@ import {
   Clock,
   Coins,
   PhoneCall,
+  Timer,
   TriangleAlert,
+  Wallet,
 } from 'lucide-react'
 import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
@@ -59,6 +61,12 @@ const REASON_COLOR: Record<string, string> = {
 function tone(ms: number | null | undefined) {
   const t = latencyTone(ms)
   return t === 'muted' ? undefined : t
+}
+
+/** Money in the currency the API blended it into. */
+function money(currency: string, v: number, dp = 2) {
+  const symbol = currency === 'INR' ? '₹' : '$'
+  return `${symbol}${v.toFixed(dp)}`
 }
 
 function Stat({
@@ -265,10 +273,16 @@ export function Dashboard() {
           icon={PhoneCall}
           label="Calls"
           value={formatNumber(s?.calls)}
+          hint={`${formatNumber(s?.total_turns)} turns`}
+        />
+        <Stat
+          icon={Timer}
+          label="AHT"
+          value={s?.avg_duration_ms ? formatDuration(s.avg_duration_ms) : '—'}
           hint={
-            s?.avg_duration_ms
-              ? `${formatDuration(s.avg_duration_ms)} average · ${formatNumber(s.total_turns)} turns`
-              : undefined
+            s?.max_duration_ms
+              ? `longest ${formatDuration(s.max_duration_ms)}`
+              : 'average handle time'
           }
         />
         <Stat
@@ -299,6 +313,50 @@ export function Dashboard() {
           hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
         />
       </div>
+
+      {s?.cost && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat
+            icon={Wallet}
+            label={`Spend (${s.cost.currency})`}
+            value={money(s.cost.currency, s.cost.total, 2)}
+            hint={`${money(s.cost.currency, s.cost.per_call, 2)} per call`}
+          />
+          <Stat
+            icon={Wallet}
+            label="Cost per minute"
+            value={money(s.cost.currency, s.cost.per_minute_avg, 2)}
+            hint="total spend over total minutes"
+          />
+          <Stat
+            icon={Wallet}
+            label="Worst per minute"
+            value={
+              s.cost.per_minute_max != null
+                ? money(s.cost.currency, s.cost.per_minute_max, 2)
+                : '—'
+            }
+            hint={
+              s.cost.per_minute_max_call_id
+                ? `call ${s.cost.per_minute_max_call_id} · calls over ${s.cost.per_minute_max_floor_sec}s only`
+                : `no call over ${s.cost.per_minute_max_floor_sec}s`
+            }
+          />
+          <Stat
+            icon={Coins}
+            label="Priced"
+            value={`${formatNumber(s.cost.priced_calls)} of ${formatNumber(
+              s.cost.priced_calls + s.cost.unpriced_calls,
+            )}`}
+            tone={s.cost.unpriced_calls > 0 ? 'warning' : undefined}
+            hint={
+              s.cost.unpriced_calls > 0
+                ? 'the rest have no rate — the total is short by whatever they cost'
+                : 'every call has a rate'
+            }
+          />
+        </div>
+      )}
 
       {(s?.limit_hit ?? 0) > 0 && (
         <Card className="border-warning/30 bg-warning/5 p-4">
