@@ -3083,8 +3083,79 @@ every call including those that never connected, counting them as zero-length.
 
 ---
 
+## Three faults in one transfer, each hiding the next (1 Sep 2026)
+
+Reported as "the call did not transfer". It took three separate fixes, and every
+one of them was invisible until the one before it was cleared.
+
+### The marker the model was never asked to write
+
+    transfer_marker  [Transfer]        prompt says [CT], 18 times
+    end_call_marker  [EOC]             prompt says [EOC], 16 times
+
+The filter watched for a marker the prompt never writes. Every handoff wrote
+[CT] into the reply instead - unrecognised, so not even stripped before it was
+spoken - and no call transferred.
+
+**[EOC] matched by coincidence**, so ending a call worked and the whole thing
+looked configured. A feature that half works is a worse lie than one that does
+not work at all.
+
+Nothing had ever compared the two. They live on different tabs, and the only
+symptom was a caller asking for a person and not getting one. The config now
+reports a marker it cannot find in the prompt and names the token the prompt
+does lean on - counting only tokens used three or more times, because a real
+prompt carries [Model] and [Date] once each as examples and flagging those makes
+the warning worth ignoring.
+
+### The catch-all that hung up on everything
+
+    [from-livekit]
+    '800' =>  ... the old handoff, whose HANDOFF_EXTEN was empty
+    '_.'  =>  1. NoOp(<-- Inbound from LiveKit)
+              2. Hangup()
+
+The REFER for `5000` landed here and `_.` hung up on it. `include => from-external`
+would not have helped: Asterisk searches a context's own extensions before its
+includes, so `_.` wins before the include is ever consulted.
+
+Fixed with an explicit `_X.` in the same context, handing off to
+`from-external` - more specific than `_.`, so numeric extensions take it and
+`_.` still refuses everything else. **Verified rather than assumed**:
+`dialplan show 5000@from-livekit` says which extension Asterisk actually picks,
+and pattern precedence is exactly the sort of thing that is only wrong on a live
+call.
+
+### And the target
+
+`sip:5000@10.130.8.76` pointed at the dialler directly, which bypasses our
+dialplan and leaves the block the dialler team wrote unreachable.
+`10.130.9.243` - ourselves - is what makes the chain work.
+
+### The sequence, from the sip logs
+
+    08:11  ->  5000@10.130.8.76    503
+    08:43  ->  5000@10.130.9.243   503     target right, dialplan still hanging up
+    09:27  ->  5000@10.130.9.243   200 OK  transferred
+
+### Still open, both in the dialler team's block
+
+`Dial(IAX2/76SERVER:76SERVER@...)` puts the trunk password in a file this repo
+tracks. `iax.conf` is gitignored for exactly this reason; a peer there and
+`Dial(IAX2/dialler-76/...)` here would keep it out of git history.
+
+And `DIALSTATUS` is never checked. If nobody answers on 5000 the caller is hung
+up without a word - the same caller who just heard "please hold, I am
+transferring your call".
+
+---
+
 ## ⏭️ Next
 
+- **The IAX password in extensions.conf** - move the peer into iax.conf, which
+  is already gitignored, before this file is synced back to the repo
+- **`DIALSTATUS` after the transfer Dial** - a caller who asked for a person
+  currently gets silence and a dropped call when nobody answers
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
   sustained concurrent calls. Then re-run `loadtest.sh 20 0.7 700` and find out
   where OUR ceiling is, which today's run never reached
