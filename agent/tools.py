@@ -17,6 +17,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import time
 from typing import Any, Callable
@@ -102,6 +103,15 @@ def _idempotency_key(call_id: int, name: str, args: dict[str, Any]) -> str:
 # say than a 200 ms lookup takes to run. 600 ms is under the point where silence
 # is noticed on a phone call, so a fast tool stays silent and only a slow one
 # gets covered.
+# Parameter patterns we are willing to clean a value up against.
+#
+# A short list of literal shapes rather than an attempt to interpret arbitrary
+# regex. Guessing what a pattern "means" and stripping characters on that guess
+# is how a normaliser starts quietly corrupting values it was never meant to
+# touch - a name, a model code, a registration number.
+_DIGITS_ONLY = re.compile(r"^\^(?:\[0-9\]|\\d)(?:\{\d+(?:,\d*)?\}|\+)\$$")
+
+
 FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
 
 
@@ -163,8 +173,37 @@ def build(spec: dict, call_id: int | None, record: Callable,
         except Exception:
             log.exception("tool %s filler failed", name)
 
+    def normalise(args: dict) -> dict:
+        """Clean a dictated value up to what its pattern actually allows.
+
+        Soniox renders a spoken six-digit pincode as a decimal number: a caller
+        saying 2 4 6 7 4 7 arrives as "2467.47". The digits are all there and in
+        order - only the shape is wrong - but the model reads it as not a
+        pincode and asks again. On call 424 it asked five times and the caller
+        gave up.
+
+        Only parameters whose schema says digits and nothing else are touched,
+        and only the characters that schema forbids are removed. Logged when it
+        fires, because a value being changed on the way out is exactly the sort
+        of help that should not happen silently.
+        """
+        props = (spec.get("parameters") or {}).get("properties") or {}
+        for key, prop in props.items():
+            pattern = (prop or {}).get("pattern")
+            if not pattern or not _DIGITS_ONLY.match(pattern):
+                continue
+            value = args.get(key)
+            if not isinstance(value, str):
+                continue
+            cleaned = re.sub(r"\D", "", value)
+            if cleaned and cleaned != value:
+                log.info("tool %s: %s normalised %r -> %r",
+                         name, key, value, cleaned)
+                args[key] = cleaned
+        return args
+
     async def run(raw_arguments: dict[str, object]) -> str:
-        args = dict(raw_arguments or {})
+        args = normalise(dict(raw_arguments or {}))
         t0 = time.perf_counter()
         url = toolfmt.fill(spec["url"], args) or ""
 
