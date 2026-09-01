@@ -3284,6 +3284,31 @@ there is nothing to list. The setup script reads the database instead, with the
 password masked - `realtime load iaxpeers` answers the same question and prints
 the secret to the console.
 
+### The reload that was the wrong reload
+
+The first test transfer after all this failed, and the CDR said how:
+
+    11:25  dstchannel ""                  Dial(IAX2/76SERVER/5000)   3s
+    11:29  dstchannel "IAX2/76SERVER-4702"  Dial(IAX2/76SERVER/5000)  11s
+
+An empty `dstchannel` is no channel created at all - the peer did not resolve.
+The three seconds are `Wait(1)` and the apology, so the caller heard the
+failure branch rather than silence, which is the one thing that went right.
+
+The script reloaded `res_config_odbc`, which re-reads `res_odbc.conf` and does
+not touch realtime family mappings. `extconfig.conf` was correct on disk and
+had never been read: `core show config mappings` listed four engines and no
+families. `module reload extconfig` fixed it in one command.
+
+Worth keeping because of how the failure presented. Everything checkable looked
+right - the view returned the peer, the DSN was connected, the file said what
+it should - and the only symptom was a held caller getting an apology. The
+script now reloads `extconfig` and refuses to finish while the family is
+unmapped, so that gap cannot reach a phone call again.
+
+Verified at 11:29 on 1 Sep: transfer connected, 11 seconds, and there is no
+`[76SERVER]` section in any file on the server.
+
 Left alone: the inline dial on line 231 of `extensions.conf`, and campaigns 2
 and 3 on `sip:800@`, which is our own test extension.
 

@@ -561,6 +561,16 @@ docker exec -i postgres psql -qtAX -U aivoice -d aivoice -c \
   "SELECT name, username, host, port, length(secret) || ' chars' FROM iax_peers"
 ```
 
+```bash
+asterisk -rx "core show config mappings"   # must list: iaxpeers (db=aivoice...)
+```
+
+> If `core show config mappings` shows engines but no `iaxpeers` line, no
+> dialler added in the console exists as far as Asterisk is concerned, and a
+> transfer will play the apology to a held caller. Fix with
+> `asterisk -rx "module reload extconfig"` — reloading `res_config_odbc` does
+> **not** re-read the mappings.
+
 > `iax2 show peers` does **not** list diallers configured in the console, and an
 > empty list there is not a broken trunk. A realtime peer is built when it is
 > dialled and freed afterwards, so there is nothing to show. Use the query
