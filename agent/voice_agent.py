@@ -36,6 +36,7 @@ from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
 from livekit.plugins import google, openai, sarvam, silero, soniox
 
 import greeting_cache
+import hours
 import prompt as prompt_mod
 import tools as tools_mod
 
@@ -338,6 +339,10 @@ class KBAgent(Agent):
         # Requiring the caller to have spoken SINCE being asked is a gate that
         # holds however many routes exist, because only the caller can move it.
         self.transfer_asked_at: int | None = None
+        # Why a handoff was turned down, for the call row. The interesting list
+        # this makes is not failed transfers - it is callers who wanted a
+        # person at 9pm, which is a callback list.
+        self.transfer_refused: str | None = None
 
         # One route, not two. The double-fire above is what having both looks
         # like from the caller's side: three utterances for one handoff, and a
@@ -678,6 +683,29 @@ class KBAgent(Agent):
         if not self.cfg.transfer_enabled:
             return ("Transfer is disabled. Tell the caller to call back during "
                     "office hours.")
+
+        # Before the confirmation gate, not after. Asking "shall I connect
+        # you?" and then refusing once they say yes is worse than not offering:
+        # the caller has agreed to something and then been turned down.
+        #
+        # Checked at the moment of the request rather than at the start of the
+        # call, because that is when it is true. A call that connects at 18:25
+        # and asks for a person at 18:35 is refused, and correctly - there is
+        # nobody at the desk at 18:35.
+        open_now, why = hours.is_open(self.cfg)
+        if not open_now:
+            self.transfer_refused = why
+            message = hours.closed_message(self.cfg)
+            logger.info("  TRANSFER(%r) refused - %s, next open %s",
+                        reason, why, hours.next_open(self.cfg))
+            try:
+                handle = await session.say(message, allow_interruptions=True)
+                await handle.wait_for_playout()
+            except Exception:
+                logger.exception("closed-hours message failed")
+            return ("A human colleague is not available at this hour and the "
+                    "caller has been told so. Do not offer to transfer again "
+                    "on this call. Carry on helping them yourself.")
 
         # Ask first, and make the asking a state change here rather than an
         # argument the model supplies. A `confirmed: bool` parameter is a
@@ -1751,6 +1779,12 @@ async def entrypoint(ctx: JobContext):
                 await (await store.pool()).execute(
                     "UPDATE calls SET transferred_to=$2, transfer_reason=$3, outcome=$3 "
                     "WHERE id=$1", call_id, dest, why)
+            elif agent.transfer_refused:
+                # Not an error and not an outcome - the call carried on. Only
+                # that a person was asked for and could not be given.
+                await (await store.pool()).execute(
+                    "UPDATE calls SET transfer_refused=$2 WHERE id=$1",
+                    call_id, agent.transfer_refused)
             elif session_error:
                 # The message goes in outcome so the console shows WHY, not just
                 # that something went wrong.

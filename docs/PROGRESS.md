@@ -3314,6 +3314,80 @@ and 3 on `sip:800@`, which is our own test extension.
 
 ---
 
+## The agent is up at 3am; the people are not (1 Sep 2026)
+
+*"AI agent to 24x7 active rhega, ab transfer agent ka nahi — transfer me uska
+koi time capture karna hoga, aur agar transfer uske bahar ho toh koi sentence
+daalne ka option hona chahiye ki tab kya bolega AI."*
+
+The idea was already in the code, half-formed. `voice_agent.py` said, when a
+handoff was refused:
+
+    return ("Transfer is disabled. Tell the caller to call back during "
+            "office hours.")
+
+Office hours were mentioned, never defined, and that sentence could not be
+changed.
+
+**Enforced in the agent, not in the prompt.** A rule in the instructions is
+something the model follows most of the time, and most of the time is not a
+business hour. `hours.is_open()` runs before the transfer, exactly like the
+confirmation gate. The hours also go *into* the prompt - not to enforce
+anything, but so the model does not tell a caller at 9pm that it is connecting
+them and then get refused. The rule would have worked and the call would still
+have sounded broken.
+
+**Before the confirmation gate, not after.** Asking "shall I connect you?" and
+refusing once they say yes is worse than never offering.
+
+**Checked when the transfer is asked for**, not when the call starts. A call
+that connects at 18:25 and asks for a person at 18:35 is refused, because at
+18:35 there is nobody at the desk. Deliberate, and the kind of thing that looks
+like a bug in six months.
+
+**In the campaign's timezone**, from `prompt_timezone`, never the server clock.
+That distinction only shows itself at midnight and only in production.
+
+Decisions taken by the user, against two of three recommendations:
+
+| | recommended | chosen |
+|---|---|---|
+| where hours live | on the dialler, shared by its campaigns | on the campaign |
+| schedule | per-day ranges | per-day ranges **and holidays** |
+| outside hours | say it and carry on | same |
+
+Campaign-level means Diwali is typed once per campaign, so a **copy button**
+came with it - hours, holidays and the message together, because the message
+usually names the hours and copying one without the other produces a campaign
+that says something untrue.
+
+`hours.py` is separate from `voice_agent.py` because it is the kind of code
+that is wrong for a month before anyone notices - the Sunday that is closed,
+the holiday that is a string and not a date, the 18:30 that belongs to the
+server. Eight cases, tested without a phone: the minute before closing, the
+closing minute itself, the Saturday half-day, the Sunday, the holiday, and
+next-open crossing each of them.
+
+Two decisions inside it worth keeping:
+
+- **A malformed row closes one day, not the call.** A time that cannot be
+  parsed is logged and that day is closed. Raising would take the call down at
+  the moment somebody asked for help.
+- **Hours on with no days set ALLOWS transfers**, and warns. Read literally it
+  means "never", which is a config mistake quietly becoming a policy. The
+  console says so on the form and again in the warnings strip.
+
+The first version put Devanagari day names into sentences the rest of the
+system writes in Latin - "Abhi hamari team available nahi hai. कल 9:30 बजे se
+koi..." - one sentence, two alphabets. Latin throughout now, matching every
+other Hindi string here.
+
+**Refused handoffs are recorded** on the call, with a filter. The useful list
+is not "transfers that failed" but "callers who wanted a person at 9pm", which
+is a callback list and an argument about the hours themselves.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3351,6 +3425,11 @@ and 3 on `sip:800@`, which is our own test extension.
   the `dialer.*` fields real calls actually carry
 - **Transfer gate reads consent, not just speech** - "क्यों?" currently opens it
   (word lists to be agreed - see 25 Aug)
+- **Holidays are per campaign** - the copy button softens it; it does not fix
+  it. If a third campaign appears, hours belong on the dialler
+- **The hardcoded "call back during office hours"** for transfer_enabled=false
+  is still hardcoded, and now sits beside a feature that made every other such
+  sentence configurable
 - **`preemptive_generation`** - hides llm_ttft entirely, at no cost to quality.
   The first turn of a call pays ~2950 ms on a cold prompt cache, later turns
   ~1000-1400 ms, and on a KB turn the console under-reports it: a tool call

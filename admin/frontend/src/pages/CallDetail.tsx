@@ -567,6 +567,23 @@ export function CallDetail() {
         </Card>
       )}
 
+      {c.transfer_refused && !c.transferred_to && (
+        <Card className="border-amber-500/30 bg-amber-500/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <ArrowRightLeft className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+            <div>
+              <p className="font-medium">Asked for a person, and there was none</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {c.transfer_refused === 'holiday'
+                  ? 'A holiday on the campaign calendar.'
+                  : 'Outside the campaign’s transfer hours.'}{' '}
+                The agent said so and carried on with the caller.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* A comma in any of these means the primary provider failed mid-call and
           the fallback took over. Before this existed, the only evidence was a
           resampling line in the worker journal - twenty minutes to find, and

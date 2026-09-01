@@ -6,6 +6,8 @@ cache and the warming stops working. Hence one function, imported by both.
 """
 from __future__ import annotations
 
+import hours
+
 GROUNDING_RULES = """
 
 KNOWLEDGE RULES - these override every other instruction:
@@ -46,4 +48,14 @@ async def build_instructions(cfg) -> tuple[str, str, int]:
         instructions += GROUNDING_RULES
     if cfg.transfer_enabled:
         instructions += TRANSFER_RULES
+        # The hours are enforced in the agent whatever this says. This is here
+        # so the model does not tell a caller at 9pm that it is connecting
+        # them and then get refused - the rule works and the call still sounds
+        # broken.
+        #
+        # Safe for the cache warmer: it reads stored config and never the
+        # clock, so one campaign produces the same bytes all day.
+        window = hours.summary(cfg)
+        if window:
+            instructions += "\n" + window + "\n"
     return instructions, kb_mode, kb_tokens

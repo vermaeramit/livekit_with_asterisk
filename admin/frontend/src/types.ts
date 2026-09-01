@@ -102,6 +102,9 @@ export interface CallListItem {
   end_reason: string | null
   limit_hit: string | null
   transferred_to: string | null
+  // null = not refused. Otherwise why: 'closed' or 'holiday'. The caller
+  // asked for a person and there was nobody to hand them to.
+  transfer_refused: string | null
   turn_count: number | null
   campaign_id: number | null
   campaign_name: string | null
@@ -259,6 +262,12 @@ export interface AgentConfig {
   end_call_marker: string
   // null = no marker-driven handoff; the tool still works.
   transfer_marker: string | null
+  // When a human is there to take the handoff. Off = transfer whenever, which
+  // is what every campaign did before this existed.
+  transfer_hours_enabled: boolean
+  transfer_hours: WeekHours | null
+  transfer_holidays: Holiday[]
+  transfer_closed_message: string | null
   // null = use transfer_to as written. Set = the target is built from the
   // campaign and Asterisk looks the dialler up when the transfer happens.
   transfer_dialler_id: number | null
@@ -629,6 +638,25 @@ export interface CallCost {
   priced: boolean
   // Everything that makes the figure less than exact, in words.
   caveats: string[]
+}
+
+// ["09:30", "18:30"], or null for a day the team does not work. Times are in
+// the campaign's prompt_timezone, never the server's.
+export type DayWindow = [string, string] | null
+
+export interface WeekHours {
+  mon?: DayWindow
+  tue?: DayWindow
+  wed?: DayWindow
+  thu?: DayWindow
+  fri?: DayWindow
+  sat?: DayWindow
+  sun?: DayWindow
+}
+
+export interface Holiday {
+  date: string
+  label: string
 }
 
 export interface Dialler {

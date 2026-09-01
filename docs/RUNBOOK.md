@@ -583,6 +583,41 @@ about the third.
 A campaign with no dialler keeps using `transfer_to` exactly as before. Nothing
 had to move on any particular day.
 
+### Transfer hours
+
+The agent runs 24x7. If the people do not, set the hours on the campaign:
+**Limits & handoff** -> "Only transfer during set hours".
+
+- Per day, with a closed option. Saturday can be a half day.
+- Holidays are separate and beat the weekly hours.
+- Times are in the campaign's `prompt_timezone`, shown on the form. **Not the
+  server's clock.**
+- The message is what the agent says instead of transferring. `{next_open}`
+  becomes "kal 9:30 baje" / "somvar 9:30 baje" in the caller's language. Left
+  empty, a generic sentence is used.
+- Copy from another campaign brings hours, holidays and the message together.
+
+Enforced in the agent, before the confirmation prompt. The hours are also
+written into the system prompt so the model does not promise a handoff it is
+about to be refused.
+
+Checked at the moment the transfer is requested, not at the start of the call:
+a call that connects at 18:25 and asks for a person at 18:35 is refused.
+
+```sql
+-- Who asked for a person and could not have one. This is a callback list.
+SELECT id, started_at, caller, transfer_refused
+  FROM calls WHERE transfer_refused IS NOT NULL
+ ORDER BY id DESC LIMIT 20;
+```
+
+The Calls page has the same thing as a filter, and such calls carry a
+"no one available" badge.
+
+> **Hours on with no day open allows transfers**, rather than refusing every
+> one. Read literally it means "never", which is a mistake becoming a policy.
+> The campaign form warns about it.
+
 ### Verify a transfer
 
 ```bash

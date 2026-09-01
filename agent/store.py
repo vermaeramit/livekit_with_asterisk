@@ -63,6 +63,13 @@ class AgentConfig:
     # a column the dataclass has not heard of is silently dropped.
     prompt_datetime: bool
     prompt_timezone: str
+    # When a human is there to take a handoff. Read in the campaign's own
+    # timezone, which is prompt_timezone above and never the server's clock.
+    # Off = transfer whenever, which is what every campaign did before this.
+    transfer_hours_enabled: bool
+    transfer_hours: Optional[dict]
+    transfer_holidays: Optional[list]
+    transfer_closed_message: Optional[str]
     # Spoken while the knowledge base is being searched. NULL = say nothing.
     kb_filler_message: Optional[str]
     # Where the call's result goes afterwards. Only what the AGENT needs is

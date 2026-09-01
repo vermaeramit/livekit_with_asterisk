@@ -28,6 +28,7 @@ import { ProviderKeys } from '@/components/ProviderKeys'
 import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
+import { TransferHours } from '@/components/TransferHours'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
@@ -1082,6 +1083,18 @@ export function CampaignConfig() {
                   hint="Asked, then the caller's reply decides. Only after they agree does the transfer happen."
                 />
               )}
+
+              {/* Between the transfer settings and the marker: it is part of
+                  whether a handoff happens at all, not part of how it is
+                  triggered. */}
+              <div className="border-t border-border/70 pt-5">
+                <TransferHours
+                  value={value}
+                  campaignId={campaignId}
+                  onChange={set}
+                  disabled={!canEdit}
+                />
+              </div>
 
               <TextField
                 label="Transfer marker"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from decimal import Decimal
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import (BaseModel, EmailStr, Field, StringConstraints,
@@ -164,6 +164,26 @@ class CampaignRoute(BaseModel):
 # "WHERE name = $1 AND enabled" and raises when it misses, which makes calls ring
 # forever with no visible error. That switch belongs on the campaign, not here.
 
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _hhmm(day: str, value) -> tuple[int, int]:
+    """Parse "09:30" strictly. A time the agent cannot read is a closed day."""
+    try:
+        hh, _, mm = str(value).partition(":")
+        h, m = int(hh), int(mm)
+    except (TypeError, ValueError):
+        raise ValueError(f"{day}: {value!r} is not a time like 09:30")
+    if not (0 <= h < 24 and 0 <= m < 60):
+        raise ValueError(f"{day}: {value!r} is not a time like 09:30")
+    return h, m
+
+
+class CopyHours(BaseModel):
+    """Which campaign to take transfer hours from."""
+    from_campaign_id: int
+
+
 class AgentConfigOut(BaseModel):
     campaign_id: int
     name: str
@@ -205,6 +225,11 @@ class AgentConfigOut(BaseModel):
     silence_prompts: list[str] | None
     end_call_marker: str
     transfer_marker: str | None
+    transfer_hours_enabled: bool = False
+    # {"mon": ["09:30", "18:30"], "sun": null} - null or absent means closed.
+    transfer_hours: dict | None = None
+    transfer_holidays: list = Field(default_factory=list)
+    transfer_closed_message: str | None = None
 
     # Soniox only today. NULL = the provider's defaults.
     stt_endpoint_level: int | None
@@ -300,6 +325,65 @@ class AgentConfigUpdate(BaseModel):
     end_call_marker: str | None = Field(default=None, min_length=2,
                                         max_length=20)
     transfer_marker: str | None = Field(default=None, max_length=20)
+
+    # ---- when a human is there to take the handoff ----
+    transfer_hours_enabled: bool | None = None
+    transfer_hours: dict | None = None
+    transfer_holidays: list | None = None
+    transfer_closed_message: str | None = Field(default=None, max_length=500)
+
+    @field_validator("transfer_hours")
+    @classmethod
+    def _hours_are_a_week(cls, v):
+        """Seven known days, "HH:MM" to "HH:MM", open before close.
+
+        Validated here rather than trusted from the form because this is read
+        by the AGENT, on a live call, at the moment somebody has asked for a
+        person. A malformed row there closes a day silently - which is a
+        support ticket that starts "transfers stopped working" and contains no
+        error anywhere.
+        """
+        if v is None:
+            return v
+        clean: dict = {}
+        for day, window in v.items():
+            if day not in _DAYS:
+                raise ValueError(f"{day!r} is not a day of the week")
+            if window in (None, [], ()):
+                clean[day] = None
+                continue
+            if not isinstance(window, (list, tuple)) or len(window) != 2:
+                raise ValueError(f"{day}: expected an open and a close time")
+            start, end = (_hhmm(day, t) for t in window)
+            if start >= end:
+                # Not a night shift - the form cannot express one, so this is
+                # a typo, and accepting it would close the day.
+                raise ValueError(
+                    f"{day}: {window[0]} is not before {window[1]}")
+            clean[day] = [window[0], window[1]]
+        return clean
+
+    @field_validator("transfer_holidays")
+    @classmethod
+    def _holidays_are_dates(cls, v):
+        if v is None:
+            return v
+        clean, seen = [], set()
+        for item in v:
+            if not isinstance(item, dict) or "date" not in item:
+                raise ValueError("each holiday needs a date")
+            try:
+                day = date.fromisoformat(str(item["date"]))
+            except ValueError:
+                raise ValueError(f"{item['date']!r} is not a date (YYYY-MM-DD)")
+            if day in seen:
+                continue
+            seen.add(day)
+            clean.append({"date": day.isoformat(),
+                          "label": str(item.get("label") or "")[:60]})
+        # Sorted so the console shows them in order however they were added,
+        # and so two campaigns with the same holidays compare equal.
+        return sorted(clean, key=lambda h: h["date"])
     # The provider's own limits - outside them is a 400 on the first
     # utterance of a live call.
     stt_endpoint_level: int | None = Field(default=None, ge=0, le=3)
@@ -754,6 +838,9 @@ class CallListItem(BaseModel):
     end_reason: str | None
     limit_hit: str | None
     transferred_to: str | None
+    # NULL = not refused. Otherwise why: 'closed' or 'holiday'. The caller
+    # asked for a person and there was nobody to give them.
+    transfer_refused: str | None = None
     turn_count: int | None
     campaign_id: int | None
     campaign_name: str | None = None

@@ -38,6 +38,7 @@ def recording_file(sip_call_id: str | None) -> Path | None:
 LIST_COLUMNS = """
     c.id, c.started_at, c.ended_at, c.duration_ms, c.caller, c.callee,
     c.language, c.end_reason, c.limit_hit, c.transferred_to, c.turn_count,
+    c.transfer_refused,
     c.campaign_id, c.tenant_id, cam.name AS campaign_name
 """
 
@@ -51,6 +52,11 @@ async def list_calls(
     end_reason: str | None = None,
     outcome: str | None = None,
     transferred: bool | None = Query(None, description="only transferred calls"),
+    # Not the opposite of `transferred` - most untransferred calls never wanted
+    # a person. This is the ones that ASKED and were turned away, which is a
+    # callback list rather than a fault list.
+    transfer_refused: bool | None = Query(
+        None, description="only calls where a handoff was asked for and refused"),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     min_duration_ms: int | None = None,
@@ -86,6 +92,10 @@ async def list_calls(
         where.append("c.transferred_to IS NOT NULL")
     elif transferred is False:
         where.append("c.transferred_to IS NULL")
+    if transfer_refused is True:
+        where.append("c.transfer_refused IS NOT NULL")
+    elif transfer_refused is False:
+        where.append("c.transfer_refused IS NULL")
     if search:
         add("(c.caller ILIKE '%' || ${n} || '%' OR c.callee ILIKE '%' || ${n} "
             "|| '%' OR c.room_name ILIKE '%' || ${n} || '%')", search)

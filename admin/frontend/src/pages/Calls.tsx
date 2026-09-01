@@ -46,6 +46,17 @@ export function EndReasonBadge({ call }: { call: CallListItem }) {
       </Badge>
     )
   }
+  // After the transfer badge, not before: a call can ask out of hours, be
+  // refused, and then be transferred later once the team opens. What actually
+  // happened wins over what was refused along the way.
+  if (call.transfer_refused) {
+    return (
+      <Badge tone="warning" title={`Asked for a person — ${call.transfer_refused}`}>
+        <ArrowRightLeft className="h-3 w-3" />
+        no one available
+      </Badge>
+    )
+  }
   if (!call.end_reason) return <Badge tone="muted">—</Badge>
   return (
     <Badge tone={call.end_reason === 'error' ? 'danger' : 'success'}>{call.end_reason}</Badge>

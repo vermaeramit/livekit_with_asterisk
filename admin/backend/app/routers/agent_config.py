@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from .. import audit, db, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
-                       CampaignRoute, CampaignRouteCreate, PostbackOut,
-                       PromptTokens)
+                       CampaignRoute, CampaignRouteCreate, CopyHours,
+                       PostbackOut, PromptTokens)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -36,6 +36,8 @@ FIELDS = (
     "transfer_dialler_id", "transfer_extension",
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "transfer_marker",
+    "transfer_hours_enabled", "transfer_hours", "transfer_holidays",
+    "transfer_closed_message",
     "stt_endpoint_level", "stt_endpoint_sensitivity",
     "prompt_datetime", "prompt_timezone",
     "postback_enabled", "postback_url", "postback_auth_header",
@@ -82,6 +84,23 @@ def _warnings(cfg: dict) -> list[str]:
         out.append(
             f"{label} is {marker}, but the prompt never writes it, so it will "
             f"never fire.{suggestion}")
+
+    # Transfer hours that cannot do what they look like they do. Both of these
+    # only show up when a real caller asks for a person out of hours, which is
+    # the worst moment to discover a blank field.
+    if cfg.get("transfer_hours_enabled"):
+        hours = cfg.get("transfer_hours") or {}
+        if not any(hours.get(d) for d in ("mon", "tue", "wed", "thu",
+                                          "fri", "sat", "sun")):
+            out.append(
+                "Transfer hours are on but no day is open, which would refuse "
+                "every handoff. Transfers are being allowed instead — set the "
+                "days, or turn the hours off.")
+        elif not (cfg.get("transfer_closed_message") or "").strip():
+            out.append(
+                "No out-of-hours message is set, so callers asking for a "
+                "person after hours hear a generic sentence rather than "
+                "yours.")
     return out
 
 
@@ -160,6 +179,52 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     await audit.record(actor, entity="agent_config", entity_id=before["name"],
                        action="update", tenant_id=tenant_id, campaign_id=campaign_id,
                        changes=audit.diff(before, fields))
+    return AgentConfigOut(**await _get(campaign_id))
+
+
+@router.post("/config/copy-hours", response_model=AgentConfigOut)
+async def copy_hours(campaign_id: int, body: CopyHours,
+                     actor: CurrentUser = Depends(editor)):
+    """Take another campaign's transfer hours and holidays.
+
+    Hours are per campaign, which was the choice made when this was designed -
+    but it means Diwali gets typed once per campaign, and a field that has to
+    be typed five times is a field that ends up different in five places. This
+    is the answer to that: set one campaign up properly and copy it.
+
+    Deliberately copies hours, holidays and the closed message TOGETHER. The
+    message usually names the hours ("we are open until 6:30"), so bringing one
+    without the other produces a campaign that says something untrue.
+    """
+    await assert_campaign_visible(actor, campaign_id)
+    # Checked separately: a user who can see this campaign cannot necessarily
+    # see the one they are naming, and "copy from campaign 7" would otherwise
+    # be a way to read another client's configuration one field at a time.
+    await assert_campaign_visible(actor, body.from_campaign_id)
+    if body.from_campaign_id == campaign_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "that is this campaign")
+
+    source = await _get(body.from_campaign_id)
+    before = await _get(campaign_id)
+
+    await db.pool().execute(
+        """UPDATE agent_config
+              SET transfer_hours_enabled = $2, transfer_hours = $3,
+                  transfer_holidays = $4, transfer_closed_message = $5,
+                  updated_at = now()
+            WHERE campaign_id = $1""",
+        campaign_id,
+        source["transfer_hours_enabled"],
+        json.dumps(source["transfer_hours"]) if source["transfer_hours"] else None,
+        json.dumps(source["transfer_holidays"] or []),
+        source["transfer_closed_message"])
+
+    await audit.record(actor, entity="agent_config", entity_id=str(campaign_id),
+                       action="copy_hours",
+                       changes={"transfer_hours":
+                                {"from": before["transfer_hours"],
+                                 "to": source["transfer_hours"]}})
     return AgentConfigOut(**await _get(campaign_id))
 
 
