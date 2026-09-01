@@ -22,7 +22,7 @@ export function Dialog({
   description?: string
   children: React.ReactNode
   footer?: React.ReactNode
-  size?: 'md' | 'lg'
+  size?: 'md' | 'lg' | 'xl'
 }) {
   const body = useRef<HTMLDivElement>(null)
 
@@ -83,7 +83,10 @@ export function Dialog({
         className={cn(
           'relative flex max-h-full w-full flex-col animate-fade-up rounded-xl',
           'border border-border bg-card shadow-lg',
-          size === 'lg' ? 'max-w-2xl' : 'max-w-md',
+          // xl is for a dialog whose content is a grid rather than a form -
+          // the permission matrix at 672px wrapped into a column of forty
+          // toggles nobody could scan.
+          size === 'xl' ? 'max-w-4xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md',
         )}
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">

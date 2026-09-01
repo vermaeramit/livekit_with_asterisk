@@ -180,10 +180,11 @@ export function Roles() {
         open={draft !== null}
         onClose={() => setDraft(null)}
         title={draft?.id ? 'Edit role' : 'New role'}
+        size="xl"
       >
         {draft && (
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label htmlFor="rn">Name</Label>
                 <Input
@@ -208,22 +209,25 @@ export function Roles() {
                     : 'Lowercase, no spaces.'}
                 </p>
               </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="rd">Description</Label>
+                <Input
+                  id="rd"
+                  value={draft.description}
+                  onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                  placeholder="Listens to calls, checks quality"
+                />
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="rd">Description</Label>
-              <Input
-                id="rd"
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                placeholder="Listens to calls and checks quality"
-              />
-            </div>
-
+            {/* Two columns. The heading stays a full-width separator so the
+                groups still read as groups, but six permissions stacked one
+                per row made this dialog taller than the screen. */}
             {Object.entries(grouped).map(([group, list]) => (
               <div key={group} className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">{group}</p>
-                <div className="space-y-1.5 rounded-md border border-border p-3">
+                <div className="grid gap-x-6 gap-y-1.5 rounded-md border border-border p-3 sm:grid-cols-2">
                   {list.map((p) => (
                     <Toggle
                       key={p.key}
