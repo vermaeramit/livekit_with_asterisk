@@ -306,57 +306,62 @@ export function Dashboard() {
           tone={transferRate > 40 ? 'warning' : undefined}
           hint={`${formatNumber(s?.transferred)} of ${formatNumber(s?.calls)} calls`}
         />
+      </div>
+
+      {/* Five and five. Six tiles in a five-column grid left Prompt tokens
+          stranded on a row of its own, and a four-column second row lined up
+          with nothing above it. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat
           icon={Coins}
           label="Prompt tokens"
           value={formatNumber(s?.prompt_tokens)}
-          hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
+          hint={cacheRate != null ? `${formatPercent(cacheRate)} from cache` : undefined}
         />
+        {s?.cost && (
+          <>
+            <Stat
+              icon={Wallet}
+              label={`Spend (${s.cost.currency})`}
+              value={money(s.cost.currency, s.cost.total, 2)}
+              hint={`${money(s.cost.currency, s.cost.per_call, 2)} per call`}
+            />
+            <Stat
+              icon={Wallet}
+              label="Cost per minute"
+              value={money(s.cost.currency, s.cost.per_minute_avg, 2)}
+              hint="total spend over total minutes"
+            />
+            <Stat
+              icon={Wallet}
+              label="Worst per minute"
+              value={
+                s.cost.per_minute_max != null
+                  ? money(s.cost.currency, s.cost.per_minute_max, 2)
+                  : '—'
+              }
+              hint={
+                s.cost.per_minute_max_call_id
+                  ? `call ${s.cost.per_minute_max_call_id} · calls over ${s.cost.per_minute_max_floor_sec}s only`
+                  : `no call over ${s.cost.per_minute_max_floor_sec}s`
+              }
+            />
+            <Stat
+              icon={Coins}
+              label="Priced"
+              value={`${formatNumber(s.cost.priced_calls)} of ${formatNumber(
+                s.cost.priced_calls + s.cost.unpriced_calls,
+              )}`}
+              tone={s.cost.unpriced_calls > 0 ? 'warning' : undefined}
+              hint={
+                s.cost.unpriced_calls > 0
+                  ? `${formatNumber(s.cost.unpriced_calls)} with no rate — spend is short`
+                  : 'every call has a rate'
+              }
+            />
+          </>
+        )}
       </div>
-
-      {s?.cost && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            icon={Wallet}
-            label={`Spend (${s.cost.currency})`}
-            value={money(s.cost.currency, s.cost.total, 2)}
-            hint={`${money(s.cost.currency, s.cost.per_call, 2)} per call`}
-          />
-          <Stat
-            icon={Wallet}
-            label="Cost per minute"
-            value={money(s.cost.currency, s.cost.per_minute_avg, 2)}
-            hint="total spend over total minutes"
-          />
-          <Stat
-            icon={Wallet}
-            label="Worst per minute"
-            value={
-              s.cost.per_minute_max != null
-                ? money(s.cost.currency, s.cost.per_minute_max, 2)
-                : '—'
-            }
-            hint={
-              s.cost.per_minute_max_call_id
-                ? `call ${s.cost.per_minute_max_call_id} · calls over ${s.cost.per_minute_max_floor_sec}s only`
-                : `no call over ${s.cost.per_minute_max_floor_sec}s`
-            }
-          />
-          <Stat
-            icon={Coins}
-            label="Priced"
-            value={`${formatNumber(s.cost.priced_calls)} of ${formatNumber(
-              s.cost.priced_calls + s.cost.unpriced_calls,
-            )}`}
-            tone={s.cost.unpriced_calls > 0 ? 'warning' : undefined}
-            hint={
-              s.cost.unpriced_calls > 0
-                ? 'the rest have no rate — the total is short by whatever they cost'
-                : 'every call has a rate'
-            }
-          />
-        </div>
-      )}
 
       {(s?.limit_hit ?? 0) > 0 && (
         <Card className="border-warning/30 bg-warning/5 p-4">
