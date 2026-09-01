@@ -641,6 +641,13 @@ export interface Dialler {
   // How many campaigns transfer here - shown so nobody deletes a live one.
   campaign_count: number
   updated_at: string
+  // Empty = the peer is a hand-written section in iax.conf and this row only
+  // names it. Filled in = Asterisk reads it from the database.
+  host: string | null
+  port: number | null
+  username: string | null
+  // Whether a password is stored. Never the password itself.
+  has_secret: boolean
 }
 
 export interface ProviderRate {

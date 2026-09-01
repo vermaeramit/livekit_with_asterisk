@@ -3140,7 +3140,7 @@ dialplan and leaves the block the dialler team wrote unreachable.
 
 ### Still open, both in the dialler team's block
 
-`Dial(IAX2/76SERVER:76SERVER@...)` puts the trunk password in a file this repo
+`Dial(IAX2/76SERVER:<the password>@...)` puts the trunk password in a file this repo
 tracks. `iax.conf` is gitignored for exactly this reason; a peer there and
 `Dial(IAX2/dialler-76/...)` here would keep it out of git history.
 
@@ -3224,13 +3224,82 @@ not a destination on anybody's dialler, and moving it would have meant nothing.
 
 ---
 
+## A dialler is now a form, and the password is in the database (1 Sep 2026)
+
+Asked for straight after the first one worked: *"user name and password bhi
+front pe rakh lete hain, aur wo configuration bhi jo required hai kisi another
+dialler jodne ke liye, kyunki main baar baar code me change nahi karna
+chahta."*
+
+Fair. Adding a dialler should not need an ssh session. But there is a
+constraint that decides everything else, and it is worth stating plainly:
+
+**IAX2 authenticates by MD5 challenge-response, so Asterisk needs the secret
+itself.** Not a hash, not a token it can verify - the actual password, to
+compute a response with. So "password in the console" can only ever mean
+"password somewhere Asterisk can read it". The only question is where.
+
+Three places, and the CDR from the morning's own test made the argument:
+
+    "Dial","IAX2/76SERVER:<the password>@10.130.8.76:4569/5000,300,Tt"
+
+That is the password, in clear text, in `Master.csv`, on every transfer. It has
+been that way all along.
+
+| | password lives | new dialler | risk |
+|---|---|---|---|
+| A realtime | database, clear | instant | every backup and `pg_dump` |
+| B encrypted + host sync | database, Fernet; clear only in a 0640 file | ~30s | same exposure as today |
+| C dial string from DB | database, plus channel vars and CDR | instant | makes the leak above permanent |
+
+**B was recommended and A was chosen.** Recorded because the reasoning matters
+later: backup access and backup retention are now trunk credential access, and
+`asterisk_ro` went from reading three columns of routing to reading trunk
+passwords. That is the price of never editing a file, and it was paid knowingly
+rather than stumbled into.
+
+What was built:
+
+- **`iax_peers`**, a view whose columns are iax.conf option names, because
+  chan_iax2 realtime feeds every column it reads to the peer builder as if it
+  were a config line. An extra column is a warning on every lookup.
+- Only rows that are active **and** carry credentials. A host with no secret
+  becomes a peer that fails authentication at the far end, which reads like the
+  dialler being down and gets escalated to the wrong team. The API refuses it,
+  and the form says so before the refusal.
+- **The secret is never selected**, not masked in the router and not dropped by
+  the response model - not read. A column that is never loaded cannot be leaked
+  by a later change to either of those. The audit trail records `changed`.
+- `has_secret`, not a hint. Provider keys show four characters, which is right
+  for a 40-character token. A trunk password is eight characters and equal to
+  its username, so four would be half of it.
+- **Static sections are removed, not warned about.** A peer in iax.conf is found
+  before the database is consulted, so a leftover section wins silently and
+  every console edit does nothing. `setup-iax-realtime.sh` deletes any that
+  collide with a managed row.
+
+One thing that looks broken and is not: **`iax2 show peers` does not list
+them.** A realtime peer is built when it is dialled and freed afterwards, so
+there is nothing to list. The setup script reads the database instead, with the
+password masked - `realtime load iaxpeers` answers the same question and prints
+the secret to the console.
+
+Left alone: the inline dial on line 231 of `extensions.conf`, and campaigns 2
+and 3 on `sip:800@`, which is our own test extension.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
   is already gitignored, before this file is synced back to the repo
 - **The password is still in `extensions.conf` line 231** - the peer is proven
   now, so that inline dial can become `Dial(IAX2/76SERVER/${EXTEN})`. Until it
-  does, the secret is in a file that was going to be synced to the repo
+  does, the secret is in a file that was going to be synced to the repo, AND in
+  the CDR of every call that takes that route
+- **Dialler passwords are in every database backup** - the consequence of
+  choosing realtime. Worth deciding who can read a backup, and for how long
+  backups are kept, now that the answer to both is "and dial the trunk"
 - **The dialler's password is its username** - theirs to change, ours to raise
 - **`DIALSTATUS` on the OLD `_X.` route** - handled on `_c.`, not there. A
   campaign still on a plain SIP target gets silence when nobody answers

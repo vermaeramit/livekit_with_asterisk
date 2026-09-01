@@ -521,13 +521,29 @@ matters: the ODBC script grants on the view migration 033 creates, and granting
 on a view that does not exist leaves Asterisk connected and unable to read
 anything - which looks exactly like a broken query.
 
-**Then, per dialler:**
+Then once, to let peers come from the database rather than a file:
 
-1. The peer in `/etc/asterisk/iax.conf` - host, port, username, secret. This is
-   the dialler team's, not ours, and is the only place those live.
-2. A row on the **Diallers** page naming that peer. Platform-level; the name
-   must match the `iax.conf` section exactly.
-3. On the campaign, **Limits & handoff** -> pick the dialler, set the extension.
+```bash
+psql -f /srv/aivoice/migrations/034_dialler_credentials.sql
+bash /srv/aivoice/server-configs/setup-iax-realtime.sh
+```
+
+**Then, per dialler - all of it in the console, nothing on the server:**
+
+1. **Diallers** page -> Add a dialler. Name, peer name, then the connection the
+   dialler team gives you: host, port, username, password. Platform-only.
+2. On the campaign, **Limits & handoff** -> pick the dialler, set the extension.
+
+It is dialable on the next transfer. No reload, no restart.
+
+> The password is stored in clear text, because IAX2 is MD5
+> challenge-response and Asterisk needs the secret itself to answer a
+> challenge. **It is in every `pg_dump` and every backup.** Whoever can read a
+> backup can dial that trunk.
+
+A dialler with the connection fields left blank still works the old way: the
+peer is a hand-written section in `iax.conf` and the row only names it. The
+Diallers page marks those `iax.conf`.
 
 What travels in the REFER is `sip:c<campaign id>@...`, not the extension: two
 campaigns may both use 5000 on different diallers, so the extension identifies
@@ -539,7 +555,16 @@ nothing by itself.
 asterisk -rx "odbc show all"                      # expect: aivoice, connected
 asterisk -rx "dialplan show c1@from-livekit"      # the _c. route for campaign 1
 asterisk -rx 'dialplan eval function ODBC_TRANSFER(1)'   # "peer^extension"
+
+# The peers Asterisk can build, password masked.
+docker exec -i postgres psql -qtAX -U aivoice -d aivoice -c \
+  "SELECT name, username, host, port, length(secret) || ' chars' FROM iax_peers"
 ```
+
+> `iax2 show peers` does **not** list diallers configured in the console, and an
+> empty list there is not a broken trunk. A realtime peer is built when it is
+> dialled and freed afterwards, so there is nothing to show. Use the query
+> above. Do not use `realtime load iaxpeers` - it prints the password.
 
 An empty answer from the last one means no dialler is set on that campaign, or
 the dialler is inactive, or the extension is blank. The campaign page warns

@@ -556,6 +556,37 @@ class DiallerIn(BaseModel):
     description: str | None = Field(default=None, max_length=300)
     active: bool = True
 
+    # ---- credentials, all optional together ----
+    #
+    # All four empty = the peer is a hand-written section in iax.conf and this
+    # row only names it. Filled in = Asterisk reads them over ODBC and the peer
+    # does not exist in any file.
+    host: str | None = Field(default=None, max_length=120,
+                             pattern=r"^[A-Za-z0-9_.-]+$")
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = Field(default=None, max_length=80)
+    # None on an update means LEAVE IT ALONE. The console never receives the
+    # secret, so it cannot send it back, and a form that submits without
+    # retyping it must not blank it.
+    secret: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _credentials_are_all_or_nothing(self):
+        """A host with no secret is worse than no host at all.
+
+        It becomes a peer that fails authentication at the far end, which reads
+        like the dialler being down and gets escalated to the wrong team. The
+        secret is exempt on update, where absent means unchanged - the router
+        checks that against what is already stored.
+        """
+        if self.host and not self.username:
+            self.username = self.peer
+        if self.username and not self.host:
+            raise ValueError("a username needs a host to send it to")
+        if self.port and not self.host:
+            raise ValueError("a port needs a host")
+        return self
+
 
 class DiallerOut(BaseModel):
     id: int
@@ -565,6 +596,17 @@ class DiallerOut(BaseModel):
     active: bool
     campaign_count: int = 0
     updated_at: datetime
+
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    # Whether a secret is stored, and nothing about it.
+    #
+    # Provider keys return a four-character hint, which is right for a 40
+    # character token nobody can guess from four. A trunk password is short -
+    # the one in front of us is eight characters and equal to the username - so
+    # four would be half of it. There is no version of this the browser needs.
+    has_secret: bool = False
 
 
 class PermissionOut(BaseModel):

@@ -18,9 +18,19 @@ type Draft = {
   peer: string
   description: string
   active: boolean
+  host: string
+  port: string
+  username: string
+  // Never loaded from the server - it is not sent to the browser. Empty on an
+  // edit means "leave the stored one alone", which is what the field says.
+  secret: string
+  hadSecret: boolean
 }
 
-const BLANK: Draft = { id: null, name: '', peer: '', description: '', active: true }
+const BLANK: Draft = {
+  id: null, name: '', peer: '', description: '', active: true,
+  host: '', port: '', username: '', secret: '', hadSecret: false,
+}
 
 export function Diallers() {
   const toast = useToast()
@@ -46,6 +56,12 @@ export function Diallers() {
           peer: d.peer.trim(),
           description: d.description.trim() || null,
           active: d.active,
+          host: d.host.trim() || null,
+          port: d.port.trim() ? Number(d.port) : null,
+          username: d.username.trim() || null,
+          // Omitted rather than sent empty: empty is an instruction to clear
+          // it, and the commonest edit here is changing something else.
+          secret: d.secret || null,
         },
       }),
     onSuccess: () => {
@@ -69,7 +85,7 @@ export function Diallers() {
     <div className={PAGE}>
       <PageHeader
         title="Diallers"
-        description="Where a campaign's calls go when the agent hands them to a person. The credentials live in iax.conf on the server; this is which campaign uses which."
+        description="Where a campaign's calls go when the agent hands them to a person. Add one here and it works on the next transfer — no server access, no restart."
         actions={
           canEdit ? (
             <Button size="sm" onClick={() => setDraft({ ...BLANK })}>
@@ -91,7 +107,7 @@ export function Diallers() {
           <EmptyState
             icon={Radio}
             title="No diallers"
-            hint="Add the peer to iax.conf on the server first, then a row here naming it. Until then campaigns keep using the transfer target typed on their own page."
+            hint="Add one with the host, port, username and password from the dialler team. Until then campaigns keep using the transfer target typed on their own page."
           />
         ) : (
           <div className="divide-y divide-border/70">
@@ -105,10 +121,19 @@ export function Diallers() {
                       IAX2/{d.peer}
                     </span>
                     {!d.active && <Badge tone="muted">inactive</Badge>}
+                    {/* Which of the two kinds this is. Worth a glance before
+                        wondering why an edit here changed nothing. */}
+                    {!d.host && <Badge tone="muted">iax.conf</Badge>}
                     <Badge tone={d.campaign_count ? 'default' : 'muted'}>
                       {d.campaign_count} campaign{d.campaign_count === 1 ? '' : 's'}
                     </Badge>
                   </div>
+                  {d.host && (
+                    <p className="mt-0.5 font-mono text-2xs text-muted-foreground">
+                      {d.username ?? d.peer}@{d.host}:{d.port ?? 4569}
+                      {!d.has_secret && ' · no password set'}
+                    </p>
+                  )}
                   {d.description && (
                     <p className="mt-0.5 text-2xs text-muted-foreground">{d.description}</p>
                   )}
@@ -129,6 +154,11 @@ export function Diallers() {
                           peer: d.peer,
                           description: d.description ?? '',
                           active: d.active,
+                          host: d.host ?? '',
+                          port: d.port ? String(d.port) : '',
+                          username: d.username ?? '',
+                          secret: '',
+                          hadSecret: d.has_secret,
                         })
                       }
                     >
@@ -168,7 +198,7 @@ export function Diallers() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="d-peer">iax.conf peer</Label>
+              <Label htmlFor="d-peer">Peer name</Label>
               <Input
                 id="d-peer"
                 value={draft.peer}
@@ -177,12 +207,10 @@ export function Diallers() {
                 className="font-mono"
               />
               <p className="text-2xs leading-relaxed text-muted-foreground">
-                {/* This is the field that fails late if it is wrong. */}
-                Must match a section in <span className="font-mono">iax.conf</span> exactly —
-                Asterisk dials <span className="font-mono">IAX2/&lt;peer&gt;/&lt;extension&gt;</span>.
-                The host, port, username and secret live there, not here. A name that
-                does not exist only fails at the last step, after the caller has been
-                told to hold.
+                What Asterisk calls this trunk —{' '}
+                <span className="font-mono">IAX2/&lt;peer&gt;/&lt;extension&gt;</span>. Any
+                name you like, as long as no two diallers share one. It is also the
+                username sent, unless you set a different one below.
               </p>
             </div>
 
@@ -192,8 +220,92 @@ export function Diallers() {
                 id="d-desc"
                 value={draft.description}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                placeholder="10.130.8.76 — sales floor"
+                placeholder="Sales floor, Worxpertise"
               />
+            </div>
+
+            {/* The connection itself. Everything above is ours; this is theirs,
+                and it is what the dialler team hands over. */}
+            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+              <div>
+                <p className="text-xs font-medium">Connection</p>
+                <p className="mt-0.5 text-2xs leading-relaxed text-muted-foreground">
+                  From the dialler team. Saved here, it takes effect on the next
+                  transfer — no restart, and nothing to change on the server.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 space-y-1.5">
+                  <Label htmlFor="d-host">Host</Label>
+                  <Input
+                    id="d-host"
+                    value={draft.host}
+                    onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+                    placeholder="10.130.8.76"
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="d-port">Port</Label>
+                  <Input
+                    id="d-port"
+                    value={draft.port}
+                    onChange={(e) => setDraft({ ...draft, port: e.target.value })}
+                    placeholder="4569"
+                    inputMode="numeric"
+                    className="font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="d-user">Username</Label>
+                  <Input
+                    id="d-user"
+                    value={draft.username}
+                    onChange={(e) => setDraft({ ...draft, username: e.target.value })}
+                    placeholder={draft.peer || 'same as peer name'}
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="d-secret">Password</Label>
+                  <Input
+                    id="d-secret"
+                    type="password"
+                    autoComplete="new-password"
+                    value={draft.secret}
+                    onChange={(e) => setDraft({ ...draft, secret: e.target.value })}
+                    placeholder={draft.hadSecret ? 'unchanged' : ''}
+                    className="font-mono"
+                  />
+                </div>
+              </div>
+
+              <p className="text-2xs leading-relaxed text-muted-foreground">
+                {draft.hadSecret
+                  ? 'A password is stored. It is never sent back to this page — leave the field empty to keep it, or type a new one to replace it.'
+                  : 'Stored so Asterisk can authenticate, which needs the password itself and not a hash of it. It is never shown again after saving, and it is included in database backups — treat a backup the way you would treat the password.'}
+              </p>
+
+              {/* Half-filled is the combination that fails at the far end and
+                  reads like the dialler being down. */}
+              {draft.host && !draft.secret && !draft.hadSecret ? (
+                <p className="text-2xs leading-relaxed text-amber-600 dark:text-amber-500">
+                  A host with no password builds a trunk that cannot log in. That
+                  looks like the dialler being down, not like a missing field.
+                </p>
+              ) : null}
+
+              {!draft.host && (
+                <p className="text-2xs leading-relaxed text-muted-foreground">
+                  Leave this blank if the peer is already written into{' '}
+                  <span className="font-mono">iax.conf</span> on the server. The row
+                  then just names it.
+                </p>
+              )}
             </div>
 
             <Toggle

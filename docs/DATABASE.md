@@ -214,3 +214,21 @@ rsync -a /opt/aivoice/backups/ backup-host:/aivoice/
 
 Until that exists, this is a good backup of the thing most likely to go wrong,
 and not a disaster recovery plan. Worth being clear about which one you have.
+
+## Backups now contain trunk passwords
+
+`diallers.secret` is clear text and has to be: IAX2 is MD5 challenge-response,
+so Asterisk needs the secret itself to compute a response, and the thing that
+reads it has no encryption key. Every other secret in this database - provider
+keys, tool auth, the postback credential - is Fernet-encrypted. This one cannot
+be.
+
+The consequence is not about the column. **It is about the backups.** Anyone who
+can read a `pg_dump` can dial the dialler's trunk. Backup access and backup
+retention are now trunk access, and should be decided on those terms.
+
+The `asterisk_ro` role can read it too, which is the point - that is how
+Asterisk gets it. Its own password is in `res_odbc.conf`, 0640 root:asterisk.
+
+The API never returns it, never logs it, and never selects it. The audit trail
+records that it changed, not what to.
