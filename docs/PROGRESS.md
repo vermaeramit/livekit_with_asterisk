@@ -3195,11 +3195,32 @@ Deleting a dialler a campaign still uses is refused, and says how many. The
 foreign key is `ON DELETE SET NULL`, so it would otherwise have succeeded
 quietly and been discovered by a caller asking for a person.
 
-Verified end to end with no rows in place: `odbc show all` shows the DSN with a
-connection, `dialplan show c1@from-livekit` shows the seven steps, and
-`ODBC_TRANSFER(1)` returns `Success (0)` with an empty result - correct, since
-no dialler exists yet. **The peers still have to be added to `iax.conf` with the
-dialler team before a live transfer will connect.**
+**The peer already existed as a dial string, not as a peer.** What carried
+transfers was an inline `Dial(IAX2/user:secret@host:4569/${EXTEN})` in
+`from-external` - a working call and three problems: a password in a file
+several people edit, no name for the console to offer, and one destination when
+the point was more than one. `setup-dialler-peer.sh` reads the credentials out
+of `extensions.conf` rather than being told them, and writes a peer. The old
+line was left alone as the way back.
+
+A second peer, `243SERVER`, was already in `iax.conf` and was the wrong one:
+`host=dynamic`, `type=friend`, the account their box registers to US with.
+Naming it in the console would have failed at the moment a caller was holding.
+
+Verified with a live call on 1 Sep. Two CDR rows, half an hour apart:
+
+    09:48  from-external  Dial(IAX2/76SERVER:***@10.130.8.76:4569/5000)  ANSWERED  8s
+    10:52  from-livekit   Dial(IAX2/76SERVER/5000)                       ANSWERED  12s
+
+The agent logged `TRANSFER OK -> sip:c1@10.130.9.243`, the lookup returned
+`76SERVER^5000`, and the peer answered. Equivalence was measured, not assumed.
+
+One consequence worth knowing: **the CDR `dst` column now reads `c1`, not
+`5000`.** The campaign is what travels, so that is what Asterisk sees. Any
+report keyed on `dst` changes shape on the day a campaign gets a dialler.
+
+Campaigns 2 and 3 were left on `sip:800@`. 800 is our own local test extension,
+not a destination on anybody's dialler, and moving it would have meant nothing.
 
 ---
 
@@ -3207,8 +3228,10 @@ dialler team before a live transfer will connect.**
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
   is already gitignored, before this file is synced back to the repo
-- **Add the `iax.conf` peers with the dialler team** - the routing is built and
-  verified, and connects nothing until each dialler has a peer
+- **The password is still in `extensions.conf` line 231** - the peer is proven
+  now, so that inline dial can become `Dial(IAX2/76SERVER/${EXTEN})`. Until it
+  does, the secret is in a file that was going to be synced to the repo
+- **The dialler's password is its username** - theirs to change, ours to raise
 - **`DIALSTATUS` on the OLD `_X.` route** - handled on `_c.`, not there. A
   campaign still on a plain SIP target gets silence when nobody answers
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
