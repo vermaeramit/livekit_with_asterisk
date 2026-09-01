@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatRelative } from '@/lib/utils'
-import type { Role, Tenant, User } from '@/types'
+import type { Role, Tenant, User, RoleDef } from '@/types'
 
 const ROLE_LABEL: Record<Role, string> = {
   superadmin: 'Super Admin',
@@ -84,6 +84,14 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
     queryKey: ['tenants'],
     queryFn: () => api<Tenant[]>('/tenants'),
     enabled: isSuper && open,
+  })
+
+  // The backend returns only the roles this user could actually hand out, so
+  // an option that appears here is one the save will accept.
+  const roles = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => api<RoleDef[]>('/roles'),
+    enabled: open,
   })
 
   function reset() {
@@ -175,17 +183,20 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
         <div className="space-y-1.5">
           <Label htmlFor="u-role">Role</Label>
+          {/* From the API, not a list in here. Roles are rows now, and a
+              hardcoded list means a role somebody creates can never be handed
+              to anyone. The backend already returns only what this user is
+              allowed to assign, so there is nothing here to filter. */}
           <Select id="u-role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {(isSuper
-              ? (['superadmin', 'tenant_admin', 'agent', 'viewer'] as Role[])
-              : (['tenant_admin', 'agent', 'viewer'] as Role[])
-            ).map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABEL[r]}
+            {roles.data?.map((r) => (
+              <option key={r.id} value={r.key}>
+                {r.name}
               </option>
             ))}
           </Select>
-          <p className="text-2xs text-muted-foreground">{ROLE_HELP[role]}</p>
+          <p className="text-2xs text-muted-foreground">
+            {roles.data?.find((r) => r.key === role)?.description ?? ROLE_HELP[role] ?? ''}
+          </p>
         </div>
 
         {needsTenant && (

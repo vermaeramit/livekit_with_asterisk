@@ -61,6 +61,10 @@ class UserOut(BaseModel):
     email: str
     name: str | None
     role: str
+    # Only filled in on /auth/me. The console hides what it cannot use; the API
+    # refuses it regardless, so this is tidiness rather than a control.
+    permissions: list[str] = []
+    all_tenants: bool = False
     tenant_id: int | None
     tenant_name: str | None = None
     last_login_at: datetime | None = None

@@ -102,7 +102,11 @@ async def me(user: CurrentUser = Depends(current_user)):
                   t.name AS tenant_name
              FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
             WHERE u.id = $1""", user.id)
-    return UserOut(**dict(row))
+    # Resolved on the request rather than read again, so this can never disagree
+    # with what the guards will actually do a moment later.
+    return UserOut(**dict(row),
+                   permissions=sorted(user.permissions),
+                   all_tenants=user.all_tenants)
 
 
 @router.post("/change-password", response_model=TokenPair)

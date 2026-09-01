@@ -5,6 +5,7 @@ import { Layout } from '@/components/Layout'
 import { Alerts } from '@/pages/Alerts'
 import { KnowledgeGaps } from '@/pages/KnowledgeGaps'
 import { Rates } from '@/pages/Rates'
+import { Roles } from '@/pages/Roles'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
 import { Backups } from '@/pages/Backups'
@@ -76,6 +77,7 @@ export function App() {
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/gaps" element={<KnowledgeGaps />} />
         <Route path="/rates" element={<Rates />} />
+        <Route path="/roles" element={<Roles />} />
         <Route path="/calls" element={<Calls />} />
         <Route path="/calls/:id" element={<CallDetail />} />
         <Route path="/change-password" element={<ChangePassword />} />

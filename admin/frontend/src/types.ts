@@ -1,10 +1,55 @@
 export type Role = 'superadmin' | 'tenant_admin' | 'agent' | 'viewer'
 
+/**
+ * Everything a role may be allowed to do.
+ *
+ * Mirrors admin/backend/app/permissions.py, which is the file that decides.
+ * The backend also serves the list at /permissions with labels, so the roles
+ * page never offers one this build does not enforce.
+ */
+export type Permission =
+  | 'calls.read'
+  | 'calls.recording'
+  | 'analytics.read'
+  | 'cost.read'
+  | 'live.read'
+  | 'gaps.read'
+  | 'campaign.write'
+  | 'provider_keys.write'
+  | 'users.manage'
+  | 'tenants.manage'
+  | 'rates.manage'
+  | 'system.manage'
+
+export interface PermissionInfo {
+  key: Permission
+  group: string
+  label: string
+  description: string
+}
+
+export interface RoleDef {
+  id: number
+  key: string
+  name: string
+  description: string | null
+  // Sees every client. Held apart from permissions on purpose.
+  all_tenants: boolean
+  // Cannot be edited or deleted.
+  builtin: boolean
+  permissions: Permission[]
+  user_count: number
+  updated_at: string
+}
+
 export interface User {
   id: number
   email: string
   name: string | null
   role: Role
+  // Only present on the signed-in user.
+  permissions?: Permission[]
+  all_tenants?: boolean
   tenant_id: number | null
   tenant_name: string | null
   last_login_at: string | null

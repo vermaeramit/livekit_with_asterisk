@@ -3,12 +3,12 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, BookOpenCheck, Building2, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
 import { cn, initials } from '@/lib/utils'
-import type { Role } from '@/types'
+import type { Permission } from '@/types'
 
 /**
  * The page shell. Every page uses this and nothing sets its own width.
@@ -28,7 +28,14 @@ type NavLinkItem = {
   to: string
   label: string
   icon: React.ComponentType<{ className?: string }>
-  roles?: Role[]
+  /**
+   * What a user must be able to do for this to be worth showing.
+   *
+   * Was a list of role names. Roles are rows somebody can create now, so a name
+   * tells you nothing about what it carries - "desk" could hold anything. The
+   * nav asks for the capability the page actually needs.
+   */
+  needs?: Permission[]
   soon?: boolean
   /** which live counter to show alongside the label */
   badge?: 'alerts' | 'gaps'
@@ -36,25 +43,28 @@ type NavLinkItem = {
 type NavItem = NavSection | NavLinkItem
 
 const NAV: NavItem[] = [
-  { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall },
-  { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio },
+  { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall, needs: ['calls.read'] },
+  { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: ['analytics.read'] },
+  { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio, needs: ['live.read'] },
   { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts' },
-  { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps' },
+  { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps', needs: ['gaps.read'] },
   { kind: 'section', label: 'Manage' },
-  { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['tenant_admin'] },
-  { kind: 'link', to: '/users', label: 'Users', icon: Users2, roles: ['tenant_admin'] },
-  // roles: [] means superadmin only - the guard passes superadmin unconditionally
-  { kind: 'link', to: '/tenants', label: 'Clients', icon: Building2, roles: [] },
+  { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, needs: ['campaign.write'] },
+  { kind: 'link', to: '/users', label: 'Users', icon: Users2, needs: ['users.manage'] },
+  { kind: 'link', to: '/roles', label: 'Roles', icon: ShieldCheck, needs: ['users.manage'] },
+  { kind: 'link', to: '/tenants', label: 'Clients', icon: Building2, needs: ['tenants.manage'] },
   // Infrastructure, not a tenant's business - and the disk figures are about
   // the platform rather than anyone's campaigns.
   // Platform economics rather than a tenant's business: a wrong price here
   // misprices every call on the system, not one campaign's.
-  { kind: 'link', to: '/rates', label: 'Provider rates', icon: Wallet, roles: [] },
-  { kind: 'link', to: '/backups', label: 'Backups', icon: Database, roles: [] },
+  { kind: 'link', to: '/rates', label: 'Provider rates', icon: Wallet, needs: ['rates.manage'] },
+  { kind: 'link', to: '/backups', label: 'Backups', icon: Database, needs: ['system.manage'] },
 ]
 
-const ROLE_LABEL: Record<Role, string> = {
+// The seeded roles get a friendlier name; anything created since falls back to
+// its own key. A fixed map would have shown a new role as blank, which reads
+// like a user with no role at all.
+const ROLE_LABEL: Record<string, string> = {
   superadmin: 'Super Admin',
   tenant_admin: 'Administrator',
   agent: 'Agent',
@@ -86,7 +96,7 @@ function Wordmark() {
 }
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
-  const { user } = useAuth()
+  const { can } = useAuth()
 
   // Polled in the shell rather than on the Alerts page, so something arriving
   // while you are looking at a call still shows up.
@@ -106,9 +116,8 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   })
 
   const visible = NAV.filter((item) => {
-    if (item.kind !== 'link' || !item.roles) return true
-    if (user?.role === 'superadmin') return true
-    return item.roles.includes(user!.role)
+    if (item.kind !== 'link' || !item.needs) return true
+    return can(...item.needs)
   })
 
   // A section heading with nothing under it is just a stray label.
@@ -226,7 +235,7 @@ function UserMenu() {
         <span className="hidden text-left sm:block">
           <span className="block text-xs font-medium leading-tight">{user.name || user.email}</span>
           <span className="block text-2xs leading-tight text-muted-foreground">
-            {ROLE_LABEL[user.role]}
+            {ROLE_LABEL[user.role] ?? user.role}
             {user.tenant_name ? ` · ${user.tenant_name}` : ''}
           </span>
         </span>
@@ -242,7 +251,7 @@ function UserMenu() {
             <p className="truncate text-xs font-medium">{user.name || user.email}</p>
             <p className="truncate text-2xs text-muted-foreground">{user.email}</p>
             <p className="mt-1 text-2xs text-muted-foreground">
-              {ROLE_LABEL[user.role]} · {user.tenant_name ?? 'All tenants'}
+              {ROLE_LABEL[user.role] ?? user.role} · {user.tenant_name ?? 'All tenants'}
             </p>
           </div>
           <button

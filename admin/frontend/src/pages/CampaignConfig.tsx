@@ -307,7 +307,7 @@ export function CampaignConfig() {
   const qc = useQueryClient()
   const toast = useToast()
   const { can } = useAuth()
-  const canEdit = can('tenant_admin')
+  const canEdit = can('campaign.write')
 
   const [tab, setTab] = useState<TabKey>('conversation')
   const [draft, setDraft] = useState<Partial<AgentConfig>>({})

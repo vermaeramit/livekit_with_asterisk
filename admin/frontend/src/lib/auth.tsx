@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import * as apiClient from '@/lib/api'
-import type { Role, User } from '@/types'
+import type { Permission, User } from '@/types'
 
 interface AuthState {
   user: User | null
@@ -8,7 +8,7 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   refreshUser: () => Promise<void>
-  can: (...roles: Role[]) => boolean
+  can: (...permissions: Permission[]) => boolean
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -62,10 +62,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(await apiClient.api<User>('/auth/me'))
   }, [])
 
+  /**
+   * What this user may do, by permission rather than by role name.
+   *
+   * Roles are rows somebody can create now, so a name says nothing about what
+   * it carries - a role called "desk" could hold anything. Every call site asks
+   * for the capability it actually needs.
+   *
+   * This only hides things. The API refuses them either way, and the figures a
+   * permission protects are never sent at all rather than sent and hidden.
+   */
   const can = useCallback(
-    (...roles: Role[]) => {
+    (...permissions: Permission[]) => {
       if (!user) return false
-      return user.role === 'superadmin' || roles.includes(user.role)
+      return permissions.every((p) => user.permissions?.includes(p))
     },
     [user],
   )
