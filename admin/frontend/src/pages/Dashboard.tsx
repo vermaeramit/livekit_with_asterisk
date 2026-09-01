@@ -193,11 +193,16 @@ export function Dashboard() {
       month: 'short',
       ...(days <= 2 ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
     }),
-    uncached: Math.max(0, b.prompt_tokens - b.cached_tokens),
+    uncached: Math.max(0, (b.prompt_tokens ?? 0) - (b.cached_tokens ?? 0)),
   }))
 
   const transferRate = s && s.calls ? (s.transferred / s.calls) * 100 : 0
-  const cacheRate = s && s.prompt_tokens ? (s.cached_tokens / s.prompt_tokens) * 100 : null
+  // null when the viewer may not see usage - the API leaves the counts out
+  // rather than sending zeros, so the tile drops rather than reading "0".
+  const cacheRate =
+    s?.prompt_tokens && s.cached_tokens != null
+      ? (s.cached_tokens / s.prompt_tokens) * 100
+      : null
   const reasonData = Object.entries(s?.end_reasons ?? {}).map(([name, value]) => ({ name, value }))
 
   if (summary.isLoading) {
@@ -312,12 +317,14 @@ export function Dashboard() {
           stranded on a row of its own, and a four-column second row lined up
           with nothing above it. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Stat
-          icon={Coins}
-          label="Prompt tokens"
-          value={formatNumber(s?.prompt_tokens)}
-          hint={cacheRate != null ? `${formatPercent(cacheRate)} from cache` : undefined}
-        />
+        {s?.prompt_tokens != null && (
+          <Stat
+            icon={Coins}
+            label="Prompt tokens"
+            value={formatNumber(s.prompt_tokens)}
+            hint={cacheRate != null ? `${formatPercent(cacheRate)} from cache` : undefined}
+          />
+        )}
         {s?.cost && (
           <>
             <Stat
@@ -467,10 +474,12 @@ export function Dashboard() {
           </ResponsiveContainer>
         </ChartCard>
 
+        {/* Dropped entirely without usage.read. An empty chart titled "LLM
+            tokens" reads as a quiet period rather than as something withheld. */}
         <ChartCard
           title="LLM tokens"
           subtitle="Cached prompt tokens are billed at a fraction of the rest — this is the cost driver"
-          empty={!buckets.some((b) => b.prompt_tokens > 0)}
+          empty={!buckets.some((b) => (b.prompt_tokens ?? 0) > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={buckets} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>

@@ -608,10 +608,11 @@ class AnalyticsSummary(BaseModel):
     longest_call_id: int | None = None
     cost: AnalyticsCost | None = None
     total_turns: int
-    prompt_tokens: int
-    cached_tokens: int
-    completion_tokens: int
-    tts_characters: int
+    # None when the caller may not see usage - see permissions.usage.read.
+    prompt_tokens: int | None = None
+    cached_tokens: int | None = None
+    completion_tokens: int | None = None
+    tts_characters: int | None = None
     latency: Percentiles
     split: LatencySplit
     end_reasons: dict[str, int]
@@ -622,8 +623,9 @@ class TimeBucket(BaseModel):
     calls: int
     transferred: int
     limit_hit: int
-    prompt_tokens: int
-    cached_tokens: int
+    # None when the caller may not see usage.
+    prompt_tokens: int | None = None
+    cached_tokens: int | None = None
     p50: float | None
     p95: float | None
     eou_ms: float | None
@@ -934,7 +936,9 @@ class CallDetail(CallListItem):
     # and service-request ids. JSONB because the set is theirs to change - they
     # added seven fields once without telling anyone.
     dialer_context: dict | None = None
-    usage: CallUsage
+    # None when the caller may not see usage. Absent rather than zeroed: a zero
+    # is a claim about the call, and the honest answer is that we are not saying.
+    usage: CallUsage | None = None
     # What that usage cost, at today's rates. See costing.py for why it is
     # calculated on the way out rather than stamped on the call.
     cost: CallCost | None = None

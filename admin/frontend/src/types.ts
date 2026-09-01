@@ -11,6 +11,7 @@ export type Permission =
   | 'calls.read'
   | 'calls.recording'
   | 'analytics.read'
+  | 'usage.read'
   | 'cost.read'
   | 'live.read'
   | 'gaps.read'
@@ -152,7 +153,8 @@ export interface CallDetail extends CallListItem {
   // What the dialler sent with the call: name, product, their lead/SR ids.
   // Free-form on purpose — the key set is theirs to change.
   dialer_context: Record<string, string> | null
-  usage: CallUsage
+  // Absent when the viewer may not see usage.
+  usage?: CallUsage | null
   cost?: CallCost | null
   turns: Turn[]
   tools: ToolInvocation[]
@@ -362,10 +364,10 @@ export interface AnalyticsSummary {
   longest_call_id: number | null
   cost: AnalyticsCost | null
   total_turns: number
-  prompt_tokens: number
-  cached_tokens: number
-  completion_tokens: number
-  tts_characters: number
+  prompt_tokens: number | null
+  cached_tokens: number | null
+  completion_tokens: number | null
+  tts_characters: number | null
   latency: Percentiles
   split: LatencySplit
   end_reasons: Record<string, number>
@@ -376,8 +378,8 @@ export interface TimeBucket {
   calls: number
   transferred: number
   limit_hit: number
-  prompt_tokens: number
-  cached_tokens: number
+  prompt_tokens: number | null
+  cached_tokens: number | null
   p50: number | null
   p95: number | null
   eou_ms: number | null

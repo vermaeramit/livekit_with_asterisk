@@ -164,9 +164,12 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     cost = (costing.price_call(d, await rates.load_rates(), await rates.usd_to_inr())
             if user.can("cost.read") else None)
 
-    usage = CallUsage(**{k: d.pop(k) for k in (
+    counts = {k: d.pop(k) for k in (
         "llm_prompt_tokens", "llm_prompt_cached_tokens", "llm_completion_tokens",
-        "tts_characters", "tts_audio_seconds", "stt_audio_seconds")})
+        "tts_characters", "tts_audio_seconds", "stt_audio_seconds")}
+    # Popped either way, so the fields never leak through **d, and returned only
+    # to those allowed to see them.
+    usage = CallUsage(**counts) if user.can("usage.read") else None
     for k in ("llm_model_used", "stt_model_used", "tts_model_used"):
         d.pop(k, None)
 

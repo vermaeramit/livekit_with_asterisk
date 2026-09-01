@@ -34,6 +34,11 @@ PERMISSIONS: dict[str, tuple[str, str, str]] = {
     "analytics.read": (
         "Calls", "Dashboard",
         "Call volume, latency and outcomes."),
+    "usage.read": (
+        "Calls", "Usage",
+        "Tokens, characters and audio seconds a call consumed. Held apart from "
+        "the transcript and together with cost, because anyone holding the "
+        "rates can work the price out from these."),
     "cost.read": (
         "Calls", "Costs",
         "What calls cost, per call and on the dashboard."),
@@ -87,17 +92,17 @@ SEED_ROLES: tuple[tuple[str, str, str, bool, tuple[str, ...]], ...] = (
      True, tuple(PERMISSIONS)),
     ("tenant_admin", "Admin",
      "Runs one client: campaigns, keys and users.",
-     False, ("calls.read", "calls.recording", "analytics.read", "cost.read",
-             "live.read", "gaps.read", "campaign.write", "provider_keys.write",
-             "users.manage")),
+     False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
+             "cost.read", "live.read", "gaps.read", "campaign.write",
+             "provider_keys.write", "users.manage")),
     ("agent", "Agent",
      "Reads calls and dashboards. Changes nothing.",
-     False, ("calls.read", "calls.recording", "analytics.read", "cost.read",
-             "live.read", "gaps.read")),
+     False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
+             "cost.read", "live.read", "gaps.read")),
     ("viewer", "Viewer",
      "Reads calls and dashboards. Changes nothing.",
-     False, ("calls.read", "calls.recording", "analytics.read", "cost.read",
-             "live.read", "gaps.read")),
+     False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
+             "cost.read", "live.read", "gaps.read")),
 )
 
 

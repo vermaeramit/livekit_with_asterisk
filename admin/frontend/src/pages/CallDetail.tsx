@@ -487,8 +487,11 @@ export function CallDetail() {
     ...c.turns.map((t) => (t.eou_ms ?? 0) + (t.llm_ttft_ms ?? 0) + (t.tts_ttfb_ms ?? 0)),
   )
 
-  const cached = c.usage.llm_prompt_cached_tokens ?? 0
-  const prompt = c.usage.llm_prompt_tokens ?? 0
+  // Absent, not zero, when the viewer may not see usage - the API leaves it out
+  // rather than sending a figure it will not stand behind.
+  const usage = c.usage ?? null
+  const cached = usage?.llm_prompt_cached_tokens ?? 0
+  const prompt = usage?.llm_prompt_tokens ?? 0
   const cacheRate = prompt > 0 ? (cached / prompt) * 100 : null
 
   // Turns and tool calls in one list, ordered by time. Ties go to the turn: a
@@ -647,22 +650,26 @@ export function CallDetail() {
           value={formatMs(p50)}
           hint={worst ? `slowest ${formatMs(worst)}` : undefined}
         />
-        <Stat
-          icon={Coins}
-          label="Prompt tokens"
-          value={formatNumber(prompt)}
-          hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
-        />
-        <Stat
-          icon={Coins}
-          label="Completion tokens"
-          value={formatNumber(c.usage.llm_completion_tokens)}
-          hint={
-            c.usage.tts_characters != null
-              ? `${formatNumber(c.usage.tts_characters)} TTS chars`
-              : undefined
-          }
-        />
+        {usage && (
+          <>
+            <Stat
+              icon={Coins}
+              label="Prompt tokens"
+              value={formatNumber(prompt)}
+              hint={cacheRate != null ? `${formatPercent(cacheRate)} served from cache` : undefined}
+            />
+            <Stat
+              icon={Coins}
+              label="Completion tokens"
+              value={formatNumber(usage.llm_completion_tokens)}
+              hint={
+                usage.tts_characters != null
+                  ? `${formatNumber(usage.tts_characters)} TTS chars`
+                  : undefined
+              }
+            />
+          </>
+        )}
       </div>
 
       {c.recording_available && (
@@ -709,34 +716,36 @@ export function CallDetail() {
         )}
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Usage</CardTitle>
-        </CardHeader>
-        <CardBody className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
-          {(
-            [
-              ['LLM prompt tokens', formatNumber(c.usage.llm_prompt_tokens)],
-              ['— of which cached', formatNumber(c.usage.llm_prompt_cached_tokens)],
-              ['LLM completion tokens', formatNumber(c.usage.llm_completion_tokens)],
-              ['TTS characters', formatNumber(c.usage.tts_characters)],
+      {usage && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Usage</CardTitle>
+          </CardHeader>
+          <CardBody className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+            {(
               [
-                'TTS audio',
-                c.usage.tts_audio_seconds != null ? `${c.usage.tts_audio_seconds.toFixed(1)}s` : '—',
-              ],
-              [
-                'STT audio',
-                c.usage.stt_audio_seconds != null ? `${c.usage.stt_audio_seconds.toFixed(1)}s` : '—',
-              ],
-            ] as const
-          ).map(([label, value]) => (
-            <div key={label} className="flex justify-between gap-4 border-b border-border/40 pb-1.5">
-              <span className="text-muted-foreground">{label}</span>
-              <span className="tnum font-medium">{value}</span>
-            </div>
-          ))}
-        </CardBody>
-      </Card>
+                ['LLM prompt tokens', formatNumber(usage.llm_prompt_tokens)],
+                ['— of which cached', formatNumber(usage.llm_prompt_cached_tokens)],
+                ['LLM completion tokens', formatNumber(usage.llm_completion_tokens)],
+                ['TTS characters', formatNumber(usage.tts_characters)],
+                [
+                  'TTS audio',
+                  usage.tts_audio_seconds != null ? `${usage.tts_audio_seconds.toFixed(1)}s` : '—',
+                ],
+                [
+                  'STT audio',
+                  usage.stt_audio_seconds != null ? `${usage.stt_audio_seconds.toFixed(1)}s` : '—',
+                ],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-4 border-b border-border/40 pb-1.5">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="tnum font-medium">{value}</span>
+              </div>
+            ))}
+          </CardBody>
+        </Card>
+      )}
 
       {c.cost && <CostCard cost={c.cost} />}
     </div>

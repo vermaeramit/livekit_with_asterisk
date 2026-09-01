@@ -175,6 +175,12 @@ async def summary(
 
     d = dict(totals)
     aht = d.pop("aht_ms", None)
+    # Same disclosure as the Usage panel: with the rates in hand these are the
+    # cost. Nulled rather than zeroed - zero would be a claim about the window.
+    if not user.can("usage.read"):
+        for k in ("prompt_tokens", "cached_tokens", "completion_tokens",
+                  "tts_characters"):
+            d[k] = None
     return AnalyticsSummary(
         **d,
         avg_duration_ms=round(aht) if aht is not None else None,
@@ -242,4 +248,15 @@ async def timeseries(
           FROM call_agg ca LEFT JOIN turn_agg ta USING (bucket)
          ORDER BY ca.bucket""", *args)
 
-    return [TimeBucket(**dict(r)) for r in rows]
+    # Same rule as the summary and the Usage panel. The chart these feed is
+    # titled "prompt tokens", so leaving them in would have made the permission
+    # cosmetic - hidden in one place and plotted in another.
+    show_usage = user.can("usage.read")
+    out = []
+    for r in rows:
+        b = dict(r)
+        if not show_usage:
+            b["prompt_tokens"] = None
+            b["cached_tokens"] = None
+        out.append(TimeBucket(**b))
+    return out
