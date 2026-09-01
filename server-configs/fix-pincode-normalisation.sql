@@ -10,32 +10,80 @@
 --   user   2467.47।
 --   agent  कृपया एक वैध 6-अंकों का पिनकोड बताएं।     (x4 more)
 --
--- Soniox renders a spoken six-digit number as a decimal. Every digit is present
--- and in order - 2467.47 is 246747 - only the shape is wrong. The model read the
--- shape, judged it not a pincode, and asked again. Nothing was broken; nobody
--- had told it what a transcribed pincode looks like.
+-- Soniox renders a spoken six-digit number as a decimal: 2 4 6 7 4 7 arrives as
+-- "2467.47". Every digit is present and in order - only the shape is wrong.
 --
--- Fixed in two places here and a third in the agent:
+-- The prompt is not missing a rule. It has one, and the model obeyed it:
 --
---   1. the prompt, because the model refuses BEFORE it ever calls the tool, so
---      nothing downstream gets a chance
---   2. the tool's `pin` description, so the value that does go out is digits.
---      It read "pincode". One word. The console's own hint under that field
---      warns that a vague description produces a value the API will not match
---   3. tools.py strips non-digits from any parameter whose schema says digits
---      and nothing else - the `pattern` added below is what turns that on
+--   If the PIN code is invalid:
+--   "Could you please provide a valid 6-digit PIN code?"
+--   Do not call 'dealer_by_pincode' until a valid 6-digit PIN code is available.
+--
+-- What it never says is what "valid" means. So this defines it, immediately
+-- above the rule that uses the word - one instruction in the place the model
+-- already reads, rather than a second one appended at the end that would pull
+-- the other way.
+--
+-- The first version of this script DID append at the end, written before anyone
+-- had read the prompt. It would have left the model with two contradictory
+-- rules about the same thing, which is worse than the loop it was fixing.
+--
+-- Every edit is guarded: if the text it expects is not there exactly once, the
+-- whole thing aborts and changes nothing. A blind replace on a 29,000-character
+-- prompt somebody has spent weeks on is not worth the convenience.
 
 BEGIN;
 
--- 2. What the model is told the argument is.
+DO $$
+DECLARE
+    anchor  CONSTANT text := 'If the PIN code is invalid:';
+    n int;
+BEGIN
+    SELECT count(*) INTO n
+      FROM agent_config
+     WHERE campaign_id = 1
+       AND position(anchor in instructions) > 0;
+
+    IF n <> 1 THEN
+        RAISE EXCEPTION
+            'expected exactly one campaign 1 config containing %, found % - '
+            'nothing was changed. The prompt has been edited; re-read it before '
+            'running this.', quote_literal(anchor), n;
+    END IF;
+
+    -- Already applied. Re-running must not stack a second copy.
+    IF EXISTS (SELECT 1 FROM agent_config
+                WHERE campaign_id = 1
+                  AND position('Remove everything that is not a digit' in instructions) > 0) THEN
+        RAISE NOTICE 'pincode rule already present - prompt left alone';
+    ELSE
+        UPDATE agent_config
+           SET instructions = replace(
+                   instructions,
+                   anchor,
+                   'The PIN code is dictated aloud, so the transcript often '
+                   'carries a decimal point or spaces. "2467.47", "24 67 47" '
+                   'and "246747" all mean 246747. Remove everything that is '
+                   'not a digit, then count. Six digits means the PIN is '
+                   'valid - use it as it is and do not ask again.' || E'\n\n'
+                   || anchor),
+               updated_at = now()
+         WHERE campaign_id = 1;
+    END IF;
+END $$;
+
+-- What the model is told the argument is. It read "pincode" - one word - and
+-- the console's own hint under that field warns that a vague description
+-- produces a value the API will not match.
+--
+-- The `pattern` is not decoration: agent/tools.py reads it and will strip
+-- characters the schema forbids, but only where the schema says digits and
+-- nothing else.
 UPDATE campaign_tools
    SET parameters = jsonb_set(
-           parameters,
-           '{properties,pin}',
+           parameters, '{properties,pin}',
            jsonb_build_object(
                'type', 'string',
-               -- Read by tools.py to decide it may strip non-digits. Also the
-               -- honest description of the value.
                'pattern', '^[0-9]{6}$',
                'description',
                'Indian PIN code: exactly 6 digits, no spaces or punctuation. '
@@ -46,28 +94,13 @@ UPDATE campaign_tools
        updated_at = now()
  WHERE campaign_id = 1 AND name = 'dealer_by_pincode';
 
--- 1. What the model is told about reading one.
---
--- Appended at the very end rather than woven in. The prompt is the cached
--- prefix; a change near the top throws away the cache for everything after it,
--- and at 5,136 tokens that is most of the prompt. At the end only the last
--- chunk is new.
-UPDATE agent_config
-   SET instructions = instructions || E'\n\n'
-       '## PINCODE\n'
-       'पिनकोड बोलकर बताया जाता है और transcript में अक्सर दशमलव या space आ जाता है। '
-       '"2467.47", "24 67 47" और "246747" — तीनों का मतलब 246747 है।\n'
-       'अंकों के अलावा सब हटाकर गिनें। छह अंक बनते हों तो वही पिनकोड है, उसे सीधे इस्तेमाल करें। '
-       'छह से कम या ज़्यादा हों, तभी दोबारा पूछें — और तब भी एक ही बार, '
-       'फिर आगे बढ़ें या प्रतिनिधि से जोड़ें।',
-       updated_at = now()
- WHERE campaign_id = 1
-   AND position('## PINCODE' in instructions) = 0;   -- re-runnable
-
 COMMIT;
 
-SELECT jsonb_pretty(parameters) AS "pin parameter"
+SELECT jsonb_pretty(parameters->'properties'->'pin') AS "pin parameter"
   FROM campaign_tools WHERE campaign_id = 1 AND name = 'dealer_by_pincode';
 
-SELECT right(instructions, 420) AS "prompt ka aakhri hissa"
+SELECT length(instructions) AS chars,
+       substring(instructions
+                 from greatest(position('The PIN code is dictated aloud' in instructions) - 60 , 1)
+                 for 420) AS "prompt, around the change"
   FROM agent_config WHERE campaign_id = 1;
