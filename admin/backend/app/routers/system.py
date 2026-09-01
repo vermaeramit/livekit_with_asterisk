@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db
-from ..deps import CurrentUser, require_roles
+from ..deps import CurrentUser, require_perm
 from ..schemas import BackupFile, BackupStatus, SystemAck
 
 log = logging.getLogger("admin-api")
@@ -45,7 +45,7 @@ STALE_AFTER_HOURS = float(os.getenv("BACKUP_STALE_HOURS", "36"))
 
 # Infrastructure, so superadmin only. A tenant admin has no way to act on it and
 # the disk figures are about the platform, not their campaigns.
-superadmin = require_roles()
+superadmin = require_perm("system.manage")
 
 # What was acknowledged, identified without being stored. A truncated SHA-256 of
 # SECRETS_KEY: not the key, not reversible, and different the moment the key is

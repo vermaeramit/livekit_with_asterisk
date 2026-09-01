@@ -3,13 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import alerting, audit, db
-from ..deps import (CurrentUser, active_user, require_roles, resolve_tenant,
+from ..deps import (CurrentUser, active_user, require_perm, resolve_tenant,
                     tenant_scope)
 from ..schemas import AlertOut, AlertRuleOut, AlertRuleUpdate, WebhookUpdate
 
 router = APIRouter(tags=["alerts"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("campaign.write")
 
 
 @router.get("/alerts", response_model=list[AlertOut])
@@ -167,6 +167,6 @@ async def get_webhook(actor: CurrentUser = Depends(editor),
 
 
 @router.post("/alert-rules/evaluate")
-async def evaluate_now(_: CurrentUser = Depends(require_roles("superadmin"))):
+async def evaluate_now(_: CurrentUser = Depends(require_perm("system.manage"))):
     """Run the evaluator immediately instead of waiting for the next cycle."""
     return {"raised": await alerting.evaluate_once()}

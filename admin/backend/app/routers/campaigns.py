@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db, provider_keys as pk
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
-                    require_roles, resolve_tenant, tenant_scope)
+                    require_perm, resolve_tenant, tenant_scope)
 from ..schemas import CampaignCreate, CampaignOut, CampaignUpdate
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("campaign.write")
 
 SELECT_CAMPAIGN = """
     SELECT c.id, c.tenant_id, c.slug, c.name, c.description, c.enabled,

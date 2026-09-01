@@ -16,12 +16,12 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db
-from ..deps import CurrentUser, require_roles
+from ..deps import CurrentUser, require_perm
 from ..schemas import PlatformSetting, ProviderRateIn, ProviderRateOut
 
 router = APIRouter(tags=["rates"])
 
-superadmin = require_roles()
+superadmin = require_perm("rates.manage")
 
 _SELECT = """
     SELECT r.id, r.provider, r.model, r.kind, r.unit, r.price, r.currency, r.note,

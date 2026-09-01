@@ -170,7 +170,8 @@ async def summary(
          WHERE {clause} AND c.duration_ms IS NOT NULL
          ORDER BY c.duration_ms DESC LIMIT 1""", *args)
 
-    cost = await _window_cost(clause, args)
+    # Same rule as the per-call figure: not computed unless it may be seen.
+    cost = await _window_cost(clause, args) if user.can("cost.read") else None
 
     d = dict(totals)
     aht = d.pop("aht_ms", None)

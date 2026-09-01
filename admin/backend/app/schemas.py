@@ -518,6 +518,42 @@ class LatencySplit(BaseModel):
     tts_ttfb_ms: float | None
 
 
+class PermissionOut(BaseModel):
+    """One thing a role may be allowed to do.
+
+    Served from the backend so the roles page cannot offer a permission that
+    guards nothing - the list and the enforcement come from the same file.
+    """
+    key: str
+    group: str
+    label: str
+    description: str
+
+
+class RoleIn(BaseModel):
+    key: str = Field(min_length=2, max_length=40,
+                     pattern="^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=2, max_length=60)
+    description: str | None = Field(default=None, max_length=300)
+    # Sees every client. Held apart from the permission list on purpose - see
+    # deps.CurrentUser.
+    all_tenants: bool = False
+    permissions: list[str] = []
+
+
+class RoleOut(BaseModel):
+    id: int
+    key: str
+    name: str
+    description: str | None = None
+    all_tenants: bool
+    # Cannot be edited or deleted.
+    builtin: bool
+    permissions: list[str] = []
+    user_count: int = 0
+    updated_at: datetime
+
+
 class AnalyticsCost(BaseModel):
     """What the calls in this window cost, and how much of it we can see.
 

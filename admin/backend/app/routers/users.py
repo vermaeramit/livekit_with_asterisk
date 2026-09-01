@@ -4,14 +4,14 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db, security
-from ..deps import (TENANT_ASSIGNABLE_ROLES, CurrentUser, require_roles,
+from ..deps import (CurrentUser, require_perm,
                     resolve_tenant, tenant_scope)
 from ..schemas import PasswordReset, UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 # Only these two roles manage accounts at all.
-manager = require_roles("tenant_admin")
+manager = require_perm("users.manage")
 
 SELECT_USER = """
     SELECT u.id, u.email, u.name, u.role, u.tenant_id, u.active,
@@ -42,12 +42,39 @@ async def _target_or_404(actor: CurrentUser, user_id: int) -> dict:
     return target
 
 
-def _check_assignable(actor: CurrentUser, role: str) -> None:
-    if actor.is_superadmin:
+async def _check_assignable(actor: CurrentUser, role_key: str) -> None:
+    """You cannot hand out access you do not hold yourself.
+
+    The old rule was a fixed list of three role names. That worked while roles
+    were a constant in the source; now that somebody can create one, a list of
+    names says nothing about what the role actually carries - a tenant admin
+    could be handed a role called "desk" holding tenants.manage.
+
+    So the test is the permissions themselves. A role is assignable if it sees
+    only the actor's own client and asks for nothing the actor does not already
+    have.
+    """
+    row = await db.pool().fetchrow(
+        """SELECT r.all_tenants,
+                  COALESCE((SELECT array_agg(rp.permission)
+                              FROM role_permissions rp WHERE rp.role_id = r.id),
+                           '{}') AS permissions
+             FROM roles r WHERE r.key = $1""", role_key)
+    if row is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"no such role '{role_key}'")
+    if actor.all_tenants:
         return
-    if role not in TENANT_ASSIGNABLE_ROLES:
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            f"you cannot assign the role '{role}'")
+    if row["all_tenants"]:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"'{role_key}' can see every client, which you cannot grant")
+    extra = sorted(set(row["permissions"] or ()) - actor.permissions)
+    if extra:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"'{role_key}' includes {', '.join(extra)}, which you do not have "
+            "yourself")
 
 
 @router.get("", response_model=list[UserOut])
@@ -66,7 +93,7 @@ async def list_users(
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def create_user(body: UserCreate, actor: CurrentUser = Depends(manager)):
-    _check_assignable(actor, body.role)
+    await _check_assignable(actor, body.role)
 
     # The schema enforces this too, but failing here gives a readable message
     # instead of a raw constraint violation.
@@ -110,7 +137,7 @@ async def update_user(user_id: int, body: UserUpdate,
         return UserOut(**target)
 
     if "role" in fields:
-        _check_assignable(actor, fields["role"])
+        await _check_assignable(actor, fields["role"])
         # Changing a role across the superadmin boundary would violate the
         # schema's tenant/role CHECK, and is not something the panel should do.
         if (fields["role"] == "superadmin") != (target["role"] == "superadmin"):

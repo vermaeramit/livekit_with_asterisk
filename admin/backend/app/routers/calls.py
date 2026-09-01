@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .. import costing, db
 from . import rates
-from ..deps import CurrentUser, active_user, tenant_scope
+from ..deps import CurrentUser, active_user, require_perm, tenant_scope
 from ..schemas import (CallCost, CallDetail, CallListItem, CallListResponse, CallUsage,
                        ToolInvocationOut, TurnOut)
 
@@ -157,7 +157,12 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     # Priced BEFORE the usage fields are popped off, and from the same row, so
     # the figures on the page and the figures they were derived from cannot
     # disagree.
-    cost = costing.price_call(d, await rates.load_rates(), await rates.usd_to_inr())
+    #
+    # Not computed at all without the permission, rather than computed and
+    # hidden by the console. What the API does not send cannot be read out of
+    # the network tab by somebody who was not meant to see it.
+    cost = (costing.price_call(d, await rates.load_rates(), await rates.usd_to_inr())
+            if user.can("cost.read") else None)
 
     usage = CallUsage(**{k: d.pop(k) for k in (
         "llm_prompt_tokens", "llm_prompt_cached_tokens", "llm_completion_tokens",
@@ -168,6 +173,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     # Checked here rather than trusted from a column: retention deletes files
     # without touching the database, so a stored flag would go stale.
     audio = recording_file(d["sip_call_id"])
+    may_listen = user.can("calls.recording")
 
     def _inv(r) -> ToolInvocationOut:
         t = dict(r)
@@ -175,16 +181,23 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
             t["arguments"] = json.loads(t["arguments"])
         return ToolInvocationOut(**t)
 
-    return CallDetail(**d, usage=usage, cost=CallCost(**cost),
-                      recording_available=audio is not None,
-                      recording_bytes=audio.stat().st_size if audio else None,
+    return CallDetail(**d, usage=usage,
+                      cost=CallCost(**cost) if cost else None,
+                      # Reported as absent to anyone who may not play it.
+                      # Otherwise the console offers a player that answers 403,
+                      # which reads as a broken recording rather than as a
+                      # permission somebody does not have.
+                      recording_available=audio is not None and may_listen,
+                      recording_bytes=(audio.stat().st_size
+                                       if audio and may_listen else None),
                       turns=[TurnOut(**dict(t)) for t in turns],
                       tools=[_inv(r) for r in invocations])
 
 
 @router.get("/{call_id}/recording")
 async def get_recording(call_id: int, request: Request,
-                        user: CurrentUser = Depends(active_user)):
+                        user: CurrentUser = Depends(
+                            require_perm("calls.recording"))):
     """Stream a call recording, with HTTP Range support.
 
     Range is not optional: without it a browser's audio element cannot seek, and

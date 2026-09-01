@@ -18,13 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db, provider_keys as pk, secretlib
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
-                    require_roles, tenant_scope)
+                    require_perm, tenant_scope)
 from ..schemas import (ProviderKeyOut, ProviderKeySet, ProviderKeyWritten,
                        TtsCatalog, TtsModel, TtsVoice)
 
 router = APIRouter(tags=["provider keys"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("provider_keys.write")
 
 
 def _check_provider(provider: str) -> str:

@@ -32,14 +32,14 @@ from .. import audit, db, provider_keys as pk, kblib
 SUPPORTED_EXT: tuple[str, ...] = (
     tuple(getattr(kblib.kb(), "SUPPORTED", (".pdf",)))
     if kblib.available() else (".pdf", ".docx"))
-from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
+from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import KbDocument, KbIngestResult
 
 log = logging.getLogger("admin-api")
 
 router = APIRouter(tags=["knowledge base"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("campaign.write")
 
 # Uploaded files are kept so a document can be re-ingested after a chunking
 # change without asking the client for the PDF again.

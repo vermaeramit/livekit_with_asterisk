@@ -22,13 +22,13 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db, secretlib
-from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
+from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (ToolActivityItem, ToolActivityResponse, ToolCreate,
                        ToolOut, ToolTestResult, ToolUpdate)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}/tools", tags=["tools"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("campaign.write")
 
 COLUMNS = """id, name, description, parameters, method, url, headers,
              auth_header, auth_value_hint, body_template, timeout_ms,

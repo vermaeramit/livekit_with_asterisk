@@ -10,12 +10,13 @@ from . import db, security
 
 bearer = HTTPBearer(auto_error=False)
 
+# The roles that ship. Roles are rows now - see migration 030 - so this is only
+# the seeded set, kept for anything that still validates a name against it.
+#
+# What a role may hand out is no longer a list of names. A tenant admin could be
+# given a role called "desk" carrying tenants.manage, and a name tells you
+# nothing about that; users.py compares permissions instead.
 ROLES = ("superadmin", "tenant_admin", "agent", "viewer")
-
-# Roles a tenant_admin is allowed to hand out. It can create peers inside its own
-# tenant but can never mint a superadmin - that would be a privilege escalation
-# with one API call.
-TENANT_ASSIGNABLE_ROLES = ("tenant_admin", "agent", "viewer")
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,27 @@ class CurrentUser:
     role: str
     email: str
     must_change_password: bool = False
+    # What this user's role allows, resolved on every request. See
+    # permissions.py for the list and migration 030 for where it is stored.
+    permissions: frozenset[str] = frozenset()
+    # Sees every client. Held apart from `permissions` on purpose: "which
+    # tenants" is a different question from "may do what", and a role that could
+    # grant itself the whole platform by ticking a permission would be a
+    # privilege escalation dressed up as a checkbox.
+    all_tenants: bool = False
 
     @property
     def is_superadmin(self) -> bool:
-        return self.role == "superadmin"
+        """Reads across every client.
+
+        Kept as the name the rest of the code already uses. It now means
+        all_tenants rather than a role called "superadmin" - the two came apart
+        the moment roles became data somebody can edit.
+        """
+        return self.all_tenants
+
+    def can(self, permission: str) -> bool:
+        return permission in self.permissions
 
 
 async def current_user(
@@ -53,10 +71,18 @@ async def current_user(
     # A deactivated user, a changed role, a moved tenant or a suspended client
     # then takes effect immediately instead of lingering until the token expires.
     row = await db.pool().fetchrow(
-        """SELECT u.id, u.tenant_id, u.role, u.email, u.active,
+        """SELECT u.id, u.tenant_id, u.email, u.active,
                   u.must_change_password,
-                  COALESCE(t.status, 'active') AS tenant_status
-             FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+                  COALESCE(t.status, 'active') AS tenant_status,
+                  COALESCE(r.key, u.role)  AS role,
+                  COALESCE(r.all_tenants, u.role = 'superadmin') AS all_tenants,
+                  COALESCE(
+                      (SELECT array_agg(rp.permission)
+                         FROM role_permissions rp WHERE rp.role_id = r.id),
+                      '{}') AS permissions
+             FROM users u
+             LEFT JOIN tenants t ON t.id = u.tenant_id
+             LEFT JOIN roles   r ON r.id = u.role_id
             WHERE u.id = $1""",
         int(payload["sub"]),
     )
@@ -68,6 +94,8 @@ async def current_user(
     return CurrentUser(
         id=row["id"], tenant_id=row["tenant_id"], role=row["role"],
         email=row["email"], must_change_password=row["must_change_password"],
+        permissions=frozenset(row["permissions"] or ()),
+        all_tenants=bool(row["all_tenants"]),
     )
 
 
@@ -86,15 +114,40 @@ async def active_user(user: CurrentUser = Depends(current_user)) -> CurrentUser:
     return user
 
 
-def require_roles(*roles: str):
-    """Route guard. Superadmin passes everything."""
-    for r in roles:
-        assert r in ROLES, f"unknown role {r}"
+def require_perm(*permissions: str):
+    """Route guard. Every named permission is required, not any of them.
+
+    Asserted against the known list at import time rather than at request time:
+    a typo in a guard would otherwise be a route nobody can reach, discovered by
+    a user rather than by starting the process.
+
+    all_tenants does NOT imply everything. The superadmin role holds every
+    permission because migration 030 gives it every permission, which is a fact
+    in the database somebody could look at - not a branch in here that no
+    permission list can describe.
+    """
+    from .permissions import PERMISSIONS
+    for p in permissions:
+        assert p in PERMISSIONS, f"unknown permission {p}"
 
     async def _guard(user: CurrentUser = Depends(active_user)) -> CurrentUser:
-        if user.is_superadmin or user.role in roles:
-            return user
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient permissions")
+        missing = [p for p in permissions if p not in user.permissions]
+        if missing:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"your role does not allow this ({', '.join(missing)})")
+        return user
+
+    return _guard
+
+
+def require_all_tenants():
+    """Guard for the handful of things that are about the platform itself."""
+    async def _guard(user: CurrentUser = Depends(active_user)) -> CurrentUser:
+        if not user.all_tenants:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "this is a platform-wide setting")
+        return user
 
     return _guard
 

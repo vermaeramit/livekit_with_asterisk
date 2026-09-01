@@ -12,14 +12,14 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import audit, db, secretlib
-from ..deps import CurrentUser, active_user, assert_campaign_visible, require_roles
+from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
                        CampaignRoute, CampaignRouteCreate, PostbackOut,
                        PromptTokens)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
-editor = require_roles("tenant_admin")
+editor = require_perm("campaign.write")
 
 FIELDS = (
     "language", "greeting", "instructions",

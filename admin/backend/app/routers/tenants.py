@@ -4,13 +4,13 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db
-from ..deps import CurrentUser, require_roles
+from ..deps import CurrentUser, require_perm
 from ..schemas import TenantCreate, TenantOut, TenantUpdate
 
 # Tenants are the isolation boundary itself, so only we manage them - a
 # tenant_admin can never see, create or rename another tenant.
 router = APIRouter(prefix="/tenants", tags=["tenants"],
-                   dependencies=[Depends(require_roles("superadmin"))])
+                   dependencies=[Depends(require_perm("tenants.manage"))])
 
 LIST_SQL = """
     SELECT t.id, t.slug, t.name, t.status, t.created_at,
@@ -37,7 +37,7 @@ async def get_tenant(tenant_id: int):
 
 @router.post("", response_model=TenantOut, status_code=status.HTTP_201_CREATED)
 async def create_tenant(body: TenantCreate,
-                        user: CurrentUser = Depends(require_roles("superadmin"))):
+                        user: CurrentUser = Depends(require_perm("tenants.manage"))):
     try:
         row = await db.pool().fetchrow(
             "INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id",
@@ -54,7 +54,7 @@ async def create_tenant(body: TenantCreate,
 
 @router.patch("/{tenant_id}", response_model=TenantOut)
 async def update_tenant(tenant_id: int, body: TenantUpdate,
-                        user: CurrentUser = Depends(require_roles("superadmin"))):
+                        user: CurrentUser = Depends(require_perm("tenants.manage"))):
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         return await get_tenant(tenant_id)
