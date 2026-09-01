@@ -453,6 +453,18 @@ export function CampaignConfig() {
         </p>
       </div>
 
+      {/* Above the tabs on purpose. A transfer marker the prompt never writes
+          is a fault on two different tabs at once, and a notice tucked inside
+          either one is a notice nobody opening the other will see. */}
+      {value.warnings?.map((w) => (
+        <Card key={w} className="border-warning/30 bg-warning/5 p-4">
+          <div className="flex items-start gap-2 text-sm">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="leading-relaxed">{w}</p>
+          </div>
+        </Card>
+      ))}
+
       {/* Nine tabs fit at the standard width; the scroll is the fallback for a
           narrow window, and `scrollbar-thin` keeps it from drawing a grey bar
           across the page when it is not needed. */}

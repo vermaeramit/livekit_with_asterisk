@@ -237,6 +237,10 @@ export interface AgentConfig {
   // Spoken while a search runs. null = silence.
   kb_filler_message: string | null
 
+  // Wrong but not invalid — a save is never blocked on these. Computed on read
+  // too, so a mismatch already in the database shows on opening the page.
+  warnings: string[]
+
   max_turns: number
   max_duration_sec: number
   max_prompt_tokens: number

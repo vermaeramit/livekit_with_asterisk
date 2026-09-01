@@ -7,6 +7,7 @@ progress.
 from __future__ import annotations
 
 import json
+import re
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -44,6 +45,45 @@ FIELDS = (
     "recording_disclosure",
 )
 
+# A bracketed token used this often is a marker somebody meant, not an example.
+# [Model], [Date] and [value] appear once each in a real prompt as placeholders
+# in sample text; [CT] appeared eighteen times.
+_MARKER_LIKE = re.compile(r"\[[A-Za-z_][A-Za-z0-9_]{1,14}\]")
+_MARKER_MIN_USES = 3
+
+
+def _warnings(cfg: dict) -> list[str]:
+    """Things that are wrong but not invalid, so a save is never blocked.
+
+    The one that prompted this: a campaign's transfer_marker was [Transfer] and
+    its prompt said [CT], eighteen times. The filter looked for a marker the
+    model was never asked to write, so no call ever transferred - and nothing
+    said so until a caller asked for a person and did not get one. The two
+    fields live on different tabs and nothing had ever compared them.
+    """
+    out: list[str] = []
+    instructions = cfg.get("instructions") or ""
+    counts: dict[str, int] = {}
+    for m in _MARKER_LIKE.findall(instructions):
+        counts[m] = counts.get(m, 0) + 1
+
+    for field, label in (("transfer_marker", "Transfer marker"),
+                         ("end_call_marker", "End-of-call marker")):
+        marker = (cfg.get(field) or "").strip()
+        if not marker or marker in instructions:
+            continue
+        # Configured, and the prompt never asks for it. Name the token the
+        # prompt DOES lean on, because that is almost always the intended one.
+        likely = sorted(((n, t) for t, n in counts.items()
+                         if n >= _MARKER_MIN_USES and t != marker), reverse=True)
+        suggestion = (f" The prompt uses {likely[0][1]} {likely[0][0]} times — "
+                      f"did you mean that?") if likely else ""
+        out.append(
+            f"{label} is {marker}, but the prompt never writes it, so it will "
+            f"never fire.{suggestion}")
+    return out
+
+
 SELECT_CONFIG = f"""
     SELECT campaign_id, name, updated_at, {', '.join(FIELDS)}
       FROM agent_config WHERE campaign_id = $1 ORDER BY id LIMIT 1
@@ -63,6 +103,9 @@ async def _get(campaign_id: int) -> dict:
     # reads it quietly does the wrong thing.
     if isinstance(d.get("postback_fields"), str):
         d["postback_fields"] = json.loads(d["postback_fields"])
+    # Computed on the way out, so a mismatch already in the database shows the
+    # moment somebody opens the page rather than only after the next save.
+    d["warnings"] = _warnings(d)
     return d
 
 

@@ -213,6 +213,11 @@ class AgentConfigOut(BaseModel):
     # Spoken while search_knowledge_base runs. None = silence.
     kb_filler_message: str | None
 
+    # Things that are wrong but not invalid - see agent_config._warnings.
+    # Returned on read as well as on save, so a mismatch that is already there
+    # shows the moment somebody opens the page.
+    warnings: list[str] = []
+
     # Where the call's result is sent afterwards. The auth VALUE is never
     # returned - only the four-character hint, exactly like a provider key.
     postback_enabled: bool
