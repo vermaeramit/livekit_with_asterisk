@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Plus, Trash2, UserCog, Users2 } from 'lucide-react'
+import { KeyRound, Pencil, Plus, Trash2, UserCog, Users2 } from 'lucide-react'
 import { PAGE, PageHeader } from '@/components/Layout'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -225,6 +225,123 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
   )
 }
 
+/**
+ * Change a user's name or role.
+ *
+ * The API has always accepted this; the console only ever sent `active`, so a
+ * user's role was fixed at the moment they were created. That was survivable
+ * while there were four roles nobody could change. It is not now: a role you
+ * create is worth nothing if there is no way to move anybody into it.
+ *
+ * Only what changed is sent. A PATCH carrying fields nobody touched is a PATCH
+ * that overwrites an edit somebody else made while this dialog was open.
+ */
+function EditUserDialog({
+  target,
+  onClose,
+}: {
+  target: User | null
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const toast = useToast()
+  const { user: me } = useAuth()
+  const [name, setName] = useState('')
+  const [role, setRole] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setName(target?.name ?? '')
+    setRole(target?.role ?? '')
+    setError(null)
+  }, [target])
+
+  const roles = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => api<RoleDef[]>('/roles'),
+    enabled: target !== null,
+  })
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: Record<string, unknown> = {}
+      if (name.trim() !== (target?.name ?? '')) body.name = name.trim() || null
+      if (role !== target?.role) body.role = role
+      return api<User>(`/users/${target!.id}`, { method: 'PATCH', body })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] })
+      // Your own role can change what the console is allowed to show you.
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      toast.success('User updated')
+      onClose()
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not save that'),
+  })
+
+  const dirty =
+    target != null && (name.trim() !== (target.name ?? '') || role !== target.role)
+  const ownRole = target?.id === me?.id && role !== target?.role
+
+  return (
+    <Dialog open={target !== null} onClose={onClose} title="Edit user">
+      {target && (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">{target.email}</p>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="e-name">Name</Label>
+            <Input
+              id="e-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Optional"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="e-role">Role</Label>
+            <Select id="e-role" value={role} onChange={(e) => setRole(e.target.value)}>
+              {/* The role they currently hold may be one this admin cannot
+                  assign. Kept in the list so the field is not silently blank -
+                  the save would refuse it, which is the correct answer. */}
+              {!roles.data?.some((r) => r.key === target.role) && (
+                <option value={target.role}>{target.role}</option>
+              )}
+              {roles.data?.map((r) => (
+                <option key={r.id} value={r.key}>
+                  {r.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-2xs text-muted-foreground">
+              {roles.data?.find((r) => r.key === role)?.description ?? ''}
+            </p>
+          </div>
+
+          {ownRole && (
+            <p className="text-2xs leading-relaxed text-warning">
+              This is your own account. Changing your role changes what you can
+              reach, immediately — including, possibly, this page.
+            </p>
+          )}
+
+          {error && <p className="text-2xs text-danger">{error}</p>}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!dirty}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  )
+}
+
 function ResetPasswordDialog({ target, onClose }: { target: User | null; onClose: () => void }) {
   const toast = useToast()
   const [password, setPassword] = useState('')
@@ -295,6 +412,7 @@ export function Users() {
   const isSuper = user?.role === 'superadmin'
 
   const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState<User | null>(null)
   const [resetting, setResetting] = useState<User | null>(null)
   const [deleting, setDeleting] = useState<User | null>(null)
 
@@ -384,6 +502,10 @@ export function Users() {
       align: 'right',
       render: (u) => (
         <div className="flex items-center justify-end gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => setEditing(u)}>
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setResetting(u)}>
             <KeyRound className="h-3.5 w-3.5" />
             Reset
@@ -444,6 +566,7 @@ export function Users() {
       />
 
       <CreateUserDialog open={creating} onClose={() => setCreating(false)} />
+      <EditUserDialog target={editing} onClose={() => setEditing(null)} />
       <ResetPasswordDialog target={resetting} onClose={() => setResetting(null)} />
 
       <Dialog

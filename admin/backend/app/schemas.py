@@ -6,9 +6,21 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import (BaseModel, EmailStr, Field, StringConstraints,
+                      field_validator, model_validator)
 
-Role = Literal["superadmin", "tenant_admin", "agent", "viewer"]
+# A role KEY, not one of a fixed set.
+#
+# This was a Literal of the four seeded names, which was true right up until
+# migration 030 made roles rows somebody can create. A Literal would reject
+# every new role with a 422 - thrown before the code that looks the role up and
+# decides whether the caller may assign it ever runs, so the error would not
+# even say what was wrong.
+#
+# Whether the role EXISTS is checked where that can be answered: users.py looks
+# it up, and the database trigger refuses an unknown key outright.
+Role = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$",
+                                        min_length=2, max_length=40)]
 # Kept in step with provider_keys.PROVIDERS and the CHECK constraints in
 # migration 011. All three move together or a save fails at the database.
 Provider = Literal["openai", "sarvam", "soniox"]
