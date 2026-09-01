@@ -76,6 +76,10 @@ class AgentConfig:
     postback_full_payload: bool
     # NULL = no marker-driven handoff on this campaign. The tool still works.
     transfer_marker: Optional[str]
+    # When a dialler is chosen, the transfer target is built from the CAMPAIGN
+    # rather than read from transfer_to - see migration 033 and _transfer_target.
+    transfer_dialler_id: Optional[int]
+    transfer_extension: Optional[str]
     # Spoken with the greeting on every call. Recording is unconditional in the
     # dialplan, so this is the notice that makes keeping it lawful - not a
     # per-campaign preference. NOT NULL in the schema for that reason.

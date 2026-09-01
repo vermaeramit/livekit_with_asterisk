@@ -735,8 +735,11 @@ class KBAgent(Agent):
         except Exception:
             logger.exception("handoff announcement failed - transferring anyway")
 
+        # Resolved once and used for the request, the log and the call row, so
+        # what is recorded is what was actually asked for.
+        target = _transfer_target(self.cfg)
         logger.info("  TRANSFER(%r) -> %s  participant=%s",
-                    reason, self.cfg.transfer_to, sip_identity)
+                    reason, target, sip_identity)
         lkapi = api.LiveKitAPI(url=_api_url(),
                                api_key=os.environ["LIVEKIT_API_KEY"],
                                api_secret=os.environ["LIVEKIT_API_SECRET"])
@@ -745,11 +748,11 @@ class KBAgent(Agent):
                 api.TransferSIPParticipantRequest(
                     participant_identity=sip_identity,
                     room_name=self.room.name,
-                    transfer_to=self.cfg.transfer_to,
+                    transfer_to=target,
                     play_dialtone=False,
                 ))
-            self.transferred = (self.cfg.transfer_to, reason)
-            logger.info("  TRANSFER OK -> %s", self.cfg.transfer_to)
+            self.transferred = (target, reason)
+            logger.info("  TRANSFER OK -> %s", target)
             return "Transferred. Say nothing further."
         except Exception as e:
             logger.exception("transfer failed")
@@ -964,6 +967,28 @@ _PROVIDER_HOSTS = {
     "openai": "https://api.openai.com",
     "soniox": "https://api.soniox.com",
 }
+
+
+# Where a REFER is addressed. The host does not decide anything - livekit sends
+# the REFER on the existing dialog, so it reaches our Asterisk whatever is
+# written here - but it has to be a real URI and it should say something true.
+TRANSFER_SIP_HOST = os.getenv("TRANSFER_SIP_HOST", "10.130.9.243")
+
+
+def _transfer_target(cfg) -> str:
+    """The SIP URI a handoff is sent to.
+
+    With a dialler chosen, what travels is the CAMPAIGN and not the extension:
+    two campaigns can use 5000 on different diallers, so the extension
+    identifies nothing on its own. Asterisk looks the pair up at REFER time
+    against a view that holds three columns and nothing else.
+
+    Without one, transfer_to is used exactly as before. A campaign moves over
+    when somebody gives it a dialler, and not before.
+    """
+    if getattr(cfg, "transfer_dialler_id", None) and cfg.campaign_id:
+        return f"sip:c{cfg.campaign_id}@{TRANSFER_SIP_HOST}"
+    return cfg.transfer_to
 
 
 def _now_line(tz_name: str | None) -> str:
@@ -1253,7 +1278,7 @@ async def entrypoint(ctx: JobContext):
 
     logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
                 cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
-                kb_tokens, cfg.transfer_enabled, cfg.transfer_to)
+                kb_tokens, cfg.transfer_enabled, _transfer_target(cfg))
     logger.info("TIMING config+keys+prompt=%dms", since())
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,

@@ -3150,12 +3150,67 @@ transferring your call".
 
 ---
 
+## Each campaign to its own dialler (1 Sep 2026)
+
+The dialler team asked for the host, port, username, password and extension to
+stop being a SIP URI typed into one campaign. The reason came a message later
+and was the real one: **different campaigns go to different diallers.**
+
+That rules out the obvious fix. Making the URI into four fields still describes
+one destination, and `sip:5000@10.130.8.76` cannot say which of two campaigns
+sent it - both may use 5000, on different diallers. So what travels is the
+campaign:
+
+    agent        transfer_to = sip:c1@10.130.9.243        c1 = campaign 1
+    livekit      REFER on the existing dialog
+    Asterisk     from-livekit, _c. matches, strips the c
+    database     transfer_routes -> "dialler-76^5000"
+    Asterisk     Dial(IAX2/dialler-76/5000)
+
+**Credentials stay out of the console.** The peer name is in the database; the
+host, port, username and secret are in `iax.conf` where they already were. A
+console that could write them would be a console that could dial anywhere, and
+the person who edits a campaign is not the person who should be able to.
+
+**Asterisk reads one view and nothing else.** `setup-asterisk-odbc.sh` creates
+`asterisk_ro`, grants `SELECT` on `transfer_routes` - three columns - and
+revokes the rest. No transcripts, no provider keys, no users. The dialplan is a
+large old surface edited by people who are not us.
+
+**Nothing moves on its own.** `_c.` was added ahead of the existing `_X.` route,
+which is untouched. A campaign with a plain SIP target keeps working exactly as
+it did, and moves over the day somebody gives it a dialler in the console. There
+was no cut-over.
+
+Two things were built because they fail at the worst possible moment - after the
+caller has been told to hold:
+
+- **`Dial` failure is spoken.** `_c.` checks `DIALSTATUS` and plays a message
+  rather than dropping the call into silence.
+- **A dialler chosen with no extension warns on the campaign page.** The route
+  exists, the lookup returns nothing, and the caller hears the failure. The form
+  says so while it is still an edit.
+
+Deleting a dialler a campaign still uses is refused, and says how many. The
+foreign key is `ON DELETE SET NULL`, so it would otherwise have succeeded
+quietly and been discovered by a caller asking for a person.
+
+Verified end to end with no rows in place: `odbc show all` shows the DSN with a
+connection, `dialplan show c1@from-livekit` shows the seven steps, and
+`ODBC_TRANSFER(1)` returns `Success (0)` with an empty result - correct, since
+no dialler exists yet. **The peers still have to be added to `iax.conf` with the
+dialler team before a live transfer will connect.**
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
   is already gitignored, before this file is synced back to the repo
-- **`DIALSTATUS` after the transfer Dial** - a caller who asked for a person
-  currently gets silence and a dropped call when nobody answers
+- **Add the `iax.conf` peers with the dialler team** - the routing is built and
+  verified, and connects nothing until each dialler has a peer
+- **`DIALSTATUS` on the OLD `_X.` route** - handled on `_c.`, not there. A
+  campaign still on a plain SIP target gets silence when nobody answers
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
   sustained concurrent calls. Then re-run `loadtest.sh 20 0.7 700` and find out
   where OUR ceiling is, which today's run never reached

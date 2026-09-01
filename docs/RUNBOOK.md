@@ -502,6 +502,52 @@ then `systemctl restart asterisk`.
 > context, where the REFER arrives) and **must come before the `_.` catch-all**, which
 > would otherwise match it and hang up the transfer.
 
+### Per-campaign diallers
+
+Different campaigns can go to different diallers. When a campaign has one, the
+SIP target above is ignored and the destination is looked up when the transfer
+happens.
+
+**One-time setup on the server**, in this order:
+
+```bash
+psql -f /srv/aivoice/migrations/033_diallers.sql     # the table, columns, view
+bash /srv/aivoice/server-configs/setup-asterisk-odbc.sh      # asterisk -> pg
+bash /srv/aivoice/server-configs/setup-transfer-routing.sh   # the _c. route
+```
+
+Both scripts are safe to re-run and back up every file they touch. Order
+matters: the ODBC script grants on the view migration 033 creates, and granting
+on a view that does not exist leaves Asterisk connected and unable to read
+anything - which looks exactly like a broken query.
+
+**Then, per dialler:**
+
+1. The peer in `/etc/asterisk/iax.conf` - host, port, username, secret. This is
+   the dialler team's, not ours, and is the only place those live.
+2. A row on the **Diallers** page naming that peer. Platform-level; the name
+   must match the `iax.conf` section exactly.
+3. On the campaign, **Limits & handoff** -> pick the dialler, set the extension.
+
+What travels in the REFER is `sip:c<campaign id>@...`, not the extension: two
+campaigns may both use 5000 on different diallers, so the extension identifies
+nothing by itself.
+
+**Checks that do not need a call:**
+
+```bash
+asterisk -rx "odbc show all"                      # expect: aivoice, connected
+asterisk -rx "dialplan show c1@from-livekit"      # the _c. route for campaign 1
+asterisk -rx 'dialplan eval function ODBC_TRANSFER(1)'   # "peer^extension"
+```
+
+An empty answer from the last one means no dialler is set on that campaign, or
+the dialler is inactive, or the extension is blank. The campaign page warns
+about the third.
+
+A campaign with no dialler keeps using `transfer_to` exactly as before. Nothing
+had to move on any particular day.
+
 ### Verify a transfer
 
 ```bash

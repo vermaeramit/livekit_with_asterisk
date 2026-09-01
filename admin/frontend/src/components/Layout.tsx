@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, Radio, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
@@ -58,6 +58,7 @@ const NAV: NavItem[] = [
   // Platform economics rather than a tenant's business: a wrong price here
   // misprices every call on the system, not one campaign's.
   { kind: 'link', to: '/rates', label: 'Provider rates', icon: Wallet, needs: ['rates.manage'] },
+  { kind: 'link', to: '/diallers', label: 'Diallers', icon: PhoneForwarded, needs: ['campaign.write'] },
   { kind: 'link', to: '/backups', label: 'Backups', icon: Database, needs: ['system.manage'] },
 ]
 

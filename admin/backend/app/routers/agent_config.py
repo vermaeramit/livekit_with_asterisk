@@ -33,6 +33,7 @@ FIELDS = (
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     "transfer_enabled", "transfer_to", "transfer_message",
     "transfer_confirm", "transfer_confirm_message",
+    "transfer_dialler_id", "transfer_extension",
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "transfer_marker",
     "stt_endpoint_level", "stt_endpoint_sensitivity",

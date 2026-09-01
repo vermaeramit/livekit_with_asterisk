@@ -194,6 +194,10 @@ class AgentConfigOut(BaseModel):
     transfer_message: str | None
     transfer_confirm: bool
     transfer_confirm_message: str | None
+    # With a dialler set the transfer target is built from these rather than
+    # from transfer_to - see migration 033.
+    transfer_dialler_id: int | None
+    transfer_extension: str | None
 
     # NULL = no silence handling. The array's LENGTH is the number of attempts;
     # the last line is spoken and then the call ends.
@@ -282,6 +286,9 @@ class AgentConfigUpdate(BaseModel):
     transfer_to: str | None = Field(default=None, max_length=200)
     transfer_message: str | None = Field(default=None, max_length=600)
     transfer_confirm: bool | None = None
+    transfer_dialler_id: int | None = None
+    transfer_extension: str | None = Field(default=None, max_length=40,
+                                           pattern=r"^[0-9A-Za-z._-]*$")
     transfer_confirm_message: str | None = Field(default=None, max_length=600)
 
     # Under 3s fires while the caller is drawing breath; over 60s the call is
@@ -537,6 +544,27 @@ class LatencySplit(BaseModel):
     eou_ms: float | None
     llm_ttft_ms: float | None
     tts_ttfb_ms: float | None
+
+
+class DiallerIn(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    # Must match a section in iax.conf exactly. Asterisk dials
+    # IAX2/<peer>/<extension>, so a typo here fails at the last step - after the
+    # caller has already been told to hold.
+    peer: str = Field(min_length=2, max_length=80,
+                      pattern=r"^[A-Za-z0-9_.-]+$")
+    description: str | None = Field(default=None, max_length=300)
+    active: bool = True
+
+
+class DiallerOut(BaseModel):
+    id: int
+    name: str
+    peer: str
+    description: str | None = None
+    active: bool
+    campaign_count: int = 0
+    updated_at: datetime
 
 
 class PermissionOut(BaseModel):

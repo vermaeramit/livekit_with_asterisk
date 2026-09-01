@@ -259,6 +259,10 @@ export interface AgentConfig {
   end_call_marker: string
   // null = no marker-driven handoff; the tool still works.
   transfer_marker: string | null
+  // null = use transfer_to as written. Set = the target is built from the
+  // campaign and Asterisk looks the dialler up when the transfer happens.
+  transfer_dialler_id: number | null
+  transfer_extension: string | null
 
   // Soniox endpointing. null = the provider's defaults.
   stt_endpoint_level: number | null
@@ -625,6 +629,18 @@ export interface CallCost {
   priced: boolean
   // Everything that makes the figure less than exact, in words.
   caveats: string[]
+}
+
+export interface Dialler {
+  id: number
+  name: string
+  // The section name in iax.conf. Asterisk dials IAX2/<peer>/<extension>.
+  peer: string
+  description: string | null
+  active: boolean
+  // How many campaigns transfer here - shown so nobody deletes a live one.
+  campaign_count: number
+  updated_at: string
 }
 
 export interface ProviderRate {

@@ -33,7 +33,7 @@ import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn, formatDateTime, formatRelative } from '@/lib/utils'
-import type { AgentConfig, AuditEntry, Campaign, TtsCatalog } from '@/types'
+import type { AgentConfig, Dialler, AuditEntry, Campaign, TtsCatalog } from '@/types'
 
 // Sarvam's saarika/bulbul language codes. Anything outside this set is accepted
 // by the API but will fail at call time, so the editor does not offer it.
@@ -365,6 +365,16 @@ export function CampaignConfig() {
   //
   // Failure is not surfaced: no key, no network, an unsupported provider, all
   // fall back to the static list, which is what this had before.
+  // Everyone who can edit a campaign can read this list; only the platform can
+  // change it. Failure is not surfaced beyond an empty list - the campaign then
+  // shows the plain SIP target it has always had, which still works.
+  const diallers = useQuery({
+    queryKey: ['diallers'],
+    queryFn: () => api<Dialler[]>('/diallers'),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  })
+
   const ttsCatalog = useQuery({
     queryKey: ['tts-catalog', campaignId, value.tts_provider],
     queryFn: () =>
@@ -999,14 +1009,54 @@ export function CampaignConfig() {
                 hint="The agent transfers by SIP REFER when the caller asks for a person, or when it cannot help."
               />
 
-              <TextField
-                label="Transfer target"
-                value={value.transfer_to}
-                onChange={(v) => set('transfer_to', v)}
-                placeholder="sip:800@10.130.9.243"
-                className="font-mono"
-                hint="A SIP URI. A wrong target only surfaces when a real caller asks for a human."
+              <SelectField
+                label="Dialler"
+                value={value.transfer_dialler_id ? String(value.transfer_dialler_id) : ''}
+                onChange={(v) => set('transfer_dialler_id', v ? Number(v) : null)}
+                options={[
+                  { value: '', label: 'Use the SIP target below' },
+                  ...(diallers.data ?? [])
+                    // An inactive dialler is hidden unless this campaign is
+                    // already on it - otherwise the field would look unset and
+                    // the next save would silently move the campaign off it.
+                    .filter((d) => d.active || d.id === value.transfer_dialler_id)
+                    .map((d) => ({
+                      value: String(d.id),
+                      label: d.active ? d.name : `${d.name} (inactive)`,
+                    })),
+                ]}
+                hint="Which dialler takes this campaign's transfers. Diallers are set up on the Diallers page."
               />
+
+              {value.transfer_dialler_id ? (
+                <TextField
+                  label="Extension"
+                  value={value.transfer_extension ?? ''}
+                  onChange={(v) => set('transfer_extension', v.trim() || null)}
+                  placeholder="5000"
+                  className="font-mono"
+                  hint="The extension to ring on that dialler. Two campaigns may use the same number on different diallers — which dialler is what this campaign's setting decides."
+                />
+              ) : (
+                <TextField
+                  label="Transfer target"
+                  value={value.transfer_to}
+                  onChange={(v) => set('transfer_to', v)}
+                  placeholder="sip:800@10.130.9.243"
+                  className="font-mono"
+                  hint="A SIP URI. A wrong target only surfaces when a real caller asks for a human."
+                />
+              )}
+
+              {/* Chosen but not filled in is the one combination that fails at
+                  the moment a caller is waiting: the route exists, the lookup
+                  returns nothing, and they hear the failure message. */}
+              {value.transfer_dialler_id && !value.transfer_extension?.trim() ? (
+                <Note tone="warn">
+                  No extension set. Transfers on this campaign will not connect
+                  until there is one.
+                </Note>
+              ) : null}
 
               <TextField
                 label="Message before transferring"
