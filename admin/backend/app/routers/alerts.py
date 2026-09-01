@@ -3,17 +3,20 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import alerting, audit, db
-from ..deps import (CurrentUser, active_user, require_perm, resolve_tenant,
+from ..deps import (CurrentUser, require_perm, resolve_tenant,
                     tenant_scope)
 from ..schemas import AlertOut, AlertRuleOut, AlertRuleUpdate, WebhookUpdate
 
 router = APIRouter(tags=["alerts"])
 
 editor = require_perm("campaign.write")
+# Seeing alerts and acknowledging one is a different job from
+# deciding what raises them, which is part of editing a campaign.
+reader = require_perm("alerts.read")
 
 
 @router.get("/alerts", response_model=list[AlertOut])
-async def list_alerts(user: CurrentUser = Depends(active_user),
+async def list_alerts(user: CurrentUser = Depends(reader),
                       tenant_id: int | None = None,
                       unacknowledged: bool = False,
                       limit: int = Query(100, ge=1, le=500)):
@@ -42,7 +45,7 @@ async def list_alerts(user: CurrentUser = Depends(active_user),
 
 
 @router.get("/alerts/unread-count")
-async def unread_count(user: CurrentUser = Depends(active_user)):
+async def unread_count(user: CurrentUser = Depends(reader)):
     """Drives the sidebar badge, so it is deliberately one cheap query."""
     scope = tenant_scope(user)
     if scope is None:
@@ -56,7 +59,7 @@ async def unread_count(user: CurrentUser = Depends(active_user)):
 
 
 @router.post("/alerts/{alert_id}/acknowledge", response_model=AlertOut)
-async def acknowledge(alert_id: int, actor: CurrentUser = Depends(active_user)):
+async def acknowledge(alert_id: int, actor: CurrentUser = Depends(reader)):
     row = await db.pool().fetchrow(
         "SELECT tenant_id FROM alerts WHERE id = $1", alert_id)
     if row is None or (not actor.is_superadmin
@@ -86,7 +89,7 @@ async def _one(alert_id: int) -> AlertOut:
 
 
 @router.get("/alert-rules", response_model=list[AlertRuleOut])
-async def list_rules(user: CurrentUser = Depends(active_user),
+async def list_rules(user: CurrentUser = Depends(reader),
                      tenant_id: int | None = None):
     scope = tenant_scope(user, tenant_id)
     if scope is None:

@@ -13,6 +13,7 @@ export type Permission =
   | 'analytics.read'
   | 'usage.read'
   | 'cost.read'
+  | 'alerts.read'
   | 'live.read'
   | 'gaps.read'
   | 'campaign.write'

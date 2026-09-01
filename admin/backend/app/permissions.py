@@ -42,6 +42,10 @@ PERMISSIONS: dict[str, tuple[str, str, str]] = {
     "cost.read": (
         "Calls", "Costs",
         "What calls cost, per call and on the dashboard."),
+    "alerts.read": (
+        "Calls", "Alerts",
+        "See alerts and acknowledge them. Editing the rules that raise them is "
+        "part of editing a campaign."),
     "live.read": (
         "Calls", "Live monitor",
         "Watch calls while they are happening."),
@@ -93,16 +97,17 @@ SEED_ROLES: tuple[tuple[str, str, str, bool, tuple[str, ...]], ...] = (
     ("tenant_admin", "Admin",
      "Runs one client: campaigns, keys and users.",
      False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
-             "cost.read", "live.read", "gaps.read", "campaign.write",
+             "cost.read", "alerts.read", "live.read", "gaps.read",
+             "campaign.write",
              "provider_keys.write", "users.manage")),
     ("agent", "Agent",
      "Reads calls and dashboards. Changes nothing.",
      False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
-             "cost.read", "live.read", "gaps.read")),
+             "cost.read", "alerts.read", "live.read", "gaps.read")),
     ("viewer", "Viewer",
      "Reads calls and dashboards. Changes nothing.",
      False, ("calls.read", "calls.recording", "analytics.read", "usage.read",
-             "cost.read", "live.read", "gaps.read")),
+             "cost.read", "alerts.read", "live.read", "gaps.read")),
 )
 
 

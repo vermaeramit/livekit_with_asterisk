@@ -46,7 +46,7 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/calls', label: 'Calls', icon: PhoneCall, needs: ['calls.read'] },
   { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: ['analytics.read'] },
   { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio, needs: ['live.read'] },
-  { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts' },
+  { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts', needs: ['alerts.read'] },
   { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps', needs: ['gaps.read'] },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, needs: ['campaign.write'] },
@@ -100,10 +100,13 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 
   // Polled in the shell rather than on the Alerts page, so something arriving
   // while you are looking at a call still shows up.
+  // Not polled without the permission. It would answer 403 every minute, for
+  // a badge the sidebar is not drawing anyway.
   const unread = useQuery({
     queryKey: ['alerts-unread'],
     queryFn: () => api<{ count: number }>('/alerts/unread-count'),
     refetchInterval: 60_000,
+    enabled: can('alerts.read'),
   })
 
   // Counts QUESTIONS, not occurrences: twenty callers asking the same thing is
@@ -113,6 +116,7 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
     queryKey: ['gaps-unread'],
     queryFn: () => api<{ count: number }>('/gaps/unread-count'),
     refetchInterval: 60_000,
+    enabled: can('gaps.read'),
   })
 
   const visible = NAV.filter((item) => {
