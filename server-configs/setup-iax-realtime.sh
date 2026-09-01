@@ -147,9 +147,27 @@ fi
 
 # ── 6. does it work ──────────────────────────────────────────────────────────
 say "reloading"
+# extconfig, and not res_config_odbc, is the one that matters. Reloading the
+# driver re-reads res_odbc.conf and leaves the family mappings exactly as they
+# were, so the first run of this script wrote a correct extconfig.conf that
+# Asterisk never read: `core show config mappings` listed engines and no
+# families, and the transfer that followed found no peer, created no channel
+# and played the failure message to a caller who had been told to hold.
+asterisk -rx "module reload extconfig" >/dev/null
 asterisk -rx "module reload res_config_odbc.so" >/dev/null
 asterisk -rx "iax2 reload" >/dev/null
 sleep 1
+
+# Proof rather than hope. If the family is not mapped then nothing else in this
+# script matters, and the way that failure presents is a held caller hearing an
+# apology - so it stops here instead.
+if ! asterisk -rx "core show config mappings" | grep -q iaxpeers; then
+    echo "!! iaxpeers is still not mapped. Diallers added in the console do not"
+    echo "!! exist as far as Asterisk is concerned. Check extconfig.conf, then"
+    echo "!! try: asterisk -rx 'core reload'"
+    exit 1
+fi
+asterisk -rx "core show config mappings" | grep iaxpeers | sed 's/^/  /'
 
 say "what Asterisk can dial"
 # Read from the database with the password masked. `realtime load iaxpeers`
