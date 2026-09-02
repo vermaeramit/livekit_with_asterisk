@@ -3621,6 +3621,33 @@ constraint sitting right beside it.
   silence. Turning a call away at the door is a better failure than that
 - **Aggregate cost** - per campaign and per day, on the Dashboard. The per-call
   figure is in; the roll-up is not
+- **TTS pronunciation** - raised and deferred, with the groundwork done. What
+  each provider actually offers, read off the installed plugins rather than
+  remembered:
+
+  | | Sarvam bulbul:v3 | Soniox tts-rt-v2 |
+  |---|---|---|
+  | `enable_preprocessing` | yes - **currently False, never set** | no |
+  | `dict_id` (hosted dictionary) | yes | no |
+  | `pace` / `pitch` / `loudness` | yes | `speed` only |
+
+  The campaign with the complaint (`default`) is on **Soniox**, which has no
+  pronunciation control at all. So the general fix is our own dictionary
+  applied in `tts_node`, which works on any provider - and it has to hold back
+  a tail the way the marker filter does, because "Splendor" arrives as "Splen"
+  + "dor" and a plain replace silently misses it.
+
+  Two things that come with it:
+  - `enable_preprocessing` costs an unknown amount of TTFT. Measure it with
+    `tts_ttft` before turning it on; median response is 2.49s and p95 3.91s,
+    so 150ms would matter.
+  - **The greeting is played from cache and never reaches `tts_node`.** A
+    dictionary there would fix every sentence except the greeting - one call,
+    two pronunciations. The cache has to be keyed on the transformed text.
+
+  Blocked on actual examples: which word, what it sounds like, which campaign.
+  Numbers and romanised Hindi are different problems with different fixes, and
+  a dictionary is the wrong tool for both.
 - **Sarvam's own usage page**, to check the seeded rupee rates the way Soniox's
   were checked - solved from a bill rather than read from a page
 - **The STT ceiling, from the journal of call 344** - it broke two calls without
