@@ -256,6 +256,21 @@ export function Login() {
           <p className="mt-10 text-center text-2xs text-muted-foreground">
             Trouble signing in? Contact your administrator.
           </p>
+
+          {/* In the form column rather than the brand panel: that panel is
+              hidden below lg, and this is the half of the page everybody sees.
+              120px matches the sidebar - one size for the mark across the
+              product, so it does not read as two different logos. */}
+          <div className="mt-8 border-t border-border/60 pt-6">
+            <img
+              src="/worxpertise.png"
+              alt="Worxpertise"
+              className="mx-auto w-[120px] dark:brightness-0 dark:invert"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          </div>
         </div>
       </div>
     </div>
