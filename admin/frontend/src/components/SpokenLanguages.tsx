@@ -4,6 +4,10 @@
  * The two are easy to confuse, and the console confused them for months: the
  * language shown against a call was the campaign's setting, identical on every
  * row. Soniox has been identifying the real thing all along.
+ *
+ * Detail page only. A one-line version for the calls table existed briefly and
+ * was taken out - the list is scanned for which call to open, and a language
+ * mix is something you read once you are looking at one.
  */
 
 // Only the languages these campaigns run in are named. Anything else shows its
@@ -39,37 +43,6 @@ export function languageShares(detected: Record<string, number> | null | undefin
       chars,
       share: chars / total,
     }))
-}
-
-/** One line for a table cell: "Hindi 71% · English 29%". */
-export function SpokenLanguages({
-  detected,
-  max = 2,
-}: {
-  detected: Record<string, number> | null | undefined
-  max?: number
-}) {
-  const shares = languageShares(detected)
-  if (!shares.length) return <span className="text-muted-foreground">—</span>
-
-  // A language under 5% is usually one borrowed word - "service", "booking" -
-  // and listing it as a language of the call overstates it.
-  const worth = shares.filter((s) => s.share >= 0.05).slice(0, max)
-  const shown = worth.length ? worth : shares.slice(0, 1)
-
-  return (
-    <span className="whitespace-nowrap">
-      {shown.map((s, i) => (
-        <span key={s.code}>
-          {i > 0 && <span className="text-muted-foreground"> · </span>}
-          {languageName(s.code)}{' '}
-          <span className="tnum text-muted-foreground">
-            {Math.round(s.share * 100)}%
-          </span>
-        </span>
-      ))}
-    </span>
-  )
 }
 
 /** The full breakdown, with a bar. For the call detail page. */

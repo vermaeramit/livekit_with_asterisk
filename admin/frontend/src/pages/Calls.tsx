@@ -17,7 +17,6 @@ import { Badge, Card, EmptyState, Input, Label, Select, Skeleton } from '@/compo
 import { api, buildQuery } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn, formatDateTime, formatDuration, formatNumber } from '@/lib/utils'
-import { SpokenLanguages } from '@/components/SpokenLanguages'
 import type { Campaign, CallListItem, CallListResponse } from '@/types'
 
 const PAGE_SIZE = 25
@@ -274,7 +273,6 @@ export function Calls() {
                   <th className={th}>Campaign</th>
                   <th className={cn(th, 'text-right')}>Duration</th>
                   <th className={cn(th, 'text-right')}>Turns</th>
-                  <th className={th}>Spoken</th>
                   <th className={th}>Outcome</th>
                 </tr>
               </thead>
@@ -301,12 +299,6 @@ export function Calls() {
                     <td className={cn(td, 'text-right tnum')}>{formatDuration(c.duration_ms)}</td>
                     <td className={cn(td, 'text-right tnum text-muted-foreground')}>
                       {c.turn_count ?? '—'}
-                    </td>
-                    {/* What the caller SPOKE, from the recogniser - not the
-                        campaign's language setting, which is the same on every
-                        row and was what this used to be confused with. */}
-                    <td className={cn(td, 'text-xs')}>
-                      <SpokenLanguages detected={c.detected_languages} />
                     </td>
                     <td className={cn(td, 'py-2')}>
                       <EndReasonBadge call={c} />
