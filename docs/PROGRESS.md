@@ -3388,6 +3388,39 @@ is a callback list and an argument about the hours themselves.
 
 ---
 
+## An off switch that does not delete the thing (1 Sep 2026)
+
+*"can we add filler turn on off functionality and text campaign wise"*
+
+Half of it already existed. The KB filler has been per campaign since 024 and
+each tool has had its own since 018, both with editable text. What neither had
+was a way to stop saying it other than clearing the box - so switching it off
+threw the wording away, and switching it back on meant writing it again. People
+stop experimenting with a setting that charges them for changing their mind.
+
+So: a boolean beside each, and the text field hidden rather than blanked when
+it is off. Empty text is still silence; the switch only exists so the wording
+survives.
+
+Both default to true and the text still decides, so the migration changed no
+behaviour. `filler_enabled` is read as `spec.get("filler_enabled", True)` in
+the agent - absent means on, which is what every tool written before today
+wants.
+
+**The tools table does not have a spec column.** The migration was first
+written as a JSONB update, because `store.load_tools` builds a tool's spec with
+`dict(r)` and it reads like there is a spec object somewhere. There is not -
+the row IS the spec, so a spec field is a COLUMN. Caught before it ran, by
+reading how the agent loads a tool rather than assuming.
+
+That row-is-the-spec shape also means the insert lists every column by hand,
+with numbered placeholders. Adding one shifts the four after it, and getting it
+wrong writes the right value into the wrong column with no error at all. Both
+counts were checked mechanically rather than by eye: 20 columns, 20
+placeholders, 20 arguments.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

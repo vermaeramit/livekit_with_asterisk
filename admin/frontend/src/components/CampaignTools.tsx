@@ -27,6 +27,7 @@ const BLANK = {
   max_response_bytes: 8192,
   response_path: '',
   filler_message: '',
+  filler_enabled: true,
   error_messages: {} as Record<string, string>,
   keep_response: false,
   enabled: true,
@@ -136,7 +137,8 @@ const ACTIVITY_PAGE_SIZE = 20
 const FIELD_ORDER = [
   'name', 'description', 'method', 'url', 'parameters', 'body_template',
   'auth_header', 'auth_value', 'timeout_ms', 'max_response_bytes',
-  'response_path', 'filler_message', 'error_messages', 'keep_response',
+  'response_path', 'filler_message', 'filler_enabled', 'error_messages',
+  'keep_response',
 ]
 
 function toDraft(t: CampaignTool): Draft {
@@ -155,6 +157,8 @@ function toDraft(t: CampaignTool): Draft {
     max_response_bytes: t.max_response_bytes,
     response_path: t.response_path ?? '',
     filler_message: t.filler_message ?? '',
+    // Absent on a tool saved before the switch existed, and those want it on.
+    filler_enabled: t.filler_enabled ?? true,
     error_messages: t.error_messages ?? {},
     keep_response: t.keep_response,
     enabled: t.enabled,
@@ -326,6 +330,7 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
         body_template: draft.body_template.trim() || null,
         response_path: draft.response_path.trim() || null,
         filler_message: draft.filler_message.trim() || null,
+        filler_enabled: draft.filler_enabled,
         error_messages: Object.keys(draft.error_messages).length
           ? draft.error_messages
           : null,
@@ -660,15 +665,24 @@ export function CampaignTools({ campaignId }: { campaignId: number }) {
                        error={fieldErrors.response_path} />
           </div>
 
-          <TextField
-            id="f-filler_message"
-            label="Say this while it runs"
-            value={draft.filler_message}
-            onChange={(v) => set('filler_message', v)}
-            error={fieldErrors.filler_message}
-            placeholder="Kripya ek pal rukiye…"
-            hint="Spoken only if this tool has not answered within 600ms, and cancelled the moment it does — so a fast lookup stays silent. Saying it every time would turn a 200ms pause into a two-second one. Leave empty for no announcement."
+          <Toggle
+            label="Say something while it runs"
+            checked={draft.filler_enabled}
+            onChange={(v) => set('filler_enabled', v)}
+            hint="Off keeps the wording below rather than making you retype it to bring it back."
           />
+
+          {draft.filler_enabled && (
+            <TextField
+              id="f-filler_message"
+              label="Say this while it runs"
+              value={draft.filler_message}
+              onChange={(v) => set('filler_message', v)}
+              error={fieldErrors.filler_message}
+              placeholder="Kripya ek pal rukiye…"
+              hint="Spoken only if this tool has not answered within 600ms, and cancelled the moment it does — so a fast lookup stays silent. Saying it every time would turn a 200ms pause into a two-second one. Empty is silence even with the switch on."
+            />
+          )}
 
           <ErrorMessages
             value={draft.error_messages}

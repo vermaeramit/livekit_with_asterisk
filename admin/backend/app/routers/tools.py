@@ -32,7 +32,7 @@ editor = require_perm("campaign.write")
 
 COLUMNS = """id, name, description, parameters, method, url, headers,
              auth_header, auth_value_hint, body_template, timeout_ms,
-             max_response_bytes, response_path, filler_message,
+             max_response_bytes, response_path, filler_message, filler_enabled,
              error_messages, keep_response, enabled, updated_at"""
 
 
@@ -70,15 +70,17 @@ async def create_tool(campaign_id: int, body: ToolCreate,
                      method, url, headers, auth_header, auth_value_enc,
                      auth_value_hint, body_template, timeout_ms,
                      max_response_bytes, response_path, filler_message,
+                     filler_enabled,
                      error_messages, keep_response, enabled)
                 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9,$10,$11,$12,
-                        $13,$14,$15,$16,$17::jsonb,$18,$19)
+                        $13,$14,$15,$16,$17,$18::jsonb,$19,$20)
                 RETURNING {COLUMNS}""",
             campaign_id, tenant_id, body.name, body.description,
             json.dumps(body.parameters), body.method, body.url,
             json.dumps(body.headers) if body.headers else None,
             body.auth_header, enc, hint, body.body_template, body.timeout_ms,
             body.max_response_bytes, body.response_path, body.filler_message,
+            body.filler_enabled,
             json.dumps(body.error_messages) if body.error_messages else None,
             body.keep_response, body.enabled)
     except asyncpg.UniqueViolationError:

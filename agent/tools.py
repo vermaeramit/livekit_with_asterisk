@@ -131,7 +131,11 @@ def build(spec: dict, call_id: int | None, record: Callable,
     method: str = (spec.get("method") or "GET").upper()
     timeout = aiohttp.ClientTimeout(total=(spec.get("timeout_ms") or 2500) / 1000)
     max_bytes: int = spec.get("max_response_bytes") or 8192
-    filler: str | None = (spec.get("filler_message") or "").strip() or None
+    # Absent means on: every tool written before the switch existed has text
+    # and expects it to be spoken. Only an explicit false silences one.
+    filler: str | None = (
+        (spec.get("filler_message") or "").strip() or None
+        if spec.get("filler_enabled", True) else None)
     # Off unless someone turned it on for THIS tool - see migration 021. A
     # dealer list is business data; the next endpoint might answer with a
     # phone number and an address, and that is a separate decision.

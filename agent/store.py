@@ -71,7 +71,10 @@ class AgentConfig:
     transfer_hours: Optional[dict]
     transfer_holidays: Optional[list]
     transfer_closed_message: Optional[str]
-    # Spoken while the knowledge base is being searched. NULL = say nothing.
+    # Spoken while the knowledge base is being searched. NULL = say nothing,
+    # and so does kb_filler_enabled = False - the difference is that the second
+    # one keeps the wording for when somebody turns it back on.
+    kb_filler_enabled: bool
     kb_filler_message: Optional[str]
     # Where the call's result goes afterwards. Only what the AGENT needs is
     # here: it extracts and stores, it never delivers. The url, auth and retry
@@ -230,6 +233,7 @@ async def load_tools(campaign_id: int) -> list[dict]:
         """SELECT id, name, description, parameters, method, url, headers,
                   auth_header, auth_value_enc, body_template, timeout_ms,
                   max_response_bytes, response_path, filler_message,
+                  filler_enabled,
                   error_messages, keep_response
              FROM campaign_tools
             WHERE campaign_id = $1 AND enabled

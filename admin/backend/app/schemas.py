@@ -240,6 +240,7 @@ class AgentConfigOut(BaseModel):
     prompt_timezone: str
 
     # Spoken while search_knowledge_base runs. None = silence.
+    kb_filler_enabled: bool = True
     kb_filler_message: str | None
 
     # Things that are wrong but not invalid - see agent_config._warnings.
@@ -393,6 +394,7 @@ class AgentConfigUpdate(BaseModel):
     prompt_timezone: str | None = Field(default=None, max_length=64)
     # Short on purpose. It has to finish before the search does, or the caller
     # hears a sentence about waiting and then waits anyway.
+    kb_filler_enabled: bool | None = None
     kb_filler_message: str | None = Field(default=None, max_length=200)
 
     @field_validator("prompt_timezone")
@@ -1168,6 +1170,10 @@ class ToolBase(BaseModel):
     # Spoken only if the tool has not answered within TOOL_FILLER_AFTER_MS.
     # A filler in front of a fast API makes a short pause into a long one.
     filler_message: str | None = Field(default=None, max_length=200)
+    # Off keeps the wording and stops saying it. Default true so a tool saved
+    # by an older console, or by anything that does not know about this field,
+    # keeps behaving as it did.
+    filler_enabled: bool = True
     # {"404": "...", "timeout": "...", "default": "..."} - what to tell the
     # model for each outcome. A 404 from a lookup is usually not a failure at
     # all; it means "nothing found here", and the caller deserves to be told

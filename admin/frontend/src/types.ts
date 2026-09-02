@@ -238,6 +238,8 @@ export interface AgentConfig {
   kb_inline_max_tokens: number
   kb_summary: string | null
   // Spoken while a search runs. null = silence.
+  // Off = stay silent while searching, keeping the wording below for later.
+  kb_filler_enabled: boolean
   kb_filler_message: string | null
 
   // Wrong but not invalid — a save is never blocked on these. Computed on read
@@ -528,6 +530,7 @@ export interface CampaignTool {
   response_path: string | null
   // Spoken only if the tool is still running after ~600ms.
   filler_message: string | null
+  filler_enabled: boolean
   // Status code (or "timeout"/"default") -> what to tell the model.
   error_messages: Record<string, string> | null
   // Keep the response so extraction can read values never spoken aloud.

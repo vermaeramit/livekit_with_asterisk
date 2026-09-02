@@ -590,7 +590,8 @@ class KBAgent(Agent):
         # costs 810-1860 ms and, with 108k tokens behind an index, runs on very
         # nearly every question the caller asks - that is a second of silence
         # each time, and silence is what makes a caller say "hello?".
-        filler = (getattr(self.cfg, "kb_filler_message", None) or "").strip()
+        filler = ((getattr(self.cfg, "kb_filler_message", None) or "").strip()
+                  if getattr(self.cfg, "kb_filler_enabled", True) else "")
 
         async def hold_on() -> None:
             try:
