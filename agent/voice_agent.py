@@ -1095,6 +1095,56 @@ _PROVIDER_HOSTS = {
 TRANSFER_SIP_HOST = os.getenv("TRANSFER_SIP_HOST", "10.130.9.243")
 
 
+# ─────────────────────── what actually went wrong ───────────────────────
+
+# The plugin label names the provider: 'livekit.plugins.openai.llm.LLM'. A
+# FallbackAdapter names itself instead, which is why provider comes out NULL
+# for those - it genuinely does not say which leg failed.
+_PROVIDER_RE = re.compile(r"livekit\.plugins\.(\w+)\.")
+_SOURCE_BY_TYPE = {"LLMError": "llm", "STTError": "stt", "TTSError": "tts"}
+
+
+def _error_details(ev) -> dict:
+    """Break a session error into columns that can be counted.
+
+    calls.outcome keeps the whole sentence. This is the part an alert can act
+    on: which leg, whose service, and what the status code was. 429 is a rate
+    limit, 402 is out of credit and 401 is a bad key - three different problems
+    for three different people, and until now all three read as "an error".
+    """
+    err = getattr(ev, "error", ev)
+    detail = {
+        "source": _SOURCE_BY_TYPE.get(type(ev).__name__, "other"),
+        "provider": None,
+        "code": None,
+        "message": str(err)[:400],
+    }
+
+    label = getattr(ev, "label", "") or ""
+    m = _PROVIDER_RE.search(label)
+    if m and m.group(1) != "fallback_adapter":
+        detail["provider"] = m.group(1)
+
+    # Walk the cause chain before giving up on the code. A FallbackAdapter
+    # reports "all LLMs failed (...)" and the 429 underneath it is what anyone
+    # reading the alert actually needs; if Python chained it, it is here.
+    seen = 0
+    cause = err
+    while cause is not None and seen < 5:
+        code = getattr(cause, "status_code", None)
+        if isinstance(code, int) and code > 0:
+            detail["code"] = code
+            if detail["provider"] is None:
+                m = _PROVIDER_RE.search(str(getattr(cause, "label", "")))
+                if m:
+                    detail["provider"] = m.group(1)
+            break
+        cause = getattr(cause, "__cause__", None)
+        seen += 1
+
+    return detail
+
+
 def _transfer_target(cfg) -> str:
     """The SIP URI a handoff is sent to.
 
@@ -1826,6 +1876,9 @@ async def entrypoint(ctx: JobContext):
     # end_reason = 'error' - never fires. An entire Sarvam outage went through
     # as ten clean calls, which is how it stayed invisible.
     session_error: dict[str, str] = {}
+    # The same failure in columns: which leg, whose service, what status code.
+    # Written to call_errors, where it can be counted and alerted on.
+    error_detail: dict = {}
 
     def _on_error(ev) -> None:
         # Keep the first: it usually causes the rest, and the later ones are
@@ -1835,8 +1888,13 @@ async def entrypoint(ctx: JobContext):
         err = getattr(ev, "error", ev)
         session_error["source"] = type(err).__name__
         session_error["message"] = str(err)[:400]
-        logger.error("session error (%s): %s",
-                     session_error["source"], session_error["message"])
+        # Kept in its own dict, not merged: `source` means the exception class
+        # in one and the pipeline leg in the other, and merging them would
+        # quietly change what lands in calls.outcome.
+        error_detail.update(_error_details(ev))
+        logger.error("session error (%s, provider=%s, code=%s): %s",
+                     session_error["source"], error_detail.get("provider"),
+                     error_detail.get("code"), session_error["message"])
 
     session.on("error", _on_error)
 
@@ -1883,6 +1941,25 @@ async def entrypoint(ctx: JobContext):
                 await (await store.pool()).execute(
                     "UPDATE calls SET outcome=$2 WHERE id=$1", call_id,
                     f"{session_error['source']}: {session_error['message']}")
+
+            if error_detail:
+                # Its own row rather than more columns on `calls`: one call can
+                # lose STT and then lose the LLM, and the second failure is
+                # usually the consequence of the first. Keeping both is what
+                # makes the order readable afterwards.
+                # tenant and campaign are taken from the CALL row rather than
+                # from cfg, which carries campaign_id and no tenant at all. A
+                # NULL tenant here would be invisible to the alert, which is
+                # scoped by tenant - the rows would exist and nothing would
+                # ever read them.
+                await (await store.pool()).execute(
+                    """INSERT INTO call_errors (call_id, tenant_id, campaign_id,
+                                                source, provider, code, message)
+                       SELECT c.id, c.tenant_id, c.campaign_id, $2, $3, $4, $5
+                         FROM calls c WHERE c.id = $1""",
+                    call_id, error_detail["source"],
+                    error_detail.get("provider"), error_detail.get("code"),
+                    error_detail["message"])
 
             # Independent of how the call ended: what the caller SPOKE is not
             # part of the transfer outcome.

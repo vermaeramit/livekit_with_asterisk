@@ -540,7 +540,7 @@ class KbIngestResult(BaseModel):
 # ───────────────────────────── alerting ─────────────────────────────
 
 AlertKind = Literal["latency_p95", "error_rate", "transfer_rate", "limit_hits",
-                    "no_calls", "stale_calls"]
+                    "no_calls", "stale_calls", "provider_errors"]
 
 
 class AlertRuleOut(BaseModel):

@@ -26,6 +26,7 @@ const KIND_LABEL: Record<string, string> = {
   limit_hits: 'Guardrail stops',
   no_calls: 'No calls received',
   stale_calls: 'Stuck calls',
+  provider_errors: 'Provider failures',
 }
 
 const KIND_HELP: Record<string, string> = {
@@ -35,6 +36,8 @@ const KIND_HELP: Record<string, string> = {
   limit_hits: 'Share cut short by a turn, duration or token limit.',
   no_calls: 'Nothing arrived at all — the dialer or the workers may be down.',
   stale_calls: 'Calls left open past their duration limit, which means a worker died holding one.',
+  provider_errors:
+    'Errors returned by OpenAI, Soniox, Sarvam and the rest, counted as they happen rather than as a share of finished calls — a rate limit shows up while it is still going on, and the alert names the provider and the code.',
 }
 
 const UNIT: Record<string, string> = {
@@ -44,6 +47,7 @@ const UNIT: Record<string, string> = {
   limit_hits: '%',
   no_calls: 'calls',
   stale_calls: 'calls',
+  provider_errors: 'errors',
 }
 
 function DeliveryBadge({ alert }: { alert: Alert }) {

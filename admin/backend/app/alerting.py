@@ -28,6 +28,39 @@ WEBHOOK_TIMEOUT = 10
 # Percentage rules also honour min_calls: on a quiet afternoon two calls, one of
 # which errored, is not a 50% error rate worth waking anyone for.
 
+# What a status code means for the person reading the alert at 9pm. Naming the
+# action is the whole point: 429, 402 and 401 are three different phone calls
+# to three different people, and every one of them used to read as "an error".
+_CODE_MEANING = {
+    429: "rate limit - you are sending faster than the plan allows",
+    402: "out of credit - top the account up",
+    401: "the API key is being rejected",
+    403: "the API key is not allowed to do this",
+    500: "the provider is failing on their side",
+    503: "the provider is unavailable",
+}
+
+
+def _describe(rows) -> str:
+    """The top few failures, in words somebody can act on."""
+    parts = []
+    for r in rows[:3]:
+        who = r["provider"] or "provider unknown"
+        what = _CODE_MEANING.get(r["code"])
+        if what:
+            parts.append(f"{r['n']}x {who} {r['source']} {r['code']}: {what}")
+        elif r["code"]:
+            parts.append(f"{r['n']}x {who} {r['source']} {r['code']}")
+        else:
+            # No code and no provider is what a FallbackAdapter failure looks
+            # like: it reports itself rather than the leg that failed. Say so,
+            # rather than implying we know more than we do.
+            parts.append(f"{r['n']}x {who} {r['source']}"
+                         + (" (cause not reported)" if not r["provider"] else ""))
+    more = len(rows) - 3
+    return "; ".join(parts) + (f"; and {more} other kind(s)" if more > 0 else "")
+
+
 async def _evaluate(rule: dict) -> tuple[float | None, bool, str]:
     kind = rule["kind"]
     window = f"{rule['window_minutes']} minutes"
@@ -74,6 +107,31 @@ async def _evaluate(rule: dict) -> tuple[float | None, bool, str]:
         return v, v > rule["threshold"], (
             f"p95 response time is {v / 1000:.2f}s, above the "
             f"{rule['threshold'] / 1000:.2f}s threshold")
+
+    if kind == "provider_errors":
+        # Counted from the errors themselves, not from what share of FINISHED
+        # calls carried one. During a rate limit the calls are still running:
+        # error_rate reports the problem after it is over, and reports it as a
+        # percentage that says nothing about the cause.
+        #
+        # The alert that prompted this said "25.7% of the last 35 calls ended
+        # in an error". True, acknowledged, and it took the worker journal to
+        # find out that OpenAI had hit its token-per-minute ceiling.
+        err_scope = (f"tenant_id = $1 AND created_at > now() - interval "
+                     f"'{window}'")
+        if rule["campaign_id"] is not None:
+            err_scope += f" AND campaign_id = ${len(args)}"
+        rows = await db.pool().fetch(f"""
+            SELECT source, provider, code, count(*) AS n
+              FROM call_errors WHERE {err_scope}
+             GROUP BY 1, 2, 3 ORDER BY n DESC""", *args)
+
+        total = sum(r["n"] for r in rows)
+        if not total:
+            return 0, False, ""
+        return (total, total >= rule["threshold"],
+                f"{total} provider error(s) in {rule['window_minutes']} "
+                f"minutes - {_describe(rows)}")
 
     column = {
         "error_rate": "c.end_reason = 'error'",

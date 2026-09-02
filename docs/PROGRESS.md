@@ -3522,6 +3522,77 @@ nobody looks at.
 
 ---
 
+## The alert fired and still did not say what was wrong (2 Sep 2026)
+
+Reported as "the LLM limit was reached during the load test, it was in the logs
+but I got no alert." Half right, and the half that was wrong is the
+interesting one.
+
+The alerts **did** fire, on 31 August:
+
+    11:38  error_rate   16.7% of the last 6 calls ended in an error
+    11:43  error_rate   25.7% of the last 35 calls ended in an error
+    11:42  latency_p95  4.19s
+    12:13  latency_p95  4.83s
+
+All four acknowledged. So the rules existed, the evaluator ran, and somebody
+read them. What none of them said was **OpenAI has hit its token-per-minute
+ceiling** - and finding that out meant opening the worker journal.
+
+### The cause was never recorded
+
+`calls.outcome` held one long line:
+
+    LLMError: type='llm_error' timestamp=1787734781.0728912 label='...'
+    error=APIConnectionError("all LLMs failed ([...]) after 4.42 seconds")
+
+Two problems in one string. The **timestamp is inside the text**, so no two
+identical failures ever group: `GROUP BY outcome` over a fortnight returned
+eleven rows with a count of one each. And the FallbackAdapter reports *itself*
+after trying both legs, so the 429 underneath never reaches the database at
+all. Searching for "429" finds nothing, and no alert could have found it
+either.
+
+So `call_errors` now holds the parts that can be counted - source, provider,
+code, message - parsed from the plugin label and the exception. Verified
+against the real strings already in the table: Sarvam 402, Sarvam 1003, Soniox
+timeout, and a FallbackAdapter failure, which correctly comes out with provider
+and code **null**. That last one is honest rather than fixed: if livekit does
+not chain the cause, we still do not learn the 429, and `_describe` says
+"cause not reported" rather than implying otherwise.
+
+### A rule that fires on the errors, not on a percentage of finished calls
+
+`error_rate` measures completed calls. During a rate limit the calls are still
+running, so the number arrives late and diluted, and says nothing about why.
+`provider_errors` counts the failures themselves and names them:
+
+    12 provider error(s) in 15 minutes - 12x openai llm 429: rate limit -
+    you are sending faster than the plan allows
+
+429, 402 and 401 are three different phone calls to three different people.
+Every one of them used to read as "an error".
+
+**Seeded for every tenant**, at 5 in 15 minutes. The load test did not fail
+because alerting was missing; it failed because nothing named the cause. A rule
+somebody has to remember to create would have repeated that.
+
+### Also in that list, unnoticed until now
+
+Sarvam ran out of credit twice - `"No credits available"` (402) and
+`"Insufficient credits"` - and both went past as ordinary errors. That is not a
+percentage to watch. It is a thing to be told about the first time it happens,
+and now it is.
+
+### The constraint that would have silently rejected everything
+
+The `kind` check from 005 is named `alert_rules_kind_chk`, not `_check`.
+Dropping `_check IF EXISTS` would have succeeded, left the old constraint in
+place, and refused every `provider_errors` rule - with a new, correct-looking
+constraint sitting right beside it.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3539,6 +3610,9 @@ nobody looks at.
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
   sustained concurrent calls. Then re-run `loadtest.sh 20 0.7 700` and find out
   where OUR ceiling is, which today's run never reached
+- **Does livekit chain the FallbackAdapter's cause?** If it does not, the 429
+  is still lost and the alert can only say "cause not reported". Check the next
+  time it happens, from `call_errors` rather than the journal
 - **Decide the LLM fallback**: raise the attempt timeout to Google's 10s floor,
   or take the leg out. As it stands it is a safety net that has never caught
   anything, and is counted on
