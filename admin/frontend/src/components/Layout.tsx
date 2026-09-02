@@ -312,11 +312,10 @@ export function Layout() {
           <img
             src="/worxpertise.png"
             alt="Worxpertise"
-            // Sized by WIDTH, not height. The mark is 3.38:1 with a tagline
-            // under it, so a 28px-tall logo puts "Execute. Enable. Excel." at
-            // about four pixels - present, unreadable, and worse than absent.
-            // 180px wide makes it roughly 53px tall and the tagline legible.
-            className="w-full max-w-[180px] dark:brightness-0 dark:invert"
+            // Sized by WIDTH, not height: the mark is 3.38:1 with a tagline
+            // under it, so setting a height leaves "Execute. Enable. Excel."
+            // at a few pixels - present and unreadable.
+            className="mx-auto w-full max-w-[120px] dark:brightness-0 dark:invert"
             // No file, no broken-image icon. The logo is dropped in separately
             // from the code that shows it, so the two can be out of step for a
             // deploy - an empty strip is a better way to be out of step than a
