@@ -34,6 +34,10 @@ class CurrentUser:
     # grant itself the whole platform by ticking a permission would be a
     # privilege escalation dressed up as a checkbox.
     all_tenants: bool = False
+    # The session row this request's token came from, for the heartbeat. 0 for
+    # a token issued before sessions were tracked - those simply cannot report
+    # activity and expire on their own.
+    session_id: int = 0
 
     @property
     def is_superadmin(self) -> bool:
@@ -96,6 +100,7 @@ async def current_user(
         email=row["email"], must_change_password=row["must_change_password"],
         permissions=frozenset(row["permissions"] or ()),
         all_tenants=bool(row["all_tenants"]),
+        session_id=int(payload.get("sid") or 0),
     )
 
 

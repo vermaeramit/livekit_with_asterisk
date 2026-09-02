@@ -14,18 +14,32 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 async def _issue(user_id: int, tenant_id: int | None, role: str,
-                 request: Request) -> TokenPair:
-    access = security.create_access_token(user_id, tenant_id, role)
+                 request: Request,
+                 last_seen_at: datetime | None = None) -> TokenPair:
+    """A new session row and the pair of tokens for it.
+
+    `last_seen_at` is CARRIED FORWARD on a rotation and defaults to now only
+    for a fresh login. Letting it default on every refresh would have been the
+    same bug the whole feature exists to avoid: the browser refreshes when an
+    access token expires, which happens on its own every fifteen minutes while
+    the layout polls, so an abandoned tab would have reset its own idle clock
+    for a week.
+    """
     raw, hashed = security.new_refresh_token()
 
-    await db.pool().execute(
-        """INSERT INTO user_sessions (user_id, refresh_hash, user_agent, ip, expires_at)
-           VALUES ($1, $2, $3, $4, $5)""",
+    # Inserted first: the access token has to carry the row's id, so the row
+    # has to exist before the token does.
+    session_id = await db.pool().fetchval(
+        """INSERT INTO user_sessions (user_id, refresh_hash, user_agent, ip,
+                                      expires_at, last_seen_at)
+           VALUES ($1, $2, $3, $4, $5, coalesce($6, now())) RETURNING id""",
         user_id, hashed,
         request.headers.get("user-agent", "")[:400],
         request.client.host if request.client else None,
         datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_days),
+        last_seen_at,
     )
+    access = security.create_access_token(user_id, tenant_id, role, session_id)
     return TokenPair(access_token=access, refresh_token=raw,
                      expires_in=settings.access_token_minutes * 60)
 
@@ -66,7 +80,7 @@ async def login(body: LoginRequest, request: Request):
 async def refresh(body: RefreshRequest, request: Request):
     hashed = security.hash_refresh_token(body.refresh_token)
     sess = await db.pool().fetchrow(
-        """SELECT s.id, s.user_id, s.expires_at, s.revoked_at,
+        """SELECT s.id, s.user_id, s.expires_at, s.revoked_at, s.last_seen_at,
                   u.tenant_id, u.role, u.active
              FROM user_sessions s JOIN users u ON u.id = s.user_id
             WHERE s.refresh_hash = $1""", hashed)
@@ -78,12 +92,33 @@ async def refresh(body: RefreshRequest, request: Request):
     if not sess["active"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "account disabled")
 
+    # The idle rule, enforced here because here is the only place it CAN be
+    # enforced for a browser that is gone. A closed laptop has no client left
+    # to log itself out, so the server refuses the next refresh instead.
+    #
+    # One minute of grace, and it is not slack. The browser measures idleness
+    # from the last input; the server measures it from the last HEARTBEAT, and
+    # heartbeats are throttled to one a minute. Without the grace a user active
+    # 59 seconds after their last beat would be refused a minute BEFORE their
+    # own warning appeared - signed out with no warning at all, which is the
+    # one outcome this feature was supposed to remove.
+    idle_for = datetime.now(timezone.utc) - sess["last_seen_at"]
+    if idle_for > timedelta(minutes=settings.idle_timeout_minutes, seconds=60):
+        await db.pool().execute(
+            "UPDATE user_sessions SET revoked_at = now() WHERE id = $1",
+            sess["id"])
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "signed out after "
+                            f"{settings.idle_timeout_minutes} minutes of "
+                            "inactivity")
+
     # Rotate: the old refresh token dies with this request. A stolen token is
     # then usable at most once, and the legitimate client's next refresh fails
     # loudly instead of silently sharing a session with an attacker.
     await db.pool().execute(
         "UPDATE user_sessions SET revoked_at = now() WHERE id = $1", sess["id"])
-    return await _issue(sess["user_id"], sess["tenant_id"], sess["role"], request)
+    return await _issue(sess["user_id"], sess["tenant_id"], sess["role"],
+                        request, last_seen_at=sess["last_seen_at"])
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -92,6 +127,28 @@ async def logout(body: RefreshRequest, user: CurrentUser = Depends(current_user)
         "UPDATE user_sessions SET revoked_at = now() "
         "WHERE refresh_hash = $1 AND user_id = $2 AND revoked_at IS NULL",
         security.hash_refresh_token(body.refresh_token), user.id)
+
+
+@router.post("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+async def heartbeat(user: CurrentUser = Depends(current_user)):
+    """The browser reporting that a person is actually there.
+
+    Sent on real input only - mouse, keyboard, touch - and at most once a
+    minute. Nothing else moves last_seen_at: if ordinary API traffic did, the
+    layout's own 60-second poll for alert and gap counts would keep every
+    abandoned tab signed in until the refresh token expired a week later.
+
+    Deliberately cheap and deliberately quiet. It is called for the whole
+    working day and has nothing to say.
+    """
+    if not user.session_id:
+        # A token issued before sessions carried an id. It cannot report
+        # activity, and will be turned away at its next refresh - which is the
+        # right outcome, once, rather than an error the user cannot act on.
+        return
+    await db.pool().execute(
+        "UPDATE user_sessions SET last_seen_at = now() "
+        " WHERE id = $1 AND revoked_at IS NULL", user.session_id)
 
 
 @router.get("/me", response_model=UserOut)

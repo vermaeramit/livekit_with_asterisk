@@ -618,6 +618,44 @@ The Calls page has the same thing as a filter, and such calls carry a
 > one. Read literally it means "never", which is a mistake becoming a policy.
 > The campaign form warns about it.
 
+### Sessions and the idle timeout
+
+| | |
+|---|---|
+| Access token | 15 minutes, renewed silently. **Not** a session limit |
+| Refresh token | 7 days, rotated on every use |
+| Idle timeout | **30 minutes** without real activity |
+
+Activity means a person: pointer, keyboard, touch, scroll. It does **not** mean
+API traffic - the layout polls counts every 60 seconds, so an abandoned tab
+would otherwise keep itself signed in for a week.
+
+The browser warns 60 seconds before, then signs out and revokes the session.
+The refresh endpoint enforces the same rule independently, which is what
+catches a laptop that was simply closed.
+
+Shutting the laptop in the evening means signing in again in the morning. That
+is the timeout working.
+
+To change the window, set `IDLE_TIMEOUT_MINUTES` in `/opt/aivoice/.env` **and**
+`IDLE_MS` in `admin/frontend/src/lib/idle.tsx`. The server deliberately allows
+one minute more than the browser; keep that gap or users get signed out before
+their own warning appears.
+
+```sql
+-- Who is signed in right now.
+SELECT u.email, s.last_seen_at, s.ip, s.created_at
+  FROM user_sessions s JOIN users u ON u.id = s.user_id
+ WHERE s.revoked_at IS NULL AND s.expires_at > now()
+   AND s.last_seen_at > now() - interval '30 minutes'
+ ORDER BY s.last_seen_at DESC;
+
+-- Sign one person out of everything, now.
+UPDATE user_sessions SET revoked_at = now()
+ WHERE revoked_at IS NULL
+   AND user_id = (SELECT id FROM users WHERE email = 'them@example.com');
+```
+
 ### Verify a transfer
 
 ```bash

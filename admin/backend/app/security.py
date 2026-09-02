@@ -33,13 +33,19 @@ def needs_rehash(hashed: str) -> bool:
 
 # ───────────────────────────── access tokens ─────────────────────────────
 
-def create_access_token(user_id: int, tenant_id: int | None, role: str) -> str:
+def create_access_token(user_id: int, tenant_id: int | None, role: str,
+                       session_id: int) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode(
         {
             "sub": str(user_id),
             "tid": tenant_id,
             "role": role,
+            # Which session this token belongs to. The heartbeat has to say
+            # WHICH row to keep alive, and sending the refresh token every
+            # minute to answer that would put the long-lived credential on the
+            # wire sixty times an hour.
+            "sid": session_id,
             "iat": now,
             "exp": now + timedelta(minutes=settings.access_token_minutes),
             "typ": "access",

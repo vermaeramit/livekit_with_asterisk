@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 7
 
+    # Log someone out after this long with no REAL activity - mouse, keyboard,
+    # touch. Not "no requests": the console polls counts every 60 seconds from
+    # the layout, so an abandoned tab makes traffic for ever and an idle
+    # timeout measured that way would never once fire. See migration 037.
+    idle_timeout_minutes: int = 30
+
     cors_origins: str = "*"
 
     @property

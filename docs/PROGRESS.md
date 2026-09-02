@@ -3421,6 +3421,51 @@ placeholders, 20 arguments.
 
 ---
 
+## Nobody stays signed in overnight any more (2 Sep 2026)
+
+*"agar main logout karna bhool jaata hoon, to kya koi timeout hota hai?"*
+
+No. There was none at all. The 15-minute access token reads like a session
+limit and is not one - it is a blast radius, and the browser renewed it
+silently. An unlocked laptop stayed signed in until the seven-day refresh token
+expired.
+
+**The trap this feature is built around:** the layout polls alert and gap
+counts every 60 seconds, on every page. An abandoned tab therefore talks to the
+server for as long as it is open, so an idle timeout measured from the last API
+call would never once have fired. It would have looked present, been
+demonstrable in a code review, and done nothing.
+
+So activity means a person: pointer, keyboard, touch, scroll. The browser sends
+a heartbeat on those and nothing else, at most once a minute, and only the
+heartbeat moves `last_seen_at`.
+
+The same trap, twice more, in places that are easy to miss:
+
+- **Rotation.** Every refresh writes a new session row. Letting `last_seen_at`
+  default to `now()` there would have reset the idle clock every fifteen
+  minutes for a week - the browser refreshes when a token expires, which
+  happens on its own while the layout polls. It is carried forward instead.
+- **Whose clock.** The browser measures from the last input; the server from
+  the last heartbeat, which is up to a minute behind. Without a minute of grace
+  on the server, a user active 59 seconds after their last beat is refused
+  BEFORE their own warning appears - signed out with no warning, which is the
+  one outcome the warning exists to prevent.
+
+**Enforced on the server**, in the refresh endpoint, because that is the only
+place it can be enforced for a browser that is gone. A closed laptop has no
+client left to log itself out.
+
+Moving the mouse counts. The first version wanted clicks and keys, which would
+have signed out anybody reading a long transcript mid-sentence - a broken
+console, not a security policy.
+
+The consequence to know: **shut the laptop at six and you log in again at
+nine.** That is what an idle timeout is, and it follows from choosing 30
+minutes idle with no absolute cap. It will be felt every morning.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

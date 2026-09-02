@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import * as apiClient from '@/lib/api'
+import { IdleWarning, useIdleTimeout } from '@/lib/idle'
 import type { Permission, User } from '@/types'
 
 interface AuthState {
@@ -85,5 +86,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user, ready, signIn, signOut, refreshUser, can],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  // Only while somebody is signed in. Running the listeners on the login page
+  // would be a timer counting down to nothing.
+  const { warningLeft, staySignedIn } = useIdleTimeout(Boolean(user), () => {
+    // Through signOut rather than clearTokens, so the session is REVOKED on
+    // the server. Dropping the tokens locally would leave a live refresh token
+    // in a database somewhere, which is not what being signed out means.
+    void signOut()
+  })
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {warningLeft !== null && (
+        <IdleWarning secondsLeft={warningLeft} onStay={staySignedIn} />
+      )}
+    </AuthContext.Provider>
+  )
 }
