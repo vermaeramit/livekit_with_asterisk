@@ -305,8 +305,22 @@ export function Layout() {
         <div className="flex-1 px-4 py-2">
           <NavItems />
         </div>
-        <div className="border-t border-border px-5 py-3">
-          <p className="text-2xs text-muted-foreground">Phase 2 · access &amp; campaigns</p>
+        <div className="border-t border-border px-5 py-4">
+          {/* Served from public/, not imported: the file is dropped in by
+              whoever owns the brand, and a missing import breaks the build
+              where a missing file only leaves a gap. */}
+          <img
+            src="/worxpertise.png"
+            alt="Worxpertise"
+            className="h-7 w-auto max-w-full object-contain dark:brightness-0 dark:invert"
+            // No file, no broken-image icon. The logo is dropped in separately
+            // from the code that shows it, so the two can be out of step for a
+            // deploy - an empty strip is a better way to be out of step than a
+            // grey placeholder with alt text in it.
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+            }}
+          />
         </div>
       </aside>
 
