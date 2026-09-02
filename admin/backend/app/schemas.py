@@ -242,6 +242,7 @@ class AgentConfigOut(BaseModel):
     # Spoken while search_knowledge_base runs. None = silence.
     kb_filler_enabled: bool = True
     kb_filler_message: str | None
+    stt_context_terms: list[str] = Field(default_factory=list)
 
     # Things that are wrong but not invalid - see agent_config._warnings.
     # Returned on read as well as on save, so a mismatch that is already there
@@ -396,6 +397,35 @@ class AgentConfigUpdate(BaseModel):
     # hears a sentence about waiting and then waits anyway.
     kb_filler_enabled: bool | None = None
     kb_filler_message: str | None = Field(default=None, max_length=200)
+
+    stt_context_terms: list[str] | None = None
+
+    @field_validator("stt_context_terms")
+    @classmethod
+    def _terms_are_clean(cls, v):
+        """De-duplicated, trimmed and capped.
+
+        The same cleaning runs in the agent as well, and that is not
+        duplication for its own sake: this is the console's door, and the agent
+        guards the wire. A row edited in psql never passes through here.
+
+        The cap is ours and conservative. An oversized context does not degrade
+        gracefully - it fails the STT handshake, which takes the call with it.
+        """
+        if v is None:
+            return v
+        out: list[str] = []
+        seen: set[str] = set()
+        for term in v:
+            t = " ".join(str(term).split())[:60].strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                out.append(t)
+        if len(out) > 150:
+            raise ValueError(
+                f"{len(out)} terms is more than the 150 this sends to the "
+                "speech recogniser. Keep the ones callers actually say.")
+        return out
 
     @field_validator("prompt_timezone")
     @classmethod
@@ -843,6 +873,10 @@ class CallListItem(BaseModel):
     # NULL = not refused. Otherwise why: 'closed' or 'holiday'. The caller
     # asked for a person and there was nobody to give them.
     transfer_refused: str | None = None
+    # Characters of transcript per language the STT identified, e.g.
+    # {"hi": 812, "en": 233}. NULL before this existed, and for providers that
+    # do not identify languages.
+    detected_languages: dict[str, int] | None = None
     turn_count: int | None
     campaign_id: int | None
     campaign_name: str | None = None

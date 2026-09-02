@@ -18,6 +18,7 @@ import asyncio
 import dataclasses
 import datetime
 import functools
+import json
 import logging
 import os
 import re
@@ -338,6 +339,9 @@ class KBAgent(Agent):
         #
         # Requiring the caller to have spoken SINCE being asked is a gate that
         # holds however many routes exist, because only the caller can move it.
+        # Characters of final transcript per detected language, from Soniox's
+        # own identification. Written to the call row at the end.
+        self.language_chars: dict[str, int] = {}
         self.transfer_asked_at: int | None = None
         # Why a handoff was turned down, for the call row. The interesting list
         # this makes is not failed transfers - it is callers who wanted a
@@ -376,6 +380,48 @@ class KBAgent(Agent):
         return out
 
     async def stt_node(self, audio, model_settings):
+        """One place to watch every transcript, whatever route it took here.
+
+        _stt_events has five separate yields across two paths, and a language
+        tap on each of them is a tap somebody forgets to add to the sixth. One
+        wrapper cannot be forgotten.
+        """
+        async for ev in self._stt_events(audio, model_settings):
+            self._note_language(ev)
+            yield ev
+
+    def _note_language(self, ev) -> None:
+        """Count characters per language, from what Soniox already tells us.
+
+        `enable_language_identification` defaults to true in the plugin and we
+        never turned it off, so every transcript has arrived carrying a
+        detected language since the day Soniox went in. Nothing read it. The
+        language shown against a call was `cfg.language` - the campaign's
+        setting, which is the same for every call and says nothing about what
+        the caller actually spoke.
+
+        Characters rather than turns, because these calls are Hinglish and the
+        interesting figure is the MIX. Counting turns would score a two-word
+        English aside the same as a full Hindi sentence.
+
+        Finals only. Interims arrive continuously and revise themselves, so
+        counting them would weight the beginning of every sentence by however
+        many times it was re-sent.
+        """
+        if getattr(ev, "type", None) != lk_stt.SpeechEventType.FINAL_TRANSCRIPT:
+            return
+        alts = getattr(ev, "alternatives", None) or []
+        if not alts:
+            return
+        lang = (getattr(alts[0], "language", "") or "").strip().lower()
+        text = getattr(alts[0], "text", "") or ""
+        if not lang or not text:
+            return
+        # "hi-IN" and "hi" are the same language and must not become two rows.
+        lang = lang.split("-")[0]
+        self.language_chars[lang] = self.language_chars.get(lang, 0) + len(text)
+
+    async def _stt_events(self, audio, model_settings):
         """Hold our own ceiling on how long a transcript may stay provisional.
 
         The plugin streams interim transcripts continuously and withholds only
@@ -824,6 +870,39 @@ ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
 _TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000}
 
 
+# Conservative, and ours rather than Soniox's - their published limit is not
+# something this code has verified. An oversized context does not degrade, it
+# fails the websocket handshake, and that takes the whole call with it. Erring
+# low costs a few terms nobody was going to need.
+_MAX_CONTEXT_TERMS = 150
+_MAX_TERM_CHARS = 60
+
+
+def _context_terms(cfg) -> list[str]:
+    """The campaign's vocabulary, cleaned and capped.
+
+    Cleaned here as well as in the console because this is the last point
+    before the wire: a row edited by hand in psql, or written by an older
+    console, reaches the provider through here and nowhere else.
+    """
+    raw = getattr(cfg, "stt_context_terms", None) or []
+    out: list[str] = []
+    seen = set()
+    for term in raw:
+        if not isinstance(term, str):
+            continue
+        t = " ".join(term.split())[:_MAX_TERM_CHARS].strip()
+        key = t.lower()
+        if t and key not in seen:
+            seen.add(key)
+            out.append(t)
+        if len(out) >= _MAX_CONTEXT_TERMS:
+            logger.warning("stt context truncated to %d terms",
+                           _MAX_CONTEXT_TERMS)
+            break
+    return out
+
+
 def _soniox_lang(language: str) -> str:
     """Soniox takes bare ISO codes ("hi"); the config carries Sarvam's regional
     form ("hi-IN"). Passing hi-IN through is not an error the API reports - it
@@ -866,6 +945,18 @@ def _build_stt(provider: str, cfg, key: str, use_config_model: bool):
             opts["endpoint_latency_adjustment_level"] = cfg.stt_endpoint_level
         if use_config_model and cfg.stt_endpoint_sensitivity is not None:
             opts["endpoint_sensitivity"] = float(cfg.stt_endpoint_sensitivity)
+
+        # Terms the model has no reason to know. "Splendor Plus Flex" reached
+        # the knowledge base as "Lender Plus Flex" and matched a different bike
+        # at 0.57 - by then the wrong words were already in the transcript and
+        # no prompt could undo it.
+        #
+        # Sent on the config leg only. A fallback leg runs because the first
+        # provider is down, and that is not the moment to add an untested
+        # parameter to the connection that is meant to rescue the call.
+        terms = _context_terms(cfg) if use_config_model else []
+        if terms:
+            opts["context"] = soniox.ContextObject(terms=terms)
         return soniox.STT(api_key=key, params=soniox.STTOptions(**opts))
     raise ValueError(f"unknown STT provider '{provider}'")
 
@@ -1792,6 +1883,13 @@ async def entrypoint(ctx: JobContext):
                 await (await store.pool()).execute(
                     "UPDATE calls SET outcome=$2 WHERE id=$1", call_id,
                     f"{session_error['source']}: {session_error['message']}")
+
+            # Independent of how the call ended: what the caller SPOKE is not
+            # part of the transfer outcome.
+            if agent.language_chars:
+                await (await store.pool()).execute(
+                    "UPDATE calls SET detected_languages = $2::jsonb WHERE id = $1",
+                    call_id, json.dumps(agent.language_chars))
 
             # Queued here, at the very end, and never during the call: the
             # extraction is an LLM round trip and nothing is worth adding to a

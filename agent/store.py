@@ -59,6 +59,9 @@ class AgentConfig:
     # migration 017 for why these are per-campaign and not constants.
     stt_endpoint_level: Optional[int]
     stt_endpoint_sensitivity: Optional[float]
+    # Words the STT would otherwise get wrong - product names, dealer names.
+    # Soniox only; every other provider ignores it.
+    stt_context_terms: Optional[list]
     # Appended to the end of the prompt, once per call. Off by default - see
     # migration 023. Read here because _as_config only keeps declared fields:
     # a column the dataclass has not heard of is silently dropped.
@@ -132,7 +135,8 @@ class CampaignUnavailable(Exception):
 # would see no days and close the campaign - a silent refusal of every handoff,
 # discovered only by a caller asking for a person. Named explicitly, because
 # the failure of forgetting one is not an exception.
-_JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays")
+_JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
+              "stt_context_terms")
 
 
 def _as_config(row) -> AgentConfig:

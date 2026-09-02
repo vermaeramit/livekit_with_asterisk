@@ -38,9 +38,23 @@ def recording_file(sip_call_id: str | None) -> Path | None:
 LIST_COLUMNS = """
     c.id, c.started_at, c.ended_at, c.duration_ms, c.caller, c.callee,
     c.language, c.end_reason, c.limit_hit, c.transferred_to, c.turn_count,
-    c.transfer_refused,
+    c.transfer_refused, c.detected_languages,
     c.campaign_id, c.tenant_id, cam.name AS campaign_name
 """
+
+
+def _decoded(row) -> dict:
+    """asyncpg returns JSONB as text and no codec is registered.
+
+    A column added to LIST_COLUMNS without being added here arrives as a
+    string, and pydantic then rejects the whole row - every call on the page
+    disappears because of one field nobody looks at. It has happened; see the
+    note on JSON_COLS in agent_config.py.
+    """
+    d = dict(row)
+    if isinstance(d.get("detected_languages"), str):
+        d["detected_languages"] = json.loads(d["detected_languages"])
+    return d
 
 
 @router.get("", response_model=CallListResponse)
@@ -115,7 +129,7 @@ async def list_calls(
         *args)
 
     return CallListResponse(
-        items=[CallListItem(**dict(r)) for r in rows],
+        items=[CallListItem(**_decoded(r)) for r in rows],
         total=total, page=page, page_size=page_size)
 
 
@@ -159,7 +173,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
              FROM tool_invocations WHERE call_id = $1 ORDER BY created_at, id""",
         call_id)
 
-    d = dict(row)
+    d = _decoded(row)
     # asyncpg returns JSONB as text unless a codec is registered, and none is.
     if isinstance(d.get("dialer_context"), str):
         d["dialer_context"] = json.loads(d["dialer_context"])

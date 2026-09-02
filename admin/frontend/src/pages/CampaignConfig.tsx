@@ -28,6 +28,7 @@ import { ProviderKeys } from '@/components/ProviderKeys'
 import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
+import { TermList } from '@/components/TermList'
 import { TransferHours } from '@/components/TransferHours'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
@@ -671,6 +672,12 @@ export function CampaignConfig() {
                 />
               </div>
             )}
+
+            <TermList
+              terms={value.stt_context_terms ?? []}
+              onChange={(t) => set('stt_context_terms', t)}
+              provider={value.stt_provider}
+            />
 
             <ComboField
               label="Speech-to-text model"

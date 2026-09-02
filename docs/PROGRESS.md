@@ -3466,6 +3466,62 @@ minutes idle with no absolute cap. It will be felt every morning.
 
 ---
 
+## Two things Soniox was already offering (2 Sep 2026)
+
+Asked whether ASR was built into the STT. It is - they are two names for the
+same thing - but reading the plugin to answer properly turned up two features
+sitting unused.
+
+### The language was there all along
+
+`enable_language_identification` defaults to **true** in the plugin, and we
+never turned it off. Every transcript has arrived carrying a detected language
+since the day Soniox went in. Nothing read it.
+
+What the console showed against a call was `agent_config.language` - the
+CAMPAIGN's setting. Every row said hi-IN because the campaign says hi-IN. It
+was a fact about our configuration presented as a fact about the caller, and it
+sat next to the call time and the number where nobody would question it.
+
+Stored as **characters per language**, not a winner. These calls are Hinglish
+and the mix is the whole point; a single label would throw away the thing worth
+knowing. Counting turns instead of characters would have scored a two-word
+English aside the same as a full Hindi sentence.
+
+`stt_node` had five yields across two paths, so the tap went on a wrapper
+around the whole generator rather than at each one. Five taps is four chances
+to forget the sixth.
+
+### Words the recogniser has never heard
+
+`STTOptions.context` takes a `ContextObject` with a `terms` list. That is the
+fix for "Splendor Plus Flex" reaching the knowledge base as "Lender Plus Flex"
+and matching a different motorcycle at 0.57 - a failure no prompt could touch,
+because the wrong words were in the transcript before the model saw them.
+
+Per campaign, cleaned in two places on purpose: the console is the door, and
+the agent guards the wire. A row edited by hand in psql never passes through
+the console.
+
+The cap - 150 terms, 60 characters each - is **ours and conservative**, not
+Soniox's published limit, which this code has not verified. An oversized
+context does not degrade; it fails the websocket handshake and takes the call
+with it. Erring low costs a few terms nobody was going to need.
+
+Sent on the primary leg only. A fallback runs because the first provider is
+down, and that is not the moment to add an untested parameter to the connection
+meant to rescue the call.
+
+### The JSONB trap, for the third time this week
+
+`detected_languages` is JSONB and asyncpg returns those as text. Caught before
+deploying this time, and the decode now sits in one `_decoded()` helper next to
+the column list, with a note saying what happens when the two drift: pydantic
+rejects the row and every call disappears from the page because of one field
+nobody looks at.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

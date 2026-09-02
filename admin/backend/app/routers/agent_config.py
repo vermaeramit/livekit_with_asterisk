@@ -30,6 +30,7 @@ FIELDS = (
     "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
     "kb_filler_enabled", "kb_filler_message",
+    "stt_context_terms",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     "transfer_enabled", "transfer_to", "transfer_message",
     "transfer_confirm", "transfer_confirm_message",
@@ -121,7 +122,8 @@ async def _get(campaign_id: int) -> dict:
     # asyncpg returns JSONB as text without a codec. Named explicitly, because
     # forgetting one does not fail - the value arrives as a string and whatever
     # reads it quietly does the wrong thing.
-    for col in ("postback_fields", "transfer_hours", "transfer_holidays"):
+    for col in ("postback_fields", "transfer_hours", "transfer_holidays",
+                "stt_context_terms"):
         if isinstance(d.get(col), str):
             d[col] = json.loads(d[col])
     # Computed on the way out, so a mismatch already in the database shows the
@@ -170,7 +172,8 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     # and took transfer_hours the day it was added - the config page returned
     # 500 for every campaign until both this tuple and the decode above knew
     # about the new columns. Add a JSONB column, add it in BOTH places.
-    JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays")
+    JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
+                 "stt_context_terms")
     values = [json.dumps(v) if k in JSON_COLS and v is not None else v
               for k, v in fields.items()]
     sets = ", ".join(

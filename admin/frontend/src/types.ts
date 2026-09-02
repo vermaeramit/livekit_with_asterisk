@@ -105,6 +105,9 @@ export interface CallListItem {
   // null = not refused. Otherwise why: 'closed' or 'holiday'. The caller
   // asked for a person and there was nobody to hand them to.
   transfer_refused: string | null
+  // Characters of transcript per language the STT identified. This is what was
+  // SPOKEN; `language` above is what the campaign is configured for.
+  detected_languages: Record<string, number> | null
   turn_count: number | null
   campaign_id: number | null
   campaign_name: string | null
@@ -241,6 +244,8 @@ export interface AgentConfig {
   // Off = stay silent while searching, keeping the wording below for later.
   kb_filler_enabled: boolean
   kb_filler_message: string | null
+  // Words the speech recogniser would otherwise get wrong. Soniox only.
+  stt_context_terms: string[]
 
   // Wrong but not invalid — a save is never blocked on these. Computed on read
   // too, so a mismatch already in the database shows on opening the page.

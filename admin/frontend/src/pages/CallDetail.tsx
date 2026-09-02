@@ -19,6 +19,7 @@ import {
 import { RecordingPlayer } from '@/components/RecordingPlayer'
 import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
+import { LanguageBreakdown } from '@/components/SpokenLanguages'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
@@ -546,7 +547,9 @@ export function CallDetail() {
           <p className="mt-0.5 text-xs text-muted-foreground">
             {formatDateTime(c.started_at)}
             {c.campaign_name ? ` · ${c.campaign_name}` : ''}
-            {c.language ? ` · ${c.language}` : ''}
+            {/* The campaign's setting. What was actually spoken is below -
+                they are different questions and were shown as one. */}
+            {c.language ? ` · set to ${c.language}` : ''}
             {c.room_name ? ` · ${c.room_name}` : ''}
           </p>
         </div>
@@ -564,6 +567,17 @@ export function CallDetail() {
               </p>
             </div>
           </div>
+        </Card>
+      )}
+
+      {c.detected_languages && (
+        <Card className="p-4">
+          <p className="text-xs font-medium">Languages spoken</p>
+          <p className="mb-3 mt-0.5 text-2xs text-muted-foreground">
+            Identified by the speech recogniser from what the caller said, by
+            share of the transcript. Not the campaign's language setting.
+          </p>
+          <LanguageBreakdown detected={c.detected_languages} />
         </Card>
       )}
 
