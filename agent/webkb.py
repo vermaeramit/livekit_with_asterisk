@@ -52,6 +52,11 @@ MIN_TEXT_CHARS = 200
 # nothing and competes with the ones that do.
 _ALT_NOISE = {"bitmap", "picture", "image", "logo", "shape", "s"}
 
+# No real table is wider than this, and one that claims to be is Excel's
+# formatting rather than data. Without the cap a single stray row at column
+# 16,384 defines the width of every row beneath it.
+_MAX_COLS = 24
+
 _UA = "aivoice-kb/1.0 (+knowledge base import)"
 
 
@@ -218,12 +223,28 @@ class _Reader(HTMLParser):
 
     # -- tables --
     def _flush_table(self) -> None:
-        """Render one top-level table, or drop it if it holds nothing."""
-        rows = [r for r in self._rows if any(c.strip() for c in r)]
+        """Render one top-level table, or drop it if it holds nothing.
+
+        The width is taken AFTER trailing empty cells are stripped from every
+        row, and capped. Both of those are load-bearing.
+
+        Measured on the workbook this was built for: one sheet held 1087 real
+        rows of six cells and four formatting rows of 16,384 - Excel's entire
+        column count. Padding every row to the widest turned 3 MB of HTML into
+        35 MB of text and 17.8 million pipe characters, all of which would have
+        been chunked and embedded.
+        """
+        rows = []
+        for r in self._rows:
+            while r and not r[-1].strip():
+                r.pop()
+            if any(c.strip() for c in r):
+                rows.append(r)
         self._rows = []
         if not rows:
             return
-        width = max(len(r) for r in rows)
+
+        width = min(max(len(r) for r in rows), _MAX_COLS)
         # One cell wide is not a table. Excel uses those as layout boxes, and a
         # single-column pipe table is noise around text that reads fine plain.
         if width < 2:
@@ -232,8 +253,8 @@ class _Reader(HTMLParser):
             return
 
         def line(cells: list[str]) -> str:
-            padded = list(cells) + [""] * (width - len(cells))
-            return "| " + " | ".join(c.replace("|", "/") for c in padded) + " |"
+            cut = list(cells[:width]) + [""] * (width - len(cells))
+            return "| " + " | ".join(c.replace("|", "/") for c in cut) + " |"
 
         body = [line(rows[0]), "|" + " --- |" * width]
         body += [line(r) for r in rows[1:]]
@@ -258,6 +279,20 @@ def _clean_block(s: str) -> str:
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r" *\n *", "\n", s)
     return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+_TABLE_PUNCT = re.compile(r"[|\-\s]+")
+
+
+def prose_length(text: str) -> int:
+    """How much of this is actually words.
+
+    A sheet of screenshots still produces a grid, and the grid has characters
+    in it. Counting the raw length called an image-only sheet 236 characters of
+    content, when 176 of those were pipes and dashes. What decides whether a
+    page is worth embedding is what is left once the table drawing is removed.
+    """
+    return len(_TABLE_PUNCT.sub("", text))
 
 
 def extract(markup: str) -> tuple[str, int]:
@@ -285,6 +320,23 @@ def is_workbook(markup: str) -> bool:
     head = markup[:4000].lower()
     return ("microsoft excel" in head or "excel.sheet" in head
             or "<frameset" in markup[:8000].lower())
+
+
+# Excel writes the tab names into a JavaScript array in the frameset. They are
+# the only place the real names exist - "Flex Fuel FAQ", "New Prices Oil &
+# Consummables" - and without them every citation on this knowledge base would
+# read "sheet031.htm", which tells a reader nothing about where an answer came
+# from.
+_SHEET_NAMES = re.compile(r"(?is)c_aSheetNames\s*=\s*new\s+Array\((.*?)\)")
+_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def workbook_sheet_names(markup: str) -> list[str]:
+    m = _SHEET_NAMES.search(markup)
+    if not m:
+        return []
+    return [html.unescape(n).replace("\\'", "'").strip()
+            for n in _QUOTED.findall(m.group(1))]
 
 
 def workbook_pages(url: str, markup: str) -> list[str]:
