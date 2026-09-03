@@ -264,6 +264,23 @@ class _Reader(HTMLParser):
         return _clean_block("".join(self.out))
 
 
+# An encoded image that arrived as text. In this workbook one sheet produced a
+# single 284,651-character line of it, sitting directly beneath a real
+# FEATURE / ADVANTAGE / BENEFIT table - so the page could not simply be
+# rejected, the blob had to come out of it.
+#
+# Matched by SHAPE rather than by the tag it came from. Excel emits images
+# through VML, conditional comments and data URIs depending on the version that
+# wrote the file, and a filter tied to one of those is a filter that works on
+# one export. Nothing anybody says has a hundred and twenty unbroken
+# alphanumeric characters in it.
+_B64 = re.compile(r"[A-Za-z0-9+/]{120,}={0,2}")
+
+
+def _drop_blobs(s: str) -> str:
+    return _B64.sub(" ", s)
+
+
 def _clean(s: str) -> str:
     """One line, no non-breaking spaces.
 
@@ -271,11 +288,11 @@ def _clean(s: str) -> str:
     a plain search. Left in, it reaches the embedding as a different token from
     a space and every phrase a caller might say misses.
     """
-    return re.sub(r"[\s\xa0​]+", " ", s).strip()
+    return re.sub(r"[\s\xa0\u200b]+", " ", _drop_blobs(s)).strip()
 
 
 def _clean_block(s: str) -> str:
-    s = s.replace("\xa0", " ").replace("​", "")
+    s = _drop_blobs(s).replace("\xa0", " ").replace("\u200b", "")
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r" *\n *", "\n", s)
     return re.sub(r"\n{3,}", "\n\n", s).strip()
@@ -322,21 +339,38 @@ def is_workbook(markup: str) -> bool:
             or "<frameset" in markup[:8000].lower())
 
 
-# Excel writes the tab names into a JavaScript array in the frameset. They are
-# the only place the real names exist - "Flex Fuel FAQ", "New Prices Oil &
-# Consummables" - and without them every citation on this knowledge base would
-# read "sheet031.htm", which tells a reader nothing about where an answer came
-# from.
-_SHEET_NAMES = re.compile(r"(?is)c_aSheetNames\s*=\s*new\s+Array\((.*?)\)")
-_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# Excel writes the tab names into the frameset, one assignment per tab:
+#
+#     var c_lTabs=46;
+#     c_rgszSh[0] = "HOME";
+#     c_rgszSh[3] = "Hero\xa0Connect\xa0Query\xa0Dispositions";
+#
+# They are the only place the real names exist, and without them every citation
+# on this knowledge base would read "sheet031.htm", which tells a reader nothing
+# about where an answer came from. Note the \xa0 again, in the names this time.
+_SHEET_NAME = re.compile(r'c_rgszSh\[(\d+)\]\s*=\s*"((?:[^"\\]|\\.)*)"')
+
+# Each sheet file names its own tab index. Read from the sheet rather than
+# assumed from its position: this workbook has 47 sheet files and 46 tabs, so
+# one of them is hidden, and lining the two lists up by position would put the
+# wrong name on every sheet after it - a citation that is confidently wrong.
+_ACTIVE_SHEET = re.compile(r"fnSetActiveSheet\((\d+)\)")
 
 
-def workbook_sheet_names(markup: str) -> list[str]:
-    m = _SHEET_NAMES.search(markup)
-    if not m:
-        return []
-    return [html.unescape(n).replace("\\'", "'").strip()
-            for n in _QUOTED.findall(m.group(1))]
+def workbook_sheet_names(markup: str) -> dict[int, str]:
+    """-> {tab index: name}."""
+    out = {}
+    for idx, raw in _SHEET_NAME.findall(markup):
+        name = _clean(html.unescape(raw).replace("\\'", "'"))
+        if name:
+            out[int(idx)] = name
+    return out
+
+
+def sheet_index(markup: str) -> int | None:
+    """Which tab this sheet file is, as the file itself states."""
+    m = _ACTIVE_SHEET.search(markup)
+    return int(m.group(1)) if m else None
 
 
 def workbook_pages(url: str, markup: str) -> list[str]:
