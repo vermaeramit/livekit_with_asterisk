@@ -271,28 +271,22 @@ export interface IngestEvent {
  * been consumed, so a retry would send an empty body. The caller sees the 401
  * and can try again once the interceptor has renewed the token.
  */
-export async function upload<T = unknown>(
-  path: string,
-  file: File,
-  onProgress?: (percent: number) => void,
+/**
+ * Drive an XHR that answers with newline-delimited JSON, and resolve on the
+ * final `done` line.
+ *
+ * Shared by the file upload and the URL import. They differ only in what they
+ * send; the awkward parts - responseText only ever grows, the tail is usually
+ * a partial line, and a failure after the stream opens arrives as a line
+ * rather than a status - are the same either way and are easy to get subtly
+ * wrong twice.
+ */
+function ndjson<T>(
+  xhr: XMLHttpRequest,
+  send: () => void,
   onEvent?: (event: IngestEvent) => void,
 ): Promise<T> {
-  const form = new FormData()
-  form.append('file', file)
-
   return new Promise<T>((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', BASE + path)
-    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`)
-
-    // A 30 MB PDF over a slow link with no feedback reads as a hung page.
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100)
-    }
-
-    // The response is NDJSON. responseText only grows, so track how much has
-    // already been parsed and take whole lines from the remainder - the tail is
-    // usually a partial line and must wait for the rest.
     let consumed = 0
     let last: IngestEvent | null = null
 
@@ -307,18 +301,17 @@ export async function upload<T = unknown>(
           last = JSON.parse(line) as IngestEvent
           onEvent?.(last)
         } catch {
-          /* a malformed line is not worth failing the upload over */
+          /* a malformed line is not worth failing the whole job over */
         }
       }
     }
 
     xhr.onprogress = drain
-
     xhr.onload = () => {
       drain()
       if (xhr.status < 200 || xhr.status >= 300) {
         // Errors are raised before the stream starts, so the body is ordinary JSON
-        let body: any = null
+        let body: unknown = null
         try {
           body = xhr.responseText ? JSON.parse(xhr.responseText) : null
         } catch {
@@ -327,10 +320,10 @@ export async function upload<T = unknown>(
         reject(new ApiError(xhr.status, messageOf(xhr.status, body)))
         return
       }
-      // Once the stream is open the status is already 200, so a failure can only
-      // arrive as a line - it must not be mistaken for success.
+      // Once the stream is open the status is already 200, so a failure can
+      // only arrive as a line - it must not be mistaken for success.
       if (last?.stage === 'error') {
-        reject(new ApiError(502, String(last.message ?? 'ingestion failed')))
+        reject(new ApiError(502, String(last.message ?? 'the job failed')))
         return
       }
       if (last?.stage === 'done') {
@@ -339,13 +332,52 @@ export async function upload<T = unknown>(
       }
       reject(new ApiError(0, 'the server closed the connection before finishing'))
     }
-
-    xhr.onerror = () => reject(new ApiError(0, 'the upload could not reach the API'))
-    xhr.ontimeout = () => reject(new ApiError(0, 'the upload timed out'))
-    // Extraction, chunking and embedding all happen before the final line.
-    xhr.timeout = 600_000
-    xhr.send(form)
+    xhr.onerror = () => reject(new ApiError(0, 'the request could not reach the API'))
+    xhr.ontimeout = () => reject(new ApiError(0, 'the request timed out'))
+    // Extraction, chunking and embedding all happen before the final line, and
+    // a workbook of 47 sheets takes minutes.
+    xhr.timeout = 900_000
+    send()
   })
+}
+
+/**
+ * Import a URL into the knowledge base, streaming progress as it goes.
+ *
+ * Not `api()`: that reads the whole body before resolving, which would leave
+ * the console on a spinner for the length of a 47-sheet embed.
+ */
+export async function postStream<T = unknown>(
+  path: string,
+  body: unknown,
+  onEvent?: (event: IngestEvent) => void,
+): Promise<T> {
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', BASE + path)
+  xhr.setRequestHeader('Content-Type', 'application/json')
+  if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`)
+  return ndjson<T>(xhr, () => xhr.send(body === undefined ? null : JSON.stringify(body)), onEvent)
+}
+
+export async function upload<T = unknown>(
+  path: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+  onEvent?: (event: IngestEvent) => void,
+): Promise<T> {
+  const form = new FormData()
+  form.append('file', file)
+
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', BASE + path)
+  if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`)
+
+  // A 30 MB PDF over a slow link with no feedback reads as a hung page.
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100)
+  }
+
+  return ndjson<T>(xhr, () => xhr.send(form), onEvent)
 }
 
 /**

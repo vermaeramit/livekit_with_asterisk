@@ -527,6 +527,31 @@ class KbDocument(BaseModel):
     updated_at: datetime
 
 
+class KbSourceIn(BaseModel):
+    url: str = Field(min_length=8, max_length=2000,
+                     pattern=r"^https?://")
+    title: str | None = Field(default=None, max_length=200)
+
+
+class KbSourceOut(BaseModel):
+    id: int
+    campaign_id: int | None
+    url: str
+    title: str | None = None
+    last_fetched_at: datetime | None = None
+    last_status: str | None = None
+    last_error: str | None = None
+    page_count: int = 0
+    # [{"name": "New Prices Oil & Consummables", "why": "no readable text (3 images)"}]
+    # Names rather than a count, because the useful sentence is which page the
+    # agent cannot read - not how many.
+    skipped: list = Field(default_factory=list)
+    document_count: int = 0
+    enabled_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
 class KbIngestResult(BaseModel):
     filename: str
     # created | updated | unchanged | empty

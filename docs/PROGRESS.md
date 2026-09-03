@@ -3593,6 +3593,90 @@ constraint sitting right beside it.
 
 ---
 
+## A knowledge base from a link (2 Sep 2026)
+
+Asked whether the knowledge base could take a URL as well as Word and PDF. It
+can, and almost none of what a generic answer would have built was right.
+
+### Everything a crawler assumes about that file is wrong
+
+The URL given was a real one, so it could be read rather than imagined. It is
+an Excel workbook exported to HTML, and:
+
+- **the page has no content.** It is a `<frameset>` whose job is to load two
+  other pages. A crawler imports an empty document and reports success.
+- **the links are in a JavaScript array**, not in `<a href>`. The
+  "page + its links" design agreed at the start would have found **zero pages**
+  and looked like it worked.
+- **the content is tables.** `trafilatura`, which was the first proposal, is
+  built for articles and would have flattened a four-column dispositions table
+  into a paragraph.
+- **the words are joined by ` `.** Searching the raw HTML for "when to
+  raise" found nothing and nearly led to the conclusion that the whole workbook
+  was images. It was the non-breaking spaces.
+
+So this is a workbook reader that also handles ordinary pages, and it says so.
+No new dependencies: stdlib `urllib` and `html.parser` read machine-generated
+markup perfectly well, and `kb.py` is pinned in two requirements files that a
+comment already begs people to keep in step.
+
+### Three bugs, each found by running it rather than reading it
+
+- **35 MB of text out of 3 MB of HTML.** One sheet held 1087 real rows of six
+  cells and four Excel formatting rows of 16,384 - the entire column count.
+  Padding every row to the widest produced 17.8 million pipe characters, all of
+  which would have been embedded. Trailing empty cells are now stripped per row
+  before the width is taken, and the width is capped.
+- **284,651 characters of base64 on one line**, an encoded image sitting
+  directly under a real FEATURE / ADVANTAGE / BENEFIT table - so the page could
+  not be rejected, the blob had to come out of it. Filtered by shape rather than
+  by tag: Excel emits images through VML, conditional comments or data URIs
+  depending on the version, and nothing anybody says has 120 unbroken
+  alphanumeric characters in it. That one filter took the import from 1,163,338
+  characters to 309,502.
+- **Every sheet name off by one.** The names are in a `c_rgszSh` array and each
+  sheet declares an index through `fnSetActiveSheet`, but that index is the
+  file position and there are 47 files against 46 array entries. The Destini
+  offer came out labelled "New Prices Oil & Consummables". `tabstrip.htm` states
+  the mapping outright - `<a href="sheet003.htm">DESTINI 125 FANTASY OFFER</a>`
+  - and the guesswork was deleted rather than kept as a fallback, because a
+  citation carrying the wrong sheet name is worse than one carrying a file name.
+
+### What the import actually yields
+
+47 sheets: **40 readable, 7 that are only pictures.** The skipped ones are named
+rather than counted, because "New Prices Oil & Consummables is a screenshot" is
+the sentence that explains why the agent does not know oil prices.
+
+Two of the readable ones are large and should probably be switched off:
+Corporate List (2059 vendor accounts, 190k characters) and Pine Labs Dealer
+list (71k). Real data, and nothing a caller asking about a motorcycle should be
+answered from. Without them the knowledge base is 48k characters; with them it
+is 309k, and they would dominate retrieval.
+
+That is why each page is its own `kb_document` rather than one blob per source:
+enable/disable, the chunk viewer and citations all keep working per sheet.
+
+### The security rule that would have refused the only thing wanted
+
+The first design blocked private IP ranges as an SSRF guard. The knowledge base
+is on **10.130.1.233** - an internal server on the customer's own network - so
+that rule would have refused the actual use case and called it security. What is
+dangerous is reaching OUR services, so that is what is refused: loopback, the
+cloud metadata address, and anything that is not a routable host. Redirects are
+checked at every hop; otherwise the guard is decoration.
+
+### Refresh is a button
+
+Chosen by the user against a recommendation of a nightly fetch with a change
+report. The data changes often, so it will go stale between presses - the
+mitigation inside that decision is that the list shows the AGE of the last
+fetch rather than its date, so rot is visible rather than silent. Pages that
+have not changed are skipped, and pages that have gone upstream are deleted:
+left behind, the agent would keep quoting an offer that ended.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3648,6 +3732,10 @@ constraint sitting right beside it.
   Blocked on actual examples: which word, what it sounds like, which campaign.
   Numbers and romanised Hindi are different problems with different fixes, and
   a dictionary is the wrong tool for both.
+- **OCR for the picture-only sheets** - seven of 47, including a price list.
+  The agent is blind to them and the console now says which
+- **Corporate List and Pine Labs Dealer list** - decide whether to keep them
+  enabled. 261k of the 309k characters, and neither is about a motorcycle
 - **Sarvam's own usage page**, to check the seeded rupee rates the way Soniox's
   were checked - solved from a bill rather than read from a page
 - **The STT ceiling, from the journal of call 344** - it broke two calls without

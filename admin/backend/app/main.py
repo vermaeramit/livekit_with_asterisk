@@ -12,7 +12,8 @@ from .config import settings
 from .routers import (agent_config, alerts, analytics, auth, calls,
                       diallers, gaps,
                       rates, roles,
-                      campaigns, kb, live, provider_keys, system, tenants,
+                      campaigns, kb, kb_sources, live,
+                      provider_keys, system, tenants,
                       tools, users)
 
 logging.basicConfig(
@@ -74,6 +75,7 @@ app.include_router(rates.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(diallers.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")
+app.include_router(kb_sources.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")
 app.include_router(users.router, prefix="/api")

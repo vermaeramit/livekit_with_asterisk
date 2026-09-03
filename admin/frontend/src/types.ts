@@ -330,6 +330,24 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface KbSource {
+  id: number
+  campaign_id: number | null
+  url: string
+  title: string | null
+  last_fetched_at: string | null
+  last_status: string | null
+  last_error: string | null
+  page_count: number
+  // Pages that held no readable text, by name. A count would not tell anyone
+  // WHICH part of their knowledge base the agent cannot see.
+  skipped: { name: string; why: string }[]
+  document_count: number
+  enabled_count: number
+  created_at: string
+  updated_at: string
+}
+
 export interface KbIngestResult {
   filename: string
   status: 'created' | 'updated' | 'unchanged' | 'empty'

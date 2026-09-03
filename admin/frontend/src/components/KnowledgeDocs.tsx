@@ -15,6 +15,7 @@ import { Badge, Card, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api, upload, type IngestEvent } from '@/lib/api'
 import { cn, formatNumber, formatRelative } from '@/lib/utils'
+import { KnowledgeSources } from '@/components/KnowledgeSources'
 import type { KbChunk2, KbDocument, KbIngestResult } from '@/types'
 
 /**
@@ -206,6 +207,10 @@ export function KnowledgeDocs({ campaignId }: { campaignId: number }) {
 
   return (
     <div className="space-y-4">
+      {/* Links first: the dropzone is for one-off files, and a source that is
+          refreshed is the one somebody comes back to this page for. */}
+      <KnowledgeSources campaignId={campaignId} />
+
       {/* dropzone */}
       <div
         onDragOver={(e) => {
