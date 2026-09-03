@@ -25,6 +25,7 @@ import tiktoken
 from openai import AsyncOpenAI
 
 import store
+import webkb
 
 log = logging.getLogger("kb")
 
@@ -386,11 +387,27 @@ async def ingest_file(path: str, config_name: str = "default",
                else "the document has no text - images and text boxes are not read")
         return {"file": p.name, "status": "empty", "error": why}
 
+    return await _chunk_embed_store(
+        pages, n_pages, p.name, digest, config_name, campaign_id, api_key,
+        emit, existing, source_id=None, source_url=None)
+
+
+async def _chunk_embed_store(pages, n_pages, filename, digest, config_name,
+                             campaign_id, api_key, emit, existing,
+                             source_id=None, source_url=None):
+    """Chunk, embed and save one document, whether it came from a file or a URL.
+
+    Shared rather than copied. The two callers differ only in how they got hold
+    of the text, and a second copy of this is a second place to remember when
+    the chunker or the schema changes - which is the failure this codebase has
+    already had four times with JSONB columns.
+    """
+    pool = await store.pool()
+    title = _title_of(filename)
     await emit(stage="chunking", pages=n_pages)
-    title = p.stem.replace("_", " ").replace("-", " ")
     chunks = await asyncio.to_thread(chunk_markdown, pages, title)
     if not chunks:
-        return {"file": p.name, "status": "empty", "error": "no chunks produced"}
+        return {"file": filename, "status": "empty", "error": "no chunks produced"}
 
     await emit(stage="embedding", done=0, total=len(chunks))
     vectors = await embed(
@@ -412,15 +429,19 @@ async def ingest_file(path: str, config_name: str = "default",
                 await conn.execute(
                     "UPDATE kb_documents SET content_hash=$2, page_count=$3, "
                     "chunk_count=$4, title=$5, campaign_id=COALESCE($6, campaign_id), "
+                    "source_id=COALESCE($7, source_id), "
+                    "source_url=COALESCE($8, source_url), "
                     "updated_at=now() WHERE id=$1",
-                    doc_id, digest, n_pages, len(chunks), title, campaign_id)
+                    doc_id, digest, n_pages, len(chunks), title, campaign_id,
+                    source_id, source_url)
             else:
                 doc_id = await conn.fetchval(
                     "INSERT INTO kb_documents (config_name, filename, title, "
-                    "content_hash, page_count, chunk_count, campaign_id) "
-                    "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                    config_name, p.name, title, digest, n_pages, len(chunks),
-                    campaign_id)
+                    "content_hash, page_count, chunk_count, campaign_id, "
+                    "source_id, source_url) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
+                    config_name, filename, title, digest, n_pages, len(chunks),
+                    campaign_id, source_id, source_url)
             await conn.executemany(
                 "INSERT INTO kb_chunks (doc_id, config_name, campaign_id, seq, page, "
                 "heading, content, n_tokens, embedding) "
@@ -428,9 +449,102 @@ async def ingest_file(path: str, config_name: str = "default",
                 [(doc_id, config_name, campaign_id, c.seq, c.page, c.heading,
                   c.content, c.n_tokens, _vec(v)) for c, v in zip(chunks, vectors)])
 
-    return {"file": p.name, "status": "updated" if existing else "created",
+    return {"file": filename, "status": "updated" if existing else "created",
             "pages": n_pages, "chunks": len(chunks),
             "tokens": sum(c.n_tokens for c in chunks)}
+
+
+def _title_of(filename: str) -> str:
+    stem = filename.rsplit(".", 1)[0]
+    return stem.replace("_", " ").replace("-", " ")
+
+
+async def ingest_web_source(url: str, config_name: str = "default",
+                            campaign_id: int | None = None,
+                            source_id: int | None = None,
+                            api_key: str | None = None,
+                            emit=None, force: bool = False) -> dict:
+    """Import a URL, or every sheet of a workbook published at one.
+
+    One kb_document per page, so refresh, disable and citations all work per
+    sheet exactly as they do per file. A workbook of 47 tabs becomes 47
+    documents, and the one holding 2000 vendor rows can be switched off
+    without touching the other 46.
+    """
+    emit = emit or (lambda **_: asyncio.sleep(0))
+    pool = await store.pool()
+
+    await emit(stage="fetching", url=url)
+    final_url, ctype, body = await asyncio.to_thread(webkb.fetch, url)
+
+    # A URL that serves a PDF is a PDF. Nothing about it needs a web importer.
+    if "pdf" in ctype.lower() or final_url.lower().endswith(".pdf"):
+        pages_out = [(final_url, url.rsplit("/", 1)[-1] or "document.pdf")]
+    else:
+        markup = webkb._decode(body, ctype)
+        if webkb.is_workbook(markup):
+            pages_out = webkb.workbook_pages(final_url, markup)
+            if not pages_out:
+                return {"url": url, "status": "empty",
+                        "error": "this looks like a workbook but its sheet list "
+                                 "could not be read"}
+        else:
+            pages_out = [(final_url, webkb.page_title(markup, "page"))]
+
+    results, skipped = [], []
+    for i, (page_url, name) in enumerate(pages_out):
+        await emit(stage="page", done=i, total=len(pages_out), name=name)
+        try:
+            _, page_ctype, page_body = await asyncio.to_thread(webkb.fetch, page_url)
+        except Exception as e:
+            skipped.append({"name": name, "why": f"{type(e).__name__}: {e}"})
+            continue
+
+        text, images = webkb.extract(webkb._decode(page_body, page_ctype))
+        if webkb.prose_length(text) < webkb.MIN_TEXT_CHARS:
+            # A sheet of screenshots. Reported rather than dropped silently:
+            # otherwise nobody learns that the oil price list is a picture and
+            # the agent simply does not know it.
+            skipped.append({"name": name, "why": f"no readable text ({images} images)"})
+            continue
+
+        # The name is the identity. A sheet renamed upstream becomes a new
+        # document and the old one is removed on the next refresh, which is
+        # right - a renamed tab is usually a different tab.
+        filename = _web_filename(name)
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        existing = await pool.fetchrow(
+            "SELECT id, content_hash, chunk_count FROM kb_documents "
+            "WHERE config_name=$1 AND filename=$2", config_name, filename)
+        if existing and existing["content_hash"] == digest and not force:
+            results.append({"file": filename, "status": "unchanged",
+                            "chunks": existing["chunk_count"]})
+            continue
+
+        results.append(await _chunk_embed_store(
+            [(None, text)], 1, filename, digest, config_name, campaign_id,
+            api_key, emit, existing, source_id=source_id, source_url=page_url))
+
+    # Anything this source produced last time and does not produce now is gone
+    # upstream. Left behind, the agent would keep answering from a sheet that
+    # no longer exists - an offer that ended, a price that was withdrawn.
+    removed = 0
+    if source_id is not None:
+        keep = [r["file"] for r in results]
+        removed = await pool.fetchval(
+            "WITH gone AS (DELETE FROM kb_documents WHERE source_id=$1 "
+            "  AND NOT (filename = ANY($2::text[])) RETURNING 1) "
+            "SELECT count(*) FROM gone", source_id, keep) or 0
+
+    return {"url": url, "status": "ok", "pages": len(results),
+            "removed": removed, "documents": results, "skipped": skipped}
+
+
+def _web_filename(name: str) -> str:
+    """A stable identity for a page, safe as a filename and as a citation."""
+    safe = re.sub(r"[^\w .&+-]", " ", name).strip()
+    safe = re.sub(r"\s+", " ", safe)[:120] or "page"
+    return f"{safe}.web"
 
 
 # ────────────────────────────── retrieval ──────────────────────────────
