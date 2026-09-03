@@ -339,53 +339,53 @@ def is_workbook(markup: str) -> bool:
             or "<frameset" in markup[:8000].lower())
 
 
-# Excel writes the tab names into the frameset, one assignment per tab:
+# The tab strip, which is the only place the mapping is actually stated:
 #
-#     var c_lTabs=46;
-#     c_rgszSh[0] = "HOME";
-#     c_rgszSh[3] = "Hero\xa0Connect\xa0Query\xa0Dispositions";
+#     <a href="sheet003.htm" target="frSheet">DESTINI 125 FANTASY OFFER </a>
 #
-# They are the only place the real names exist, and without them every citation
-# on this knowledge base would read "sheet031.htm", which tells a reader nothing
-# about where an answer came from. Note the \xa0 again, in the names this time.
-_SHEET_NAME = re.compile(r'c_rgszSh\[(\d+)\]\s*=\s*"((?:[^"\\]|\\.)*)"')
+# Two earlier attempts at this were wrong, and both looked right. The names are
+# also in a c_rgszSh array in the frameset, and each sheet declares an index
+# through fnSetActiveSheet - but that index is the sheet's FILE position, and
+# this workbook has 47 files against 46 array entries, so every name after the
+# discrepancy landed on the wrong sheet. The Destini offer was labelled "New
+# Prices Oil & Consummables" and the dispositions table was labelled as a
+# different dispositions table, which is exactly the kind of wrong that gets
+# believed.
+#
+# A citation carrying the wrong sheet name is worse than one carrying a file
+# name, so the guesswork is gone rather than kept as a fallback.
+_TAB_LINK = re.compile(
+    r'(?is)<a\s+href="(sheet\d+\.html?)"[^>]*>(.*?)</a>')
 
-# Each sheet file names its own tab index. Read from the sheet rather than
-# assumed from its position: this workbook has 47 sheet files and 46 tabs, so
-# one of them is hidden, and lining the two lists up by position would put the
-# wrong name on every sheet after it - a citation that is confidently wrong.
-_ACTIVE_SHEET = re.compile(r"fnSetActiveSheet\((\d+)\)")
 
-
-def workbook_sheet_names(markup: str) -> dict[int, str]:
-    """-> {tab index: name}."""
+def _tab_names(files_base: str) -> dict[str, str]:
+    """-> {sheet filename: tab name}, or empty if there is no tab strip."""
+    try:
+        _, ctype, body = fetch(urllib.parse.urljoin(files_base, "tabstrip.htm"))
+    except (urllib.error.URLError, Blocked, OSError) as e:
+        logger.warning("no tabstrip.htm (%s) - sheets will use file names", e)
+        return {}
     out = {}
-    for idx, raw in _SHEET_NAME.findall(markup):
-        name = _clean(html.unescape(raw).replace("\\'", "'"))
+    for href, label in _TAB_LINK.findall(_decode(body, ctype)):
+        name = _clean(html.unescape(re.sub(r"(?s)<[^>]+>", " ", label)))
         if name:
-            out[int(idx)] = name
+            out[href.lower()] = name
     return out
 
 
-def sheet_index(markup: str) -> int | None:
-    """Which tab this sheet file is, as the file itself states."""
-    m = _ACTIVE_SHEET.search(markup)
-    return int(m.group(1)) if m else None
+def workbook_pages(url: str, markup: str) -> list[tuple[str, str]]:
+    """Every sheet of a workbook, as (absolute url, name).
 
-
-def workbook_pages(url: str, markup: str) -> list[str]:
-    """Every sheet of a workbook, in order, as absolute URLs.
-
-    Read from filelist.xml - Microsoft's own manifest, written by the same
-    export - rather than from the JavaScript array in the frameset. The array
-    holds the same names and is a script; the manifest is data, and it is the
-    difference between parsing and guessing.
+    The list of files comes from filelist.xml - Microsoft's own manifest,
+    written by the same export - and the names from tabstrip.htm. Neither is
+    inferred from the other, and a sheet with no tab keeps its file name rather
+    than borrowing its neighbour's.
     """
     base = url
     frames = _FRAME_SRC.findall(markup)
     if frames:
-        # The frameset points at <name>_files/sheet001.htm; filelist.xml sits
-        # beside the sheets, not beside the frameset.
+        # The frameset points at <name>_files/sheet001.htm; filelist.xml and
+        # the tab strip sit beside the sheets, not beside the frameset.
         base = urllib.parse.urljoin(url, frames[0])
 
     manifest = urllib.parse.urljoin(base, "filelist.xml")
@@ -395,11 +395,13 @@ def workbook_pages(url: str, markup: str) -> list[str]:
         logger.warning("no filelist.xml at %s (%s)", manifest, e)
         return []
 
+    names = _tab_names(manifest)
     pages = []
     for href in _FILELIST.findall(_decode(body, ctype)):
         name = urllib.parse.unquote(href.rsplit("/", 1)[-1])
         if _SHEET.match(name):
-            pages.append(urllib.parse.urljoin(manifest, href))
+            pages.append((urllib.parse.urljoin(manifest, href),
+                          names.get(name.lower(), name)))
     return pages
 
 
