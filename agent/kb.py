@@ -188,6 +188,37 @@ def _strip_md(s: str) -> str:
     return re.sub(r"[*_`]", "", s).strip()
 
 
+# Two rows of markdown table scaffolding: the header and the "| --- |" rule
+# beneath it. Repeated at the top of every group so a chunk taken from the
+# middle of a long table still knows what its columns are.
+def _split_table(rows: list[str]) -> list[str]:
+    """One table -> one block, or several that each carry the header."""
+    if not rows:
+        return []
+    whole = "\n".join(rows)
+    if ntok(whole) <= TARGET_TOKENS:
+        return [whole]
+
+    head = rows[:2] if len(rows) > 1 and set(rows[1].replace("|", "").strip()) <= set("- :") \
+        else rows[:1]
+    head_tok = ntok("\n".join(head))
+    body = rows[len(head):]
+
+    out, group, group_tok = [], [], 0
+    for row in body:
+        t = ntok(row)
+        # A single row wider than the budget still goes in alone: cutting one
+        # row in half is the thing this function exists to avoid.
+        if group and head_tok + group_tok + t > TARGET_TOKENS:
+            out.append("\n".join(head + group))
+            group, group_tok = [], 0
+        group.append(row)
+        group_tok += t
+    if group:
+        out.append("\n".join(head + group))
+    return out
+
+
 def chunk_markdown(pages: list[tuple[int, str]], title: str) -> list[Chunk]:
     """Split on markdown headings, then pack to TARGET_TOKENS with overlap.
 
@@ -235,19 +266,26 @@ def chunk_markdown(pages: list[tuple[int, str]], title: str) -> list[Chunk]:
                 i += 1
                 continue
 
-            # a markdown table is atomic - splitting one destroys the column
-            # alignment and the rows become meaningless
+            # A markdown table is kept together, because splitting one blindly
+            # destroys the column alignment and the rows become meaningless.
+            #
+            # Kept together, NOT kept whole. A 2059-row table out of a
+            # spreadsheet is one 47,000-token block, and OpenAI's embedding
+            # endpoint refuses anything over 8,192 - so the import died at 400
+            # on the third sheet with the alignment perfectly preserved. It is
+            # split into row groups instead, each carrying the header row, so
+            # every chunk still says what its columns mean.
             if _TABLE_ROW.match(line):
                 tbl = []
                 while i < len(lines) and (_TABLE_ROW.match(lines[i]) or not lines[i].strip()):
                     if lines[i].strip():
                         tbl.append(lines[i])
                     i += 1
-                block = "\n".join(tbl)
-                if buf and buf_tok + ntok(block) > TARGET_TOKENS:
-                    emit()
-                buf.append(block)
-                buf_tok += ntok(block)
+                for block in _split_table(tbl):
+                    if buf and buf_tok + ntok(block) > TARGET_TOKENS:
+                        emit()
+                    buf.append(block)
+                    buf_tok += ntok(block)
                 continue
 
             if not line.strip():
@@ -269,7 +307,45 @@ def chunk_markdown(pages: list[tuple[int, str]], title: str) -> list[Chunk]:
             buf_tok += t
             i += 1
     emit()
-    return _absorb_tiny(chunks)
+    return _absorb_tiny(_split_oversized(chunks))
+
+
+# The embedding endpoint refuses more than 8,192 tokens, and a refusal fails
+# the whole import rather than one chunk. Whatever produced an oversized chunk
+# - a table row longer than the budget, a page with no line breaks at all -
+# this is the point where it stops being a 400 in front of the user.
+_HARD_MAX_TOKENS = int(os.getenv("KB_MAX_CHUNK_TOKENS", "6000"))
+
+
+def _split_oversized(chunks: list[Chunk]) -> list[Chunk]:
+    out: list[Chunk] = []
+    for c in chunks:
+        if c.n_tokens <= _HARD_MAX_TOKENS:
+            out.append(c)
+            continue
+        log.warning("chunk of %d tokens split to fit the embedder", c.n_tokens)
+        lines = c.content.split("\n")
+        part, part_tok = [], 0
+        pieces: list[str] = []
+        for line in lines:
+            t = ntok(line)
+            if part and part_tok + t > _HARD_MAX_TOKENS:
+                pieces.append("\n".join(part))
+                part, part_tok = [], 0
+            part.append(line)
+            part_tok += t
+        if part:
+            pieces.append("\n".join(part))
+        for piece in pieces:
+            out.append(Chunk(
+                seq=len(out), page=c.page, heading=c.heading, content=piece,
+                n_tokens=ntok(piece),
+                embed_text=(c.embed_text.split("\n\n", 1)[0] + "\n\n" + piece
+                            if "\n\n" in c.embed_text else piece),
+            ))
+    for i, c in enumerate(out):
+        c.seq = i
+    return out
 
 
 def _absorb_tiny(chunks: list[Chunk]) -> list[Chunk]:
