@@ -316,6 +316,11 @@ def chunk_markdown(pages: list[tuple[int, str]], title: str) -> list[Chunk]:
 # this is the point where it stops being a 400 in front of the user.
 _HARD_MAX_TOKENS = int(os.getenv("KB_MAX_CHUNK_TOKENS", "6000"))
 
+# Rows per INSERT. Small enough to finish well inside the pool's
+# 15-second command timeout, large enough that a 3000-chunk workbook is
+# not 3000 round trips.
+_INSERT_BATCH = int(os.getenv("KB_INSERT_BATCH", "150"))
+
 
 def _split_oversized(chunks: list[Chunk]) -> list[Chunk]:
     out: list[Chunk] = []
@@ -518,12 +523,27 @@ async def _chunk_embed_store(pages, n_pages, filename, digest, config_name,
                     "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
                     config_name, filename, title, digest, n_pages, len(chunks),
                     campaign_id, source_id, source_url)
-            await conn.executemany(
-                "INSERT INTO kb_chunks (doc_id, config_name, campaign_id, seq, page, "
-                "heading, content, n_tokens, embedding) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector)",
-                [(doc_id, config_name, campaign_id, c.seq, c.page, c.heading,
-                  c.content, c.n_tokens, _vec(v)) for c, v in zip(chunks, vectors)])
+            rows = [(doc_id, config_name, campaign_id, c.seq, c.page, c.heading,
+                     c.content, c.n_tokens, _vec(v))
+                    for c, v in zip(chunks, vectors)]
+            # In batches, because the pool is created with command_timeout=15
+            # and one executemany of 507 chunks - each carrying a 1536
+            # dimension vector - does not finish inside it. The first import of
+            # a spreadsheet died here, mid-transaction, on the sheet that
+            # produced 507.
+            #
+            # Batched rather than given a longer timeout: that timeout exists
+            # so a single command cannot hang the pool, and lifting it for this
+            # caller would give that up for every large document ever ingested.
+            for start in range(0, len(rows), _INSERT_BATCH):
+                await conn.executemany(
+                    "INSERT INTO kb_chunks (doc_id, config_name, campaign_id, "
+                    "seq, page, heading, content, n_tokens, embedding) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector)",
+                    rows[start:start + _INSERT_BATCH])
+                await emit(stage="saving", done=min(start + _INSERT_BATCH,
+                                                    len(rows)),
+                           total=len(rows))
 
     return {"file": filename, "status": "updated" if existing else "created",
             "pages": n_pages, "chunks": len(chunks),

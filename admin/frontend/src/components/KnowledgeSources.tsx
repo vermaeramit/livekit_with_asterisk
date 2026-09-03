@@ -233,7 +233,12 @@ function describe(e: any): string {
     case 'embedding':
       return `Embedding ${e.done ?? 0} of ${e.total ?? '?'}…`
     case 'saving':
-      return 'Saving…'
+      // Reported in batches now: one insert of 500 chunks does not finish
+      // inside the database's command timeout, so it is split - and a bar that
+      // moves is the difference between "working" and "hung".
+      return e.total
+        ? `Saving ${e.done ?? 0} of ${e.total}…`
+        : 'Saving…'
     default:
       return 'Working…'
   }
