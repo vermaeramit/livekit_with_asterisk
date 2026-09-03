@@ -67,7 +67,12 @@ async def soniox(api_key: str, *, model: str, voice: str, language: str,
     config = {
         "api_key": api_key,
         "model": model,
-        "language": language,
+        # Soniox takes a bare ISO code. The campaign stores Sarvam's regional
+        # form ("hi-IN") because that is what Sarvam needs, and sending it
+        # unchanged is rejected with "Invalid language 'hi-IN'". The agent has
+        # converted this since Soniox went in; the preview had not, because the
+        # preview does not go through the agent's code at all.
+        "language": language.split("-")[0].lower(),
         "voice": voice,
         "audio_format": _FORMAT,
         "speed": speed,
