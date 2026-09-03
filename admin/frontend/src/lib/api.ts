@@ -387,6 +387,33 @@ export async function upload<T = unknown>(
  * not public. Downloading it once with the token and playing from a blob is the
  * only way to have both. The caller must revokeObjectURL when it is done.
  */
+/**
+ * POST something and get audio back, as a URL an <audio> element can play.
+ *
+ * Separate from authedBlob because a preview is a POST: what to say, in which
+ * voice, at what speed. The caller must revokeObjectURL when it is done.
+ */
+export async function authedAudio(path: string, body: unknown): Promise<string> {
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail: unknown = null
+    try {
+      detail = await res.json()
+    } catch {
+      /* an empty or non-JSON body is still a failure worth naming */
+    }
+    throw new ApiError(res.status, messageOf(res.status, detail))
+  }
+  return URL.createObjectURL(await res.blob())
+}
+
 export async function authedBlob(path: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`

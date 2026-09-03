@@ -1126,6 +1126,18 @@ class TtsModel(BaseModel):
     supports_language: bool = True
 
 
+class TtsPreviewIn(BaseModel):
+    provider: str
+    model: str = Field(max_length=80)
+    voice: str = Field(max_length=80)
+    language: str = Field(max_length=16)
+    # Capped because a preview is synthesised for real, on the campaign's own
+    # key. Longer than a sentence or two is somebody using the console as a
+    # text-to-speech service.
+    text: str = Field(min_length=1, max_length=400)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+
+
 class TtsCatalog(BaseModel):
     provider: str
     models: list[TtsModel]

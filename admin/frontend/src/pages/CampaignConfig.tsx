@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { TermList } from '@/components/TermList'
 import { TransferHours } from '@/components/TransferHours'
+import { VoicePreview } from '@/components/VoicePreview'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
@@ -766,6 +767,11 @@ export function CampaignConfig() {
                 }
               />
             </div>
+
+            {/* Directly under the voice picker, because it is the answer to
+                the question that picker raises: seventy names tell you
+                nothing about how any of them sound. */}
+            <VoicePreview value={value} campaignId={campaignId} />
 
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField

@@ -3677,6 +3677,51 @@ left behind, the agent would keep quoting an offer that ended.
 
 ---
 
+## Hear the voice before a caller does (3 Sep 2026)
+
+Seventy voices on Soniox tts-rt-v2, each listed as a name, a gender and half a
+sentence. Choosing from that is guessing, and the campaign finds out what it
+picked on a live call.
+
+Campaign-scoped, as the user pointed out before I had thought it through: the
+provider keys are per campaign, so a platform-wide page would spend one
+client's money to answer another's question. The preview is synthesised for
+real, on that campaign's own key, and billed to it exactly as its calls are.
+
+### Reading the plugin rather than remembering the API
+
+The admin image has no livekit plugins - those live in the agent's venv - so
+the provider is called directly. Three things had to be checked rather than
+assumed, and two of the assumptions would have been wrong:
+
+- **Soniox TTS is a websocket**, not REST. The plugin source says so.
+- **`websockets` is already installed**, as part of `uvicorn[standard]`. No new
+  dependency for a preview button.
+- **Soniox does publish a REST API** - their own playground has a tab for it,
+  which the user's screenshot showed. I had concluded from the plugin that
+  websocket was the only way, which was true of the plugin and not of the API.
+  The websocket path was already written by then and works; the REST one would
+  be simpler if this is ever revisited.
+
+The wire protocol was copied out of the installed plugin, message by message,
+and the file says so - including the cost of that: if Soniox changes it, the
+plugin gets updated and this does not. A preview breaking is not a call
+breaking, which is what makes the duplication affordable.
+
+### Two decisions worth keeping
+
+**The sample text defaults to the campaign's greeting**, not a sentence of
+ours. A voice should be judged on the words it will really say.
+
+**Previews are cached** by everything that changes the audio. Seventy voices
+means seventy clicks while somebody makes up their mind, and the second click
+on the same voice should not be a second charge.
+
+Sarvam previews are not wired up yet - it is REST and straightforward, and the
+endpoint returns 501 for it rather than pretending.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3732,6 +3777,8 @@ left behind, the agent would keep quoting an offer that ended.
   Blocked on actual examples: which word, what it sounds like, which campaign.
   Numbers and romanised Hindi are different problems with different fixes, and
   a dictionary is the wrong tool for both.
+- **Sarvam voice previews** - REST, unlike Soniox. The endpoint answers 501
+  for it today, so the two campaigns on Sarvam cannot hear their voices
 - **OCR for the picture-only sheets** - seven of 47, including a price list.
   The agent is blind to them and the console now says which
 - **Corporate List and Pine Labs Dealer list** - decide whether to keep them

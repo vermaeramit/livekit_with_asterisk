@@ -15,11 +15,14 @@ import time
 import urllib.request
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 
+from .. import ttspreview
 from .. import audit, db, provider_keys as pk, secretlib
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
                     require_perm, tenant_scope)
 from ..schemas import (ProviderKeyOut, ProviderKeySet, ProviderKeyWritten,
+                       TtsPreviewIn,
                        TtsCatalog, TtsModel, TtsVoice)
 
 router = APIRouter(tags=["provider keys"])
@@ -176,6 +179,11 @@ _CATALOG_URLS = {"soniox": "https://api.soniox.com/v1/tts-models"}
 # Opening the campaign form should not hit Soniox every time, and the list
 # changes about as often as they ship a model.
 _cache: dict[str, tuple[float, TtsCatalog]] = {}
+# Preview audio, keyed on everything that changes it. Seventy voices means
+# seventy clicks while somebody makes up their mind, and each one is a real
+# synthesis billed to the campaign - the second click on the same voice
+# should not be a second charge.
+_preview_cache: dict[str, bytes] = {}
 _CACHE_TTL = 600
 
 
@@ -187,6 +195,65 @@ def _fetch_soniox_models(key: str) -> dict:
                  "User-Agent": os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
+
+
+@router.post("/campaigns/{campaign_id}/tts-preview")
+async def tts_preview(campaign_id: int, body: TtsPreviewIn,
+                      user: CurrentUser = Depends(active_user)):
+    """Hear a voice before choosing it, on the campaign's own key.
+
+    Campaign-scoped because the KEY is: previews are billed to whoever owns the
+    campaign, exactly as its calls are, and a platform-wide page would spend
+    one client's money to answer another's question.
+
+    Cached in memory by everything that changes the audio. Seventy voices means
+    seventy clicks while somebody makes up their mind, and the second click on
+    the same voice should not be a second charge.
+    """
+    _check_provider(body.provider)
+    tenant_id = await assert_campaign_visible(user, campaign_id)
+    _require_crypto()
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "nothing to say")
+
+    cache_key = (f"{body.provider}:{body.model}:{body.voice}:{body.language}:"
+                 f"{body.speed}:{tenant_id}:{hash(text)}")
+    hit = _preview_cache.get(cache_key)
+    if hit:
+        return Response(content=hit, media_type="audio/mpeg",
+                        headers={"Cache-Control": "no-store"})
+
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get(body.provider):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"no {body.provider} key on this campaign or client - a preview is "
+            "synthesised for real, on your own key")
+
+    if body.provider != "soniox":
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            f"previews are not wired up for {body.provider} yet")
+
+    try:
+        audio = await ttspreview.soniox(
+            keys[body.provider], model=body.model, voice=body.voice,
+            language=body.language, text=text, speed=body.speed)
+    except ttspreview.PreviewError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+    # Bounded, and crudely: this is a convenience cache in one process, not a
+    # store. Dropping the oldest half keeps it from growing without a
+    # dependency or an eviction policy nobody will tune.
+    if len(_preview_cache) > 200:
+        for k in list(_preview_cache)[:100]:
+            _preview_cache.pop(k, None)
+    _preview_cache[cache_key] = audio
+
+    return Response(content=audio, media_type="audio/mpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @router.get("/campaigns/{campaign_id}/tts-catalog/{provider}",
