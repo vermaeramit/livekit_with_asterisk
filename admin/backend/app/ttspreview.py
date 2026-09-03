@@ -11,18 +11,21 @@ does not have - those plugins live in the agent's venv. Adding them here would
 pull livekit-agents and its dependency tree into this image for one preview
 button.
 
-So each provider is called directly, and the two are nothing alike:
+So each provider is called directly, and the three are nothing alike:
 
   Soniox   a websocket, and a BARE language code ("hi")
   Sarvam   plain REST, and a REGIONAL one ("hi-IN")
+  OpenAI   the SDK, and NO language at all - the voice speaks whatever the
+           text is written in
 
 The campaign stores the regional form because that is what Sarvam needs, so
 Soniox is the one that gets converted. Sending it unchanged is a 400 - which is
 exactly what happened the first time this ran.
 
-`websockets` is already installed as part of uvicorn[standard] and `urllib`
-covers the REST side, so neither provider needed a new dependency. Both wire
-formats were read out of the installed plugins rather than remembered:
+Nothing new was installed for any of them: `websockets` comes with
+uvicorn[standard], `urllib` covers the REST side, and the `openai` SDK is
+already here for embeddings. Every wire format below was read out of the
+installed code rather than remembered:
 
     ->  {"api_key", "model", "language", "voice", "audio_format",
          "sample_rate", "speed", "stream_id"}
@@ -40,6 +43,10 @@ Sarvam:
     {"target_language_code", "text", "speaker", "pace", "model",
      "speech_sample_rate", "output_audio_codec", ...}
     ->  {"audios": ["<base64>"]}
+
+OpenAI: the SDK's own audio.speech, called the way the livekit plugin calls it -
+with_streaming_response and iter_bytes, rather than reaching for .content and
+finding out at runtime which of the two an async client hands back.
 
 That duplication is a real cost: if Soniox changes the protocol, the plugin gets
 updated and this does not. It is bounded - a preview breaking is not a call
@@ -197,3 +204,42 @@ async def sarvam(api_key: str, *, model: str, voice: str, language: str,
         payload["temperature"] = 0.6
 
     return await asyncio.to_thread(_sarvam_blocking, api_key, payload)
+
+
+async def openai(api_key: str, *, model: str, voice: str, language: str,
+                 text: str, speed: float = 1.0) -> bytes:
+    """-> mp3 bytes.
+
+    `language` is accepted and ignored, so the three providers share one
+    signature. OpenAI has no language parameter: the voice speaks whatever the
+    text is written in, which is why a Hindi campaign on OpenAI must have Hindi
+    in the box rather than a language setting somewhere.
+
+    Streamed and accumulated, matching the livekit plugin exactly. The
+    non-streaming call returns an object whose bytes are reached differently
+    depending on the client, and that is not a thing to discover in production.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=api_key)
+    audio = bytearray()
+    try:
+        async with client.audio.speech.with_streaming_response.create(
+            input=text, model=model, voice=voice,
+            response_format="mp3", speed=speed,
+        ) as stream:
+            async for chunk in stream.iter_bytes():
+                audio.extend(chunk)
+    except Exception as e:
+        # OpenAI's own message where there is one - "voice not found" and "quota
+        # exceeded" need different answers - and never the raw exception, which
+        # can quote a request that carried the key.
+        detail = getattr(e, "message", None) or type(e).__name__
+        log.warning("openai preview failed: %s", type(e).__name__)
+        raise PreviewError(str(detail)[:200])
+    finally:
+        await client.close()
+
+    if not audio:
+        raise PreviewError("the provider produced no audio")
+    return bytes(audio)

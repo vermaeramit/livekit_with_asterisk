@@ -3719,12 +3719,16 @@ on the same voice should not be a second charge.
 
 Sarvam followed, and the two providers agree about almost nothing:
 
-|  | Soniox | Sarvam |
-|---|---|---|
-| transport | websocket | REST |
-| auth | in the first message | `api-subscription-key` header |
-| language | bare — `hi` | regional — `hi-IN` |
-| audio | base64 per chunk | base64 array in the reply |
+|  | Soniox | Sarvam | OpenAI |
+|---|---|---|---|
+| transport | websocket | REST | the SDK, already installed |
+| auth | in the first message | `api-subscription-key` | `Authorization` |
+| language | bare — `hi` | regional — `hi-IN` | **none at all** |
+| audio | base64 per chunk | base64 array | streamed bytes |
+
+OpenAI has no language parameter: the voice speaks whatever the text is written
+in. So a Hindi campaign on OpenAI needs Hindi in the box, and there is no
+setting that makes it so.
 
 The language row is the one that already cost a round trip. The campaign stores
 `hi-IN` because that is what Sarvam wants, so Soniox is the one that needs

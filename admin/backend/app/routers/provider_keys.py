@@ -233,7 +233,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
             "synthesised for real, on your own key")
 
     synth = {"soniox": ttspreview.soniox,
-             "sarvam": ttspreview.sarvam}.get(body.provider)
+             "sarvam": ttspreview.sarvam,
+             "openai": ttspreview.openai}.get(body.provider)
     if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
