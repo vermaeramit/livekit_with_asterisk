@@ -232,13 +232,15 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
             f"no {body.provider} key on this campaign or client - a preview is "
             "synthesised for real, on your own key")
 
-    if body.provider != "soniox":
+    synth = {"soniox": ttspreview.soniox,
+             "sarvam": ttspreview.sarvam}.get(body.provider)
+    if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
             f"previews are not wired up for {body.provider} yet")
 
     try:
-        audio = await ttspreview.soniox(
+        audio = await synth(
             keys[body.provider], model=body.model, voice=body.voice,
             language=body.language, text=text, speed=body.speed)
     except ttspreview.PreviewError as e:

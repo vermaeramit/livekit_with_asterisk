@@ -3717,8 +3717,19 @@ ours. A voice should be judged on the words it will really say.
 means seventy clicks while somebody makes up their mind, and the second click
 on the same voice should not be a second charge.
 
-Sarvam previews are not wired up yet - it is REST and straightforward, and the
-endpoint returns 501 for it rather than pretending.
+Sarvam followed, and the two providers agree about almost nothing:
+
+|  | Soniox | Sarvam |
+|---|---|---|
+| transport | websocket | REST |
+| auth | in the first message | `api-subscription-key` header |
+| language | bare — `hi` | regional — `hi-IN` |
+| audio | base64 per chunk | base64 array in the reply |
+
+The language row is the one that already cost a round trip. The campaign stores
+`hi-IN` because that is what Sarvam wants, so Soniox is the one that needs
+converting - and passing it through unchanged is a 400, which is exactly what
+the first Soniox preview did.
 
 ---
 
@@ -3777,8 +3788,6 @@ endpoint returns 501 for it rather than pretending.
   Blocked on actual examples: which word, what it sounds like, which campaign.
   Numbers and romanised Hindi are different problems with different fixes, and
   a dictionary is the wrong tool for both.
-- **Sarvam voice previews** - REST, unlike Soniox. The endpoint answers 501
-  for it today, so the two campaigns on Sarvam cannot hear their voices
 - **OCR for the picture-only sheets** - seven of 47, including a price list.
   The agent is blind to them and the console now says which
 - **Corporate List and Pine Labs Dealer list** - decide whether to keep them
