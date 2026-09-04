@@ -227,7 +227,7 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
-          placeholder="Splendor Plus ka price kya hai?"
+          placeholder="Type what a caller would say…"
           disabled={send.isPending}
         />
         <Button onClick={submit} loading={send.isPending} disabled={!draft.trim()}>
