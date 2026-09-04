@@ -24,3 +24,9 @@ openai==2.51.0
 # dependency, no external binary, and direct access to paragraph STYLES -
 # which is what lets a "Heading 2" become "## " for the chunker to split on.
 python-docx==1.1.2
+
+# The chat tester calls a campaign's tools with agent/tools.py itself, and that
+# module speaks aiohttp. Reimplementing those calls on urllib would give a
+# tester that resembles the agent instead of being it - which is the one thing
+# a tester must not be.
+aiohttp==3.13.2

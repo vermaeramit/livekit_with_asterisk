@@ -330,6 +330,26 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface ChatStep {
+  kind: 'kb' | 'tool'
+  name: string
+  args: Record<string, unknown>
+  result: string
+  ms: number
+  // KB only: what was retrieved and how well it matched. The score is the
+  // number that explains a wrong answer.
+  hits: { document: string; score: number; heading: string | null; matched: string }[]
+}
+
+export interface ChatTurn {
+  text: string
+  steps: ChatStep[]
+  prompt_tokens: number
+  completion_tokens: number
+  cached_tokens: number
+  ms: number
+}
+
 export interface KbSource {
   id: number
   campaign_id: number | null

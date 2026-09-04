@@ -118,7 +118,25 @@ FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
 def build(spec: dict, call_id: int | None, record: Callable,
           speak: Callable | None = None,
           note_gap: Callable | None = None):
-    """-> a livekit function tool for one campaign_tools row.
+    """-> a livekit function tool for one campaign_tools row."""
+    name, schema, run = build_raw(spec, call_id, record, speak, note_gap)
+    return lk_llm.function_tool(run, raw_schema={
+        "name": name, "description": schema["description"],
+        "parameters": schema["parameters"]})
+
+
+def build_raw(spec: dict, call_id: int | None, record: Callable,
+              speak: Callable | None = None,
+              note_gap: Callable | None = None):
+    """-> (name, json schema, async callable), with no livekit in sight.
+
+    Split out so the text chat can call a campaign's tools with THIS code
+    rather than something that resembles it. The normalisation, the timeouts,
+    the error messages a model is shown, the idempotency key, what gets
+    recorded - all of it has been argued over on real calls, and a second
+    implementation would drift from it quietly.
+
+    `build` is now a wrapper that puts the livekit decoration back on.
 
     `record` is awaited with the outcome of every invocation. It is passed in
     rather than imported so this module does not depend on the database.
@@ -343,15 +361,11 @@ def build(spec: dict, call_id: int | None, record: Callable,
                  " [truncated]" if truncated else "")
         return out if out.strip() else "The lookup returned no data."
 
-    return lk_llm.function_tool(
-        run,
-        raw_schema={
-            "name": name,
-            "description": spec["description"],
-            "parameters": spec.get("parameters")
-            or {"type": "object", "properties": {}},
-        },
-    )
+    return name, {
+        "description": spec["description"],
+        "parameters": spec.get("parameters")
+        or {"type": "object", "properties": {}},
+    }, run
 
 
 def build_all(specs: list[dict], call_id: int | None, record: Callable,

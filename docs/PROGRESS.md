@@ -3737,6 +3737,64 @@ the first Soniox preview did.
 
 ---
 
+## Talk to the agent without dialling it (3 Sep 2026)
+
+Asked for a chat feature, and then for more than the one I had suggested: a
+bubble widget that can be dropped into any website. Those are not competing -
+one contains the other. There is one chat engine, and the internal tester and
+the public widget are two doors into it. The engine and the tester are phase
+one.
+
+### What makes it a test rather than a lookalike
+
+It runs the campaign's own configuration through the agent's own code:
+`prompt.build_instructions`, `kb.search`, `tools.build_raw`. A second
+implementation of any of those would drift, and a tester that drifts is worse
+than none - it gives an answer nobody checks against reality.
+
+`tools.py` needed one change for that, and it was small because the file was
+already shaped for it: `build()` created a plain async `run()` and only the
+LAST line wrapped it in livekit's `function_tool`. That wrapping is now
+`build()` and the rest is `build_raw()`. The normalisation, the timeouts, the
+error strings a model is shown, the idempotency key - all argued over on real
+calls, all now used by the tester rather than approximated.
+
+One dependency: `aiohttp` in the admin image, because that is what `tools.py`
+speaks. Reimplementing those calls on urllib would have produced a tester that
+resembles the agent instead of being it.
+
+### The answer is not the point
+
+Under every reply the tester shows the working: which documents were retrieved
+and **at what score**, which tools ran with what arguments, what came back, and
+what the turn cost. A real call tells you what the agent said. This tells you
+why, which is the thing you need when a prompt is wrong.
+
+The score is the number that explains a wrong answer. "Lender Plus Flex"
+matched the wrong motorcycle at 0.57 and nothing on any page said so at the
+time.
+
+### What it deliberately does not prove
+
+No STT, no TTS, no endpointing, no barge-in. So it proves the prompt, the
+knowledge and the tools - and nothing about latency, or about what the speech
+recogniser would have heard. The panel says so where somebody will read it.
+
+### Decisions
+
+- **One prompt.** The campaign's own instructions plus a chat-mode overlay
+  about the CHANNEL - write plainly, no markers, ask for a number instead of
+  transferring. Two prompts would be two that disagree.
+- **Nothing is stored.** A test conversation should not appear in the call list
+  beside real ones; the history lives in the browser.
+- **campaign.write, not calls.read.** A turn spends the OpenAI budget and can
+  call the campaign's tools for real - which may be a live dealer lookup.
+- **Six tool rounds.** A runaway loop on a phone call is bounded by the caller
+  hanging up. Here nothing bounds it, and a prompt that loops here would loop
+  on a call too - so it says so rather than truncating quietly.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3792,6 +3850,11 @@ the first Soniox preview did.
   Blocked on actual examples: which word, what it sounds like, which campaign.
   Numbers and romanised Hindi are different problems with different fixes, and
   a dictionary is the wrong tool for both.
+- **Phase 2: the embeddable widget** - a public endpoint, a script tag, a
+  domain allowlist, and a per-campaign daily budget cap. The cap is not
+  optional: whoever finds the widget key can spend the campaign's money
+- **Chat handoff into a callback queue** - agreed shape: the bot takes a name
+  and number, and it joins the list `calls.transfer_refused` already feeds
 - **OCR for the picture-only sheets** - seven of 47, including a price list.
   The agent is blind to them and the console now says which
 - **Corporate List and Pine Labs Dealer list** - decide whether to keep them

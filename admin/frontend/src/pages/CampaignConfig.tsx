@@ -19,7 +19,7 @@ import {
   Undo2,
   Waves,
   X,
-} from 'lucide-react'
+  Bot,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
@@ -29,6 +29,7 @@ import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { TermList } from '@/components/TermList'
+import { CampaignChat } from '@/components/CampaignChat'
 import { TransferHours } from '@/components/TransferHours'
 import { VoicePreview } from '@/components/VoicePreview'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
@@ -127,7 +128,7 @@ const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
   | 'conversation' | 'voice' | 'knowledge' | 'tools' | 'routing' | 'keys'
-  | 'limits' | 'postback' | 'history'
+  | 'limits' | 'postback' | 'try' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
@@ -142,6 +143,9 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   // Its own tab: what leaves this system afterwards is a different concern
   // from how the call is run, and it has a log of its own to show.
   { key: 'postback', label: 'Send to API', icon: Send },
+  // After everything that configures the agent and before the audit log:
+  // it is what you do once you have changed something.
+  { key: 'try', label: 'Try it', icon: Bot },
   { key: 'history', label: 'History', icon: History },
 ]
 
@@ -1171,6 +1175,8 @@ export function CampaignConfig() {
       {tab === 'postback' && (
         <CampaignPostback campaignId={campaignId} value={value} set={set} />
       )}
+
+      {tab === 'try' && <CampaignChat campaignId={campaignId} />}
 
       {tab === 'history' && (
         <Card className="overflow-hidden">

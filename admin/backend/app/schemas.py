@@ -1126,6 +1126,30 @@ class TtsModel(BaseModel):
     supports_language: bool = True
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
+class ChatTurnIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    # Held by the browser, not by us. A test conversation is a scratchpad and
+    # should not appear in the call list beside real ones.
+    history: list[ChatMessage] = Field(default_factory=list, max_length=40)
+
+
+class ChatTurnOut(BaseModel):
+    text: str
+    # What the agent did on the way to that answer: documents retrieved with
+    # their scores, tools called with their arguments. The answer alone tells
+    # you what it said; this tells you why.
+    steps: list[dict] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    ms: int = 0
+
+
 class TtsPreviewIn(BaseModel):
     provider: str
     model: str = Field(max_length=80)

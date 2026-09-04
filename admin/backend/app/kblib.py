@@ -36,6 +36,21 @@ def kb():
     return _kb
 
 
+def agent_module(name: str):
+    """Any module out of the mounted agent directory, by name.
+
+    The path is already on sys.path once kb has loaded, so this is an import
+    and not a second mounting mechanism. Used by the chat tester, which needs
+    `store` and `chat` for the same reason it needs `kb`: running the agent's
+    OWN code is the only thing that makes it a test rather than a lookalike.
+    """
+    if _kb is None:
+        raise RuntimeError(f"agent library unavailable: {_import_error}")
+    import importlib
+
+    return importlib.import_module(name)
+
+
 def _load():
     global _kb, _import_error
     if not AGENT_LIB.is_dir():
