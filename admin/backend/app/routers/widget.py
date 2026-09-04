@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -83,15 +84,6 @@ def _cors(origin: str) -> dict:
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
     }
-
-
-@router.options("/widget/{public_key}/chat")
-async def preflight(public_key: str, request: Request):
-    origin = request.headers.get("origin")
-    # The allowlist is checked here too. Answering a preflight for an origin
-    # that will be refused anyway tells that origin it is worth trying.
-    await _widget(public_key, origin)
-    return Response(status_code=204, headers=_cors(origin or ""))
 
 
 @router.get("/widget/{public_key}/config")
@@ -237,3 +229,41 @@ def new_key() -> str:
     fills up with refusals nobody reads.
     """
     return "wk_" + secrets.token_urlsafe(24)
+
+
+# ─────────────────────────── the preflight ─────────────────────────────────
+
+_WIDGET_PATH = re.compile(r"^/api/widget/([A-Za-z0-9_-]+)/")
+
+
+async def preflight_middleware(request: Request, call_next):
+    """Answer OPTIONS for widget routes before the global CORS middleware can.
+
+    That middleware allows one fixed list of origins - the console's own - and
+    it intercepts every preflight, so a widget on a customer's site got a
+    response with no Access-Control-Allow-Origin at all and the browser refused
+    the POST. The GET worked and hid it: a simple request has no preflight, and
+    the header on that response is one this module sets itself.
+
+    Whether a given site may use a given widget is a per-widget question, and
+    the only place that can answer it is here. Added AFTER the CORS middleware
+    in main.py, which makes it the outer one and lets it reply first.
+    """
+    if request.method != "OPTIONS":
+        return await call_next(request)
+
+    m = _WIDGET_PATH.match(request.url.path)
+    if not m:
+        return await call_next(request)
+
+    origin = request.headers.get("origin")
+    try:
+        # Checked here too. Answering a preflight for an origin that will be
+        # refused anyway tells that origin it is worth trying again.
+        await _widget(m.group(1), origin)
+    except HTTPException:
+        # No CORS headers. The browser reports it as a refusal, which is what
+        # it is - and the reason is in this service's log, not in a response
+        # that anybody can read.
+        return Response(status_code=403)
+    return Response(status_code=204, headers=_cors(origin or ""))

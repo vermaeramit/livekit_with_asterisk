@@ -64,6 +64,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# AFTER the line above, which makes it the OUTER middleware and lets it answer
+# first. The CORS middleware allows one fixed list of origins - the console's
+# own - and intercepts every preflight, so a widget on a customer's site got a
+# preflight response with no Access-Control-Allow-Origin and the browser
+# refused the POST. Which sites may use which widget is a per-widget question
+# and is answered in widget.py.
+app.middleware("http")(widget.preflight_middleware)
+
 app.include_router(auth.router, prefix="/api")
 app.include_router(calls.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
