@@ -219,7 +219,11 @@ async def _run_tool(call, cfg, runners, api_key) -> tuple[str, Step]:
             ms=0)
 
     try:
-        out = await run(None, **args)
+        # ONE dict, not (ctx, **kwargs). livekit is given the function with a
+        # raw_schema, so it hands the arguments over unsplatted and `run`
+        # normalises them itself - which is where the digits-only handling for
+        # pin codes lives.
+        out = await run(args)
     except tools_mod.ToolError as e:
         # A tool failure the model is MEANT to read - "no dealer for that PIN
         # code", not a stack trace. The wording of several of these was chosen
