@@ -10,6 +10,12 @@ instead:
                       empty allowlist means the widget is off - fail closed,
                       because fail-open means a stranger's site running this
                       bot on this campaign's bill.
+
+                      Unless allow_any_origin is set, which is a supported
+                      choice and not a loophole: some customers have dozens of
+                      subdomains, and the alternative to offering this is
+                      somebody putting the key somewhere worse. With it on,
+                      the cap below is the only limit left.
   a daily token cap   the ceiling on what one day can cost, counted in tokens
                       rather than rupees. A rupee cap needs a complete rate
                       table; the dashboard says five providers have none.
@@ -43,6 +49,7 @@ MAX_TURNS = 30
 async def _widget(public_key: str, origin: str | None):
     row = await db.pool().fetchrow(
         """SELECT w.id, w.campaign_id, w.tenant_id, w.allowed_origins,
+                  w.allow_any_origin,
                   w.enabled, w.daily_token_cap, w.welcome, w.title,
                   ac.name AS config_name
              FROM chat_widgets w
@@ -53,17 +60,21 @@ async def _widget(public_key: str, origin: str | None):
     if row is None or not row["enabled"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no widget here")
 
-    allowed = list(row["allowed_origins"] or ())
-    if not allowed or origin not in allowed:
-        log.warning("widget %s refused origin %r", public_key, origin)
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            "this widget is not enabled for that site")
+    if not row["allow_any_origin"]:
+        allowed = list(row["allowed_origins"] or ())
+        if not allowed or origin not in allowed:
+            log.warning("widget %s refused origin %r", public_key, origin)
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "this widget is not enabled for that site")
     return row
 
 
 def _cors(origin: str) -> dict:
     return {
-        "Access-Control-Allow-Origin": origin,
+        # The caller's own origin, or "*" when there is none - a request with
+        # no Origin is not a browser, and only reaches here on a widget that
+        # has been opened to everyone.
+        "Access-Control-Allow-Origin": origin or "*",
         "Access-Control-Allow-Headers": "content-type",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         # Ten minutes: long enough to save the preflight on a real

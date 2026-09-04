@@ -337,6 +337,8 @@ export interface ChatWidget {
   // list and the cap are what protect the campaign, not this.
   public_key: string
   allowed_origins: string[]
+  // Ignores the list above. The cap is then the only limit.
+  allow_any_origin: boolean
   enabled: boolean
   daily_token_cap: number
   welcome: string | null

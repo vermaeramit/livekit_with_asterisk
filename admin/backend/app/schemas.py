@@ -1164,6 +1164,9 @@ class WidgetIn(BaseModel):
     # Exact origins. No wildcards: a wildcard is how one hostname becomes every
     # subdomain somebody else can register.
     allowed_origins: list[str] = Field(default_factory=list, max_length=20)
+    # Its own field rather than a "*" in the list above: a wildcard reads as
+    # one more entry, and this is a decision.
+    allow_any_origin: bool = False
     enabled: bool = True
     daily_token_cap: int = Field(default=500_000, ge=1000, le=50_000_000)
     welcome: str | None = Field(default=None, max_length=300)
@@ -1195,6 +1198,7 @@ class WidgetOut(BaseModel):
     campaign_id: int
     public_key: str
     allowed_origins: list[str] = Field(default_factory=list)
+    allow_any_origin: bool = False
     enabled: bool
     daily_token_cap: int
     welcome: str | None = None

@@ -3832,6 +3832,14 @@ else. Three things do the work instead:
   mode of fail-open is a stranger's site running this agent on this campaign's
   bill. The console says that where the empty list is, not in a tooltip found
   after wondering why nothing works.
+
+  An **Any site** switch was asked for straight afterwards and added. It is a
+  supported choice, not a loophole - a customer with dozens of subdomains is
+  real, and the alternative to offering it is somebody putting the key
+  somewhere worse. It is a switch rather than a `*` in the list because a
+  wildcard reads as one more entry and scrolls past. With it on, the panel says
+  in that spot that the cap is now the only limit left, and the sentence about
+  what protects the campaign changes to match.
 - **A daily cap in TOKENS, not rupees.** A rupee cap needs a complete rate
   table, and the dashboard currently reports five providers with no rate. A cap
   that fails quietly because somebody did not fill in a price is not a cap.

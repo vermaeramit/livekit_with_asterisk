@@ -21,6 +21,7 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
   const qc = useQueryClient()
   const toast = useToast()
   const [origins, setOrigins] = useState<string[]>([])
+  const [anyOrigin, setAnyOrigin] = useState(false)
   const [originDraft, setOriginDraft] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [cap, setCap] = useState(500000)
@@ -37,6 +38,7 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
   useEffect(() => {
     if (!w) return
     setOrigins(w.allowed_origins)
+    setAnyOrigin(w.allow_any_origin)
     setEnabled(w.enabled)
     setCap(w.daily_token_cap)
     setTitle(w.title ?? '')
@@ -49,6 +51,7 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
         method: 'PUT',
         body: {
           allowed_origins: origins,
+          allow_any_origin: anyOrigin,
           enabled,
           daily_token_cap: cap,
           title: title.trim() || null,
@@ -154,14 +157,35 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
           {/* Said plainly, because somebody will otherwise treat it as one and
               be alarmed to find it in a page. */}
           The key is <strong className="font-medium">public</strong> — it is visible to
-          anyone who views the page. What protects this campaign is the origin list
-          and the cap below, not the key.
+          anyone who views the page.{' '}
+          {anyOrigin
+            ? 'With any site allowed, the daily cap below is the only thing protecting this campaign.'
+            : 'What protects this campaign is the origin list and the cap below, not the key.'}
         </p>
       </div>
 
-      <div className="space-y-2 rounded-lg border border-border/70 bg-muted/30 p-3">
+      <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
         <Label>Sites allowed to use it</Label>
-        {origins.length > 0 && (
+
+        <Toggle
+          label="Any site"
+          checked={anyOrigin}
+          onChange={setAnyOrigin}
+          hint="For a customer with many subdomains, or a site whose address is not settled yet. The list below is then ignored."
+        />
+
+        {anyOrigin ? (
+          // The consequence, in the place where the decision is made. The
+          // Origin header is the only check a browser cannot be talked out of;
+          // without it the cap below is genuinely the only limit left.
+          <p className="text-2xs leading-relaxed text-amber-600 dark:text-amber-500">
+            The widget will answer any site, and anything that is not a browser.
+            The daily token cap is now the only limit — set it to what you are
+            willing to spend in a day if somebody points a script at it.
+          </p>
+        ) : null}
+
+        {!anyOrigin && origins.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {origins.map((o) => (
               <span
@@ -182,7 +206,7 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
             ))}
           </div>
         )}
-        <div className="flex gap-2">
+        <div className={`flex gap-2 ${anyOrigin ? 'hidden' : ''}`}>
           <Input
             value={originDraft}
             onChange={(e) => setOriginDraft(e.target.value)}
@@ -194,7 +218,7 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
-        {origins.length === 0 ? (
+        {anyOrigin ? null : origins.length === 0 ? (
           // Fail closed, and say so where the empty list is - not in a
           // tooltip somebody finds after wondering why nothing works.
           <p className="text-2xs leading-relaxed text-amber-600 dark:text-amber-500">
