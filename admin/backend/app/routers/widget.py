@@ -53,7 +53,7 @@ async def _widget(public_key: str, origin: str | None):
         """SELECT w.id, w.campaign_id, w.tenant_id, w.allowed_origins,
                   w.allow_any_origin,
                   w.enabled, w.daily_token_cap, w.welcome, w.title,
-                  w.accent_color, w.icon_url,
+                  w.accent_color, (w.icon_data IS NOT NULL) AS has_icon,
                   ac.name AS config_name
              FROM chat_widgets w
              LEFT JOIN agent_config ac ON ac.campaign_id = w.campaign_id
@@ -102,10 +102,42 @@ async def widget_config(public_key: str, request: Request):
             "title": w["title"] or "Chat",
             "welcome": w["welcome"] or "Hello. How can I help?",
             "accent": w["accent_color"] or "#2563eb",
-            "icon": w["icon_url"],
+            # A PATH, not a URL. The widget prefixes it with the address it
+            # loaded itself from, which is the only one it can be sure of -
+            # building an absolute URL here would mean trusting proxy headers
+            # to say what the outside world calls this service.
+            "icon": (f"/widget/{public_key}/icon" if w["has_icon"] else None),
         }),
         media_type="application/json",
         headers=_cors(origin or ""))
+
+
+@router.get("/widget/{public_key}/icon")
+async def widget_icon(public_key: str):
+    """The uploaded logo.
+
+    No origin check: an <img> is not a CORS request, and a logo is not a
+    secret. Checking would only stop the image loading on the very site the
+    widget is meant for, since <img> sends no Origin at all.
+    """
+    row = await db.pool().fetchrow(
+        "SELECT icon_data, icon_mime FROM chat_widgets "
+        " WHERE public_key = $1 AND enabled", public_key)
+    if row is None or row["icon_data"] is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no icon")
+    return Response(
+        content=bytes(row["icon_data"]),
+        media_type=row["icon_mime"] or "image/png",
+        headers={
+            # A logo changes rarely and is fetched on every visitor's first
+            # click. An hour is short enough that replacing it is visible the
+            # same afternoon.
+            "Cache-Control": "public, max-age=3600",
+            # Belt and braces on top of refusing SVG at upload: even if
+            # something image-shaped got through, the browser will not sniff
+            # it into something executable.
+            "X-Content-Type-Options": "nosniff",
+        })
 
 
 @router.post("/widget/{public_key}/chat")

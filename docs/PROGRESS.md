@@ -3864,6 +3864,37 @@ would be worse. Everything is in a shadow root, and the file is served as
 written - no build step, and what a customer's page downloads before anybody
 asks a question is the whole of it.
 
+### Made to look like it belongs there
+
+The widget sits on a page somebody else designed, and a fixed blue bubble in
+the corner of a red brand looks like something that wandered in. So: an accent
+colour, an uploaded logo, a title, a typing indicator that moves, and a
+streamed reply.
+
+Three decisions inside that:
+
+- **The text colour is computed, never stored.** A stored one can disagree with
+  the accent: pick a pale yellow, leave the text white, and the header is
+  unreadable with both fields looking correctly filled in. Relative luminance,
+  and the console runs the same calculation as a preview beside the picker so
+  the two cannot drift.
+- **The icon is uploaded, into the DATABASE.** A URL meant the customer had to
+  host the file first, for no benefit. In the database rather than on disk
+  because a logo is tens of kilobytes: it is in the backup already, there is no
+  volume, no path to keep in step, and nothing to go missing on a new server.
+- **SVG is refused**, by magic bytes rather than by filename or the browser's
+  content type - both of which are supplied by whoever is uploading. An SVG can
+  carry script and this file is served from our own address: harmless inside an
+  `<img>`, not harmless if somebody opens the URL. The message says that,
+  because it is the rejection people will actually hit.
+
+`icon_url` was dropped rather than left beside `icon_data`. Two places to put
+an icon is two places to look when the wrong one appears.
+
+The reply streams here for a stronger reason than on the phone. On a call the
+thinking time is filled by the line being open; in a chat panel it is a blank
+box, and eight seconds of that is a person deciding the thing is broken.
+
 ### The routing mistake that was nearly shipped
 
 The widget router was registered without the `/api` prefix, on the reasoning

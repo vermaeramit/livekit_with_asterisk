@@ -160,15 +160,19 @@
         $('.title').textContent = c.title || 'Chat'
         if (c.accent) paint(c.accent)
         if (c.icon) {
+          // A path from the server, resolved against the address this script
+          // came from - the one thing it can be sure of. An absolute URL built
+          // on the server would depend on proxy headers being right.
+          var iconSrc = c.icon.charAt(0) === '/' ? api + c.icon : c.icon
           // Two copies of the same logo: one in the header, one replacing the
           // speech-bubble glyph. A brand mark on a coloured circle is what a
           // visitor recognises before they read anything.
           var head = document.createElement('img')
-          head.src = c.icon
+          head.src = iconSrc
           head.alt = ''
           $('.ico').appendChild(head)
           var big = document.createElement('img')
-          big.src = c.icon
+          big.src = iconSrc
           big.alt = ''
           var b = $('.bubble')
           b.textContent = ''

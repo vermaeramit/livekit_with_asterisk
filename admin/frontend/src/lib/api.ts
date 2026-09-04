@@ -359,6 +359,35 @@ export async function postStream<T = unknown>(
   return ndjson<T>(xhr, () => xhr.send(body === undefined ? null : JSON.stringify(body)), onEvent)
 }
 
+/**
+ * Send one file and get JSON back.
+ *
+ * Separate from `upload` below, which drives an NDJSON progress stream for
+ * knowledge-base ingestion. A 50 KB logo needs none of that, and reusing the
+ * streaming path would mean an endpoint that has to emit progress lines for a
+ * request that finishes before the first one could be sent.
+ */
+export async function uploadFile<T = unknown>(path: string, file: File): Promise<T> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    // No content-type: the browser sets it, with the multipart boundary.
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    let detail: unknown = null
+    try {
+      detail = await res.json()
+    } catch {
+      /* an empty or non-JSON body is still a failure worth naming */
+    }
+    throw new ApiError(res.status, messageOf(res.status, detail))
+  }
+  return (await res.json()) as T
+}
+
 export async function upload<T = unknown>(
   path: string,
   file: File,

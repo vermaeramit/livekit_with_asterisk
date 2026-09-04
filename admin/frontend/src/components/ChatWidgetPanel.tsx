@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { NumberField, TextField, Toggle } from '@/components/ui/field'
 import { Badge, Card, Input, Label } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, uploadFile } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
 import type { ChatWidget } from '@/types'
 
@@ -48,8 +48,8 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
   const [title, setTitle] = useState('')
   const [welcome, setWelcome] = useState('')
   const [accent, setAccent] = useState('#2563eb')
-  const [icon, setIcon] = useState('')
   const [copied, setCopied] = useState(false)
+  const [iconV, setIconV] = useState(0)
 
   const widget = useQuery({
     queryKey: ['widget', campaignId],
@@ -66,7 +66,6 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
     setTitle(w.title ?? '')
     setWelcome(w.welcome ?? '')
     setAccent(w.accent_color || '#2563eb')
-    setIcon(w.icon_url ?? '')
   }, [w])
 
   const save = useMutation({
@@ -81,7 +80,6 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
           title: title.trim() || null,
           welcome: welcome.trim() || null,
           accent_color: accent,
-          icon_url: icon.trim() || null,
         },
       }),
     onSuccess: () => {
@@ -89,6 +87,27 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
       toast.success('Saved')
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not save'),
+  })
+
+  const upload = useMutation({
+    mutationFn: (f: File) => uploadFile<ChatWidget>(`/campaigns/${campaignId}/widget/icon`, f),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['widget', campaignId] })
+      // Cache-busted, or the preview keeps showing the old logo while the
+      // customer's site shows the new one - and the person here concludes the
+      // upload failed.
+      setIconV(Date.now())
+      toast.success('Icon uploaded')
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not upload that'),
+  })
+
+  const clearIcon = useMutation({
+    mutationFn: () => api(`/campaigns/${campaignId}/widget/icon`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['widget', campaignId] })
+      setIconV(Date.now())
+    },
   })
 
   const remove = useMutation({
@@ -292,13 +311,40 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
             </p>
           </div>
 
-          <TextField
-            label="Icon URL"
-            value={icon}
-            onChange={setIcon}
-            placeholder="https://www.example.com/logo.png"
-            hint="Shown in the bubble and the header. A link to the logo already on their site, so there is only ever one copy to keep current."
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="w-icon">Icon</Label>
+            <div className="flex items-center gap-2">
+              <input
+                id="w-icon"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="min-w-0 flex-1 text-2xs file:mr-2 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-2xs"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) upload.mutate(f)
+                  e.target.value = ''
+                }}
+              />
+              {w.has_icon && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => clearIcon.mutate()}
+                  aria-label="Remove icon"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+            <p className="text-2xs leading-relaxed text-muted-foreground">
+              PNG, JPEG or WebP, under 512&nbsp;KB. Shown at 28 pixels, so a
+              large file only costs the visitor time.{' '}
+              {/* This is the rejection people will actually hit, so it is
+                  said before they hit it. */}
+              SVG is not accepted — it can carry script, and this file is served
+              from our own address.
+            </p>
+          </div>
         </div>
 
         {/* What it will actually look like, next to the fields that decide it.
@@ -309,8 +355,12 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
             className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-lg"
             style={{ background: accent, color: onAccent(accent) }}
           >
-            {icon.trim() ? (
-              <img src={icon} alt="" className="h-6 w-6 rounded object-contain" />
+            {w.has_icon ? (
+              <img
+                src={`/api/widget/${w.public_key}/icon?v=${iconV}`}
+                alt=""
+                className="h-6 w-6 rounded object-contain"
+              />
             ) : (
               '💬'
             )}

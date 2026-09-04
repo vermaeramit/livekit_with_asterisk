@@ -19,7 +19,8 @@ import dataclasses
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (APIRouter, Depends, File, HTTPException,
+                     UploadFile, status)
 from fastapi.responses import StreamingResponse
 
 from .. import audit, db, kblib
@@ -40,7 +41,11 @@ _WIDGET = """
     SELECT w.id, w.campaign_id, w.public_key, w.allowed_origins,
            w.allow_any_origin, w.enabled,
            w.daily_token_cap, w.welcome, w.title, w.accent_color,
-           w.icon_url, w.created_at, w.updated_at,
+           -- The bytes are never selected here. A column that is not
+           -- loaded cannot be serialised into a JSON response by
+           -- accident.
+           (w.icon_data IS NOT NULL) AS has_icon,
+           w.created_at, w.updated_at,
            (SELECT coalesce(sum(prompt_tokens + completion_tokens), 0)
               FROM chat_conversations c
              WHERE c.widget_id = w.id
@@ -77,8 +82,8 @@ async def save_widget(campaign_id: int, body: WidgetIn,
         """INSERT INTO chat_widgets (campaign_id, tenant_id, public_key,
                                      allowed_origins, allow_any_origin,
                                      enabled, daily_token_cap, welcome, title,
-                                     accent_color, icon_url)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                     accent_color)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            ON CONFLICT (campaign_id) DO UPDATE SET
                allowed_origins = EXCLUDED.allowed_origins,
                allow_any_origin = EXCLUDED.allow_any_origin,
@@ -87,19 +92,91 @@ async def save_widget(campaign_id: int, body: WidgetIn,
                welcome = EXCLUDED.welcome,
                title = EXCLUDED.title,
                accent_color = EXCLUDED.accent_color,
-               icon_url = EXCLUDED.icon_url,
                updated_at = now()""",
         campaign_id, tenant_id,
         existing["public_key"] if existing else widget_mod.new_key(),
         body.allowed_origins, body.allow_any_origin, body.enabled,
         body.daily_token_cap, body.welcome, body.title,
-        body.accent_color, body.icon_url)
+        body.accent_color)
 
     await audit.record(actor, entity="chat_widget", entity_id=str(campaign_id),
                        action="update" if existing else "create",
                        tenant_id=tenant_id, campaign_id=campaign_id,
                        changes={"origins": {"from": None,
                                             "to": body.allowed_origins}})
+    row = await db.pool().fetchrow(_WIDGET + " WHERE w.campaign_id = $1",
+                                   campaign_id)
+    return WidgetOut(**dict(row))
+
+
+# Magic bytes, not the filename and not the browser's content type. Both are
+# supplied by whoever is uploading, and this file is served back to visitors on
+# a customer's website.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+MAX_ICON_BYTES = 512 * 1024
+
+
+def _sniff(data: bytes) -> str | None:
+    for magic, mime in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return mime
+    # WEBP is "RIFF....WEBP", so the marker is not at the front.
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@router.post("/campaigns/{campaign_id}/widget/icon", response_model=WidgetOut)
+async def upload_icon(campaign_id: int, file: UploadFile = File(...),
+                      actor: CurrentUser = Depends(editor)):
+    """Store the icon in the database.
+
+    A logo is tens of kilobytes, and keeping it here means it is in the backup
+    already - no volume, no path to keep in step, nothing to go missing on a
+    new server.
+    """
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+    data = await file.read(MAX_ICON_BYTES + 1)
+    if len(data) > MAX_ICON_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"the icon must be under {MAX_ICON_BYTES // 1024} KB - it is shown "
+            "at 28 pixels, so a large file only costs the visitor time")
+
+    mime = _sniff(data)
+    if mime is None:
+        # Named formats rather than "invalid image", because the commonest
+        # rejection here will be an SVG and the person needs to know why.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "that is not a PNG, JPEG or WebP. SVG is deliberately not accepted: "
+            "it can carry script, and this file is served from our own address")
+
+    updated = await db.pool().execute(
+        "UPDATE chat_widgets SET icon_data = $2, icon_mime = $3, "
+        "  updated_at = now() WHERE campaign_id = $1",
+        campaign_id, data, mime)
+    if updated.endswith(" 0"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "create the widget first")
+
+    await audit.record(actor, entity="chat_widget", entity_id=str(campaign_id),
+                       action="icon", tenant_id=tenant_id,
+                       campaign_id=campaign_id)
+    row = await db.pool().fetchrow(_WIDGET + " WHERE w.campaign_id = $1",
+                                   campaign_id)
+    return WidgetOut(**dict(row))
+
+
+@router.delete("/campaigns/{campaign_id}/widget/icon", response_model=WidgetOut)
+async def clear_icon(campaign_id: int, actor: CurrentUser = Depends(editor)):
+    await assert_campaign_visible(actor, campaign_id)
+    await db.pool().execute(
+        "UPDATE chat_widgets SET icon_data = NULL, icon_mime = NULL, "
+        "  updated_at = now() WHERE campaign_id = $1", campaign_id)
     row = await db.pool().fetchrow(_WIDGET + " WHERE w.campaign_id = $1",
                                    campaign_id)
     return WidgetOut(**dict(row))

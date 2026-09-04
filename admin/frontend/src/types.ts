@@ -344,7 +344,8 @@ export interface ChatWidget {
   welcome: string | null
   title: string | null
   accent_color: string
-  icon_url: string | null
+  // Whether one is stored. The bytes come from their own endpoint.
+  has_icon: boolean
   tokens_today: number
   conversations_today: number
   created_at: string
