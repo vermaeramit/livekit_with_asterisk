@@ -343,6 +343,8 @@ export interface ChatWidget {
   daily_token_cap: number
   welcome: string | null
   title: string | null
+  accent_color: string
+  icon_url: string | null
   tokens_today: number
   conversations_today: number
   created_at: string

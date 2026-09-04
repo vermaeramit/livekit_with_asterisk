@@ -1171,6 +1171,26 @@ class WidgetIn(BaseModel):
     daily_token_cap: int = Field(default=500_000, ge=1000, le=50_000_000)
     welcome: str | None = Field(default=None, max_length=300)
     title: str | None = Field(default=None, max_length=80)
+    # Ends up in a style attribute on a page we do not control, so it is
+    # checked here rather than trusted and escaped later.
+    accent_color: str = Field(default="#2563eb", pattern=r"^#[0-9a-fA-F]{6}$")
+    icon_url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("icon_url")
+    @classmethod
+    def _icon_is_a_url(cls, v):
+        """http(s) only.
+
+        A data: or javascript: URL here would be injected into a customer's
+        page by us, which is the one thing a widget must never do to the site
+        that trusted it.
+        """
+        if v is None or not v.strip():
+            return None
+        u = v.strip()
+        if not re.match(r"^https?://", u):
+            raise ValueError("the icon must be an http or https URL")
+        return u
 
     @field_validator("allowed_origins")
     @classmethod
@@ -1203,6 +1223,8 @@ class WidgetOut(BaseModel):
     daily_token_cap: int
     welcome: str | None = None
     title: str | None = None
+    accent_color: str = "#2563eb"
+    icon_url: str | None = None
     # Today's usage against the cap, so the number means something next to it.
     tokens_today: int = 0
     conversations_today: int = 0

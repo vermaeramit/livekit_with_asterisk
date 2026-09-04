@@ -10,6 +10,26 @@ import { formatNumber } from '@/lib/utils'
 import type { ChatWidget } from '@/types'
 
 /**
+ * Black or white text on a given background.
+ *
+ * The same relative-luminance formula the widget itself uses, so the preview
+ * here and the thing on the customer's page cannot disagree. Duplicated rather
+ * than shared because the widget is plain JS served as written, with no build
+ * step and nothing to import from.
+ */
+function onAccent(hex: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return '#fff'
+  const n = parseInt(hex.slice(1), 16)
+  const lum = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    .map((v) => {
+      const x = v / 255
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
+    })
+    .reduce((acc, x, i) => acc + [0.2126, 0.7152, 0.0722][i] * x, 0)
+  return lum > 0.45 ? '#111' : '#fff'
+}
+
+/**
  * The same agent, on a website.
  *
  * The key in the snippet is public - it sits in the page source of a site
@@ -27,6 +47,8 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
   const [cap, setCap] = useState(500000)
   const [title, setTitle] = useState('')
   const [welcome, setWelcome] = useState('')
+  const [accent, setAccent] = useState('#2563eb')
+  const [icon, setIcon] = useState('')
   const [copied, setCopied] = useState(false)
 
   const widget = useQuery({
@@ -43,6 +65,8 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
     setCap(w.daily_token_cap)
     setTitle(w.title ?? '')
     setWelcome(w.welcome ?? '')
+    setAccent(w.accent_color || '#2563eb')
+    setIcon(w.icon_url ?? '')
   }, [w])
 
   const save = useMutation({
@@ -56,6 +80,8 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
           daily_token_cap: cap,
           title: title.trim() || null,
           welcome: welcome.trim() || null,
+          accent_color: accent,
+          icon_url: icon.trim() || null,
         },
       }),
     onSuccess: () => {
@@ -234,6 +260,68 @@ export function ChatWidgetPanel({ campaignId }: { campaignId: number }) {
             sites and both need listing.
           </p>
         )}
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-border/70 bg-muted/30 p-3">
+        <p className="text-xs font-medium">How it looks</p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="w-accent">Colour</Label>
+            <div className="flex items-center gap-2">
+              <input
+                id="w-accent"
+                type="color"
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded border border-border bg-transparent p-0.5"
+              />
+              <Input
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+                className="font-mono text-xs"
+                placeholder="#2563eb"
+              />
+            </div>
+            <p className="text-2xs leading-relaxed text-muted-foreground">
+              {/* Said because somebody will otherwise look for the setting and
+                  not find it. */}
+              The text on top of it is worked out from the colour, not chosen —
+              a pale accent gets dark text, so the header cannot end up
+              unreadable.
+            </p>
+          </div>
+
+          <TextField
+            label="Icon URL"
+            value={icon}
+            onChange={setIcon}
+            placeholder="https://www.example.com/logo.png"
+            hint="Shown in the bubble and the header. A link to the logo already on their site, so there is only ever one copy to keep current."
+          />
+        </div>
+
+        {/* What it will actually look like, next to the fields that decide it.
+            Copying a hex code and then loading a customer's site to see it is
+            how a colour ends up nearly right. */}
+        <div className="flex items-center gap-3">
+          <span
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-lg"
+            style={{ background: accent, color: onAccent(accent) }}
+          >
+            {icon.trim() ? (
+              <img src={icon} alt="" className="h-6 w-6 rounded object-contain" />
+            ) : (
+              '💬'
+            )}
+          </span>
+          <span
+            className="rounded-xl px-3 py-1.5 text-xs"
+            style={{ background: accent, color: onAccent(accent) }}
+          >
+            {title.trim() || 'Chat'}
+          </span>
+        </div>
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">

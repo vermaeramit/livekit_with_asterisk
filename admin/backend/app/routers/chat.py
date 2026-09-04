@@ -39,7 +39,8 @@ editor = require_perm("campaign.write")
 _WIDGET = """
     SELECT w.id, w.campaign_id, w.public_key, w.allowed_origins,
            w.allow_any_origin, w.enabled,
-           w.daily_token_cap, w.welcome, w.title, w.created_at, w.updated_at,
+           w.daily_token_cap, w.welcome, w.title, w.accent_color,
+           w.icon_url, w.created_at, w.updated_at,
            (SELECT coalesce(sum(prompt_tokens + completion_tokens), 0)
               FROM chat_conversations c
              WHERE c.widget_id = w.id
@@ -75,8 +76,9 @@ async def save_widget(campaign_id: int, body: WidgetIn,
     await db.pool().execute(
         """INSERT INTO chat_widgets (campaign_id, tenant_id, public_key,
                                      allowed_origins, allow_any_origin,
-                                     enabled, daily_token_cap, welcome, title)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                     enabled, daily_token_cap, welcome, title,
+                                     accent_color, icon_url)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            ON CONFLICT (campaign_id) DO UPDATE SET
                allowed_origins = EXCLUDED.allowed_origins,
                allow_any_origin = EXCLUDED.allow_any_origin,
@@ -84,11 +86,14 @@ async def save_widget(campaign_id: int, body: WidgetIn,
                daily_token_cap = EXCLUDED.daily_token_cap,
                welcome = EXCLUDED.welcome,
                title = EXCLUDED.title,
+               accent_color = EXCLUDED.accent_color,
+               icon_url = EXCLUDED.icon_url,
                updated_at = now()""",
         campaign_id, tenant_id,
         existing["public_key"] if existing else widget_mod.new_key(),
         body.allowed_origins, body.allow_any_origin, body.enabled,
-        body.daily_token_cap, body.welcome, body.title)
+        body.daily_token_cap, body.welcome, body.title,
+        body.accent_color, body.icon_url)
 
     await audit.record(actor, entity="chat_widget", entity_id=str(campaign_id),
                        action="update" if existing else "create",

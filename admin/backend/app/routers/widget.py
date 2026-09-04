@@ -34,6 +34,7 @@ import re
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from .. import db, kblib
 from .. import provider_keys as pk
@@ -52,6 +53,7 @@ async def _widget(public_key: str, origin: str | None):
         """SELECT w.id, w.campaign_id, w.tenant_id, w.allowed_origins,
                   w.allow_any_origin,
                   w.enabled, w.daily_token_cap, w.welcome, w.title,
+                  w.accent_color, w.icon_url,
                   ac.name AS config_name
              FROM chat_widgets w
              LEFT JOIN agent_config ac ON ac.campaign_id = w.campaign_id
@@ -99,6 +101,8 @@ async def widget_config(public_key: str, request: Request):
         content=json.dumps({
             "title": w["title"] or "Chat",
             "welcome": w["welcome"] or "Hello. How can I help?",
+            "accent": w["accent_color"] or "#2563eb",
+            "icon": w["icon_url"],
         }),
         media_type="application/json",
         headers=_cors(origin or ""))
@@ -106,19 +110,31 @@ async def widget_config(public_key: str, request: Request):
 
 @router.post("/widget/{public_key}/chat")
 async def widget_chat(public_key: str, body: WidgetTurnIn, request: Request):
+    """One turn, streamed as newline-delimited JSON.
+
+    Streamed because the visitor is watching a screen. On a phone call the
+    agent's thinking time is filled by the line being open; here it is a blank
+    panel, and eight seconds of that is a person deciding the thing is broken.
+    """
     origin = request.headers.get("origin")
     w = await _widget(public_key, origin)
+    headers = _cors(origin or "")
 
-    if not kblib.available():
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "chat is not available")
-    if w["config_name"] is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "this campaign is not configured for chat")
+    def line(**payload) -> str:
+        return json.dumps(payload) + "\n"
 
-    # The cap, before anything is spent. Asked per widget per day, from the
-    # conversations themselves - so it counts what was actually used and not
-    # what somebody estimated.
+    def refuse(text: str):
+        # 200 with a sentence, never a status code. The person reading it is a
+        # customer of our customer: they did not choose this software and
+        # cannot act on a 429.
+        return Response(content=line(delta=text) + line(done=True),
+                        media_type="application/x-ndjson", headers=headers)
+
+    if not kblib.available() or w["config_name"] is None:
+        return refuse("Sorry, chat is not available right now.")
+
+    # The cap, before anything is spent. Counted from the conversations
+    # themselves, so it is what was used and not what somebody estimated.
     used = await db.pool().fetchval(
         """SELECT coalesce(sum(prompt_tokens + completion_tokens), 0)
              FROM chat_conversations
@@ -126,18 +142,11 @@ async def widget_chat(public_key: str, body: WidgetTurnIn, request: Request):
         w["id"]) or 0
     if used >= w["daily_token_cap"]:
         log.warning("widget %s hit its daily cap (%s tokens)", public_key, used)
-        # 200, not 429. The visitor is a customer of our customer and should
-        # get a sentence, not an error code; the widget shows it as a reply.
-        return Response(
-            content=json.dumps({
-                "text": "Sorry, I am not available right now. Please try again later.",
-                "capped": True}),
-            media_type="application/json", headers=_cors(origin or ""))
+        return refuse("Sorry, I am not available right now. Please try again later.")
 
     keys = await pk.resolve(tenant_id=w["tenant_id"], campaign_id=w["campaign_id"])
     if not keys.get("openai"):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "chat is not available")
+        return refuse("Sorry, chat is not available right now.")
 
     store = kblib.agent_module("store")
     chat = kblib.agent_module("chat")
@@ -146,31 +155,47 @@ async def widget_chat(public_key: str, body: WidgetTurnIn, request: Request):
 
     conv, history = await _conversation(w, body.session_id, origin)
     if len(history) >= MAX_TURNS * 2:
-        return Response(
-            content=json.dumps({
-                "text": "This conversation has gone on a long time. Please start a new one.",
-                "capped": True}),
-            media_type="application/json", headers=_cors(origin or ""))
+        return refuse("This conversation has gone on a long time. Please start a new one.")
 
     history.append({"role": "user", "content": body.message})
 
-    try:
-        out = await asyncio.wait_for(
-            chat.reply(cfg, history, keys["openai"], tool_specs), timeout=90)
-    except Exception:
-        log.exception("widget turn failed for %s", public_key)
-        # Again a sentence rather than a status: the person reading it did not
-        # choose this software and cannot act on a 502.
-        return Response(
-            content=json.dumps({
-                "text": "Sorry, something went wrong. Please try again."}),
-            media_type="application/json", headers=_cors(origin or ""))
+    async def gen():
+        queue: asyncio.Queue[dict] = asyncio.Queue()
 
-    await _store_turn(conv, body.message, out)
+        async def on_event(**event):
+            # Only the words. A visitor has no use for which document was
+            # retrieved, and the scores are the campaign's business.
+            if event.get("stage") == "delta":
+                await queue.put(event)
 
-    return Response(
-        content=json.dumps({"text": out.text}),
-        media_type="application/json", headers=_cors(origin or ""))
+        task = asyncio.create_task(
+            chat.reply(cfg, history, keys["openai"], tool_specs, on_event))
+
+        try:
+            while not task.done() or not queue.empty():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    # Keeps the connection alive through a slow tool without
+                    # putting anything on the visitor's screen.
+                    yield line(ping=True)
+                    continue
+                yield line(delta=event["text"])
+            out = await task
+        except Exception:
+            log.exception("widget turn failed for %s", public_key)
+            yield line(delta="Sorry, something went wrong. Please try again.")
+            yield line(done=True)
+            return
+
+        await _store_turn(conv, body.message, out)
+        # The final text as well as the deltas: a dropped frame would otherwise
+        # leave a sentence half-written, and this is a customer reading it.
+        yield line(text=out.text, done=True)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson",
+                             headers={**headers, "X-Accel-Buffering": "no",
+                                      "Cache-Control": "no-store"})
 
 
 async def _conversation(w, session_id: str, origin: str | None):
