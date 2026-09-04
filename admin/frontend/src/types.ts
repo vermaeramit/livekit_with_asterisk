@@ -330,6 +330,23 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface ChatWidget {
+  id: number
+  campaign_id: number
+  // Public: it sits in the page source of a site anyone can view. The origin
+  // list and the cap are what protect the campaign, not this.
+  public_key: string
+  allowed_origins: string[]
+  enabled: boolean
+  daily_token_cap: number
+  welcome: string | null
+  title: string | null
+  tokens_today: number
+  conversations_today: number
+  created_at: string
+  updated_at: string
+}
+
 export interface ChatStep {
   kind: 'kb' | 'tool'
   name: string

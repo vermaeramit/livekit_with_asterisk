@@ -14,7 +14,7 @@ from .routers import (agent_config, alerts, analytics, auth, calls,
                       rates, roles,
                       campaigns, chat, kb, kb_sources, live,
                       provider_keys, system, tenants,
-                      tools, users)
+                      tools, users, widget)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,6 +76,13 @@ app.include_router(roles.router, prefix="/api")
 app.include_router(diallers.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+# Under /api like everything else, because that is the only path nginx proxies
+# to this service - anything else lands on the single-page app and comes back
+# as index.html, which a fetch() reports as a puzzling parse error.
+#
+# The prefix is routing, not authorisation: these routes are unauthenticated on
+# purpose, and widget.py says what guards them instead.
+app.include_router(widget.router, prefix="/api")
 app.include_router(kb_sources.router, prefix="/api")
 app.include_router(agent_config.router, prefix="/api")
 app.include_router(tenants.router, prefix="/api")

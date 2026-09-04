@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { TermList } from '@/components/TermList'
 import { CampaignChat } from '@/components/CampaignChat'
+import { ChatWidgetPanel } from '@/components/ChatWidgetPanel'
 import { TransferHours } from '@/components/TransferHours'
 import { VoicePreview } from '@/components/VoicePreview'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
@@ -1176,7 +1177,15 @@ export function CampaignConfig() {
         <CampaignPostback campaignId={campaignId} value={value} set={set} />
       )}
 
-      {tab === 'try' && <CampaignChat campaignId={campaignId} />}
+      {tab === 'try' && (
+        <div className="space-y-5">
+          <CampaignChat campaignId={campaignId} />
+          {/* Under the tester, not on its own tab: you put the agent on a
+              website after you have satisfied yourself it answers properly,
+              and that is the panel above. */}
+          <ChatWidgetPanel campaignId={campaignId} />
+        </div>
+      )}
 
       {tab === 'history' && (
         <Card className="overflow-hidden">

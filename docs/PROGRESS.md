@@ -3815,6 +3815,57 @@ recogniser would have heard. The panel says so where somebody will read it.
 
 ---
 
+## The agent on somebody else's website (4 Sep 2026)
+
+Phase two of the chat work. The engine and the console tester were phase one;
+this is the second door into the same engine - a public endpoint and a script
+tag.
+
+### The key in the snippet is not a secret, and the design says so
+
+It sits in the page source of a site anyone can view. That is not a flaw to fix
+with a longer key; it is the shape of the thing, and it decides everything
+else. Three things do the work instead:
+
+- **The Origin header.** A browser sets it and a browser cannot forge it. An
+  empty allowlist means the widget is OFF - fail closed, because the failure
+  mode of fail-open is a stranger's site running this agent on this campaign's
+  bill. The console says that where the empty list is, not in a tooltip found
+  after wondering why nothing works.
+- **A daily cap in TOKENS, not rupees.** A rupee cap needs a complete rate
+  table, and the dashboard currently reports five providers with no rate. A cap
+  that fails quietly because somebody did not fill in a price is not a cap.
+- **History from the database, not the client.** A client that sends its own
+  history can send one where the agent has already agreed to something.
+
+None of it stops a determined person with curl and a forged Origin. It stops
+the ordinary ways this goes wrong - a copied snippet, a scraper, a loop - and
+the cap stops any of them from mattering.
+
+### Two things the visitor should never see
+
+A capped widget and a failed turn both answer **200 with a sentence**, not a
+status code. The person reading it is a customer of our customer: they did not
+choose this software and cannot act on a 429.
+
+### Shadow DOM, and no framework
+
+The widget lands on sites whose CSS nobody here has seen. A stray
+`button { width: 100% }` would wreck the panel, and our styles leaking out
+would be worse. Everything is in a shadow root, and the file is served as
+written - no build step, and what a customer's page downloads before anybody
+asks a question is the whole of it.
+
+### The routing mistake that was nearly shipped
+
+The widget router was registered without the `/api` prefix, on the reasoning
+that it is unauthenticated. But `/api` is the only path the console's nginx
+proxies: `/widget/...` would have landed on the single-page app and come back
+as `index.html`, which a `fetch()` reports as a puzzling parse error rather
+than a 404. The prefix is routing; it was never authorisation.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3870,9 +3921,11 @@ recogniser would have heard. The panel says so where somebody will read it.
   Blocked on actual examples: which word, what it sounds like, which campaign.
   Numbers and romanised Hindi are different problems with different fixes, and
   a dictionary is the wrong tool for both.
-- **Phase 2: the embeddable widget** - a public endpoint, a script tag, a
-  domain allowlist, and a per-campaign daily budget cap. The cap is not
-  optional: whoever finds the widget key can spend the campaign's money
+- **A page for widget conversations** - they are stored, and nothing reads
+  them yet. The transcripts and the steps are there; the console is not
+- **Chat handoff into the callback queue** - the bot takes a name and a number
+  and `chat_conversations` has the columns, but nothing writes them yet: the
+  chat rules ask for the details in words, and nobody extracts them
 - **Chat handoff into a callback queue** - agreed shape: the bot takes a name
   and number, and it joins the list `calls.transfer_refused` already feeds
 - **OCR for the picture-only sheets** - seven of 47, including a price list.
