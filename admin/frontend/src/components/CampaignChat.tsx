@@ -4,7 +4,7 @@ import { BookOpen, Bot, RotateCcw, Send, User, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, Input } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, postStream } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
 import type { ChatStep, ChatTurn } from '@/types'
 
@@ -14,6 +14,16 @@ type Msg = {
   steps?: ChatStep[]
   tokens?: { prompt: number; completion: number; cached: number }
   ms?: number
+  // Time to the FIRST word. On a call this is what the caller waits through;
+  // the total is not, because they are already being spoken to by then.
+  firstTokenMs?: number
+  streaming?: boolean
+}
+
+/** Replace the last message, which is always the one being written. */
+function patchLast(msgs: Msg[], fn: (m: Msg) => Msg): Msg[] {
+  if (!msgs.length) return msgs
+  return [...msgs.slice(0, -1), fn(msgs[msgs.length - 1])]
 }
 
 /**
@@ -35,35 +45,55 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
   }, [msgs])
 
   const send = useMutation({
-    mutationFn: (text: string) =>
-      api<ChatTurn>(`/campaigns/${campaignId}/chat`, {
-        method: 'POST',
-        body: {
+    mutationFn: (text: string) => {
+      // An empty assistant bubble to fill in. Words land in it as the model
+      // produces them, and each tool appears the moment it returns - so a long
+      // wait shows WHAT it is waiting on rather than a spinner.
+      setMsgs((m) => [...m, { role: 'assistant', content: '', streaming: true }])
+      return postStream<ChatTurn>(
+        `/campaigns/${campaignId}/chat`,
+        {
           message: text,
           // Only the words. The steps are for reading, not for the model -
           // sending them back would put the knowledge base's own output into
           // the history twice.
           history: msgs.map((m) => ({ role: m.role, content: m.content })),
         },
-      }),
+        (e: any) => {
+          if (e.stage === 'delta') {
+            setMsgs((m) => patchLast(m, (last) => ({ ...last, content: last.content + e.text })))
+          } else if (e.stage === 'first_token') {
+            setMsgs((m) => patchLast(m, (last) => ({ ...last, firstTokenMs: e.ms })))
+          } else if (e.stage === 'step') {
+            setMsgs((m) =>
+              patchLast(m, (last) => ({ ...last, steps: [...(last.steps ?? []), e.step] })),
+            )
+          }
+        },
+      )
+    },
     onSuccess: (r) =>
-      setMsgs((m) => [
-        ...m,
-        {
-          role: 'assistant',
+      setMsgs((m) =>
+        patchLast(m, (last) => ({
+          ...last,
+          // From the final line, not from the deltas: a dropped frame would
+          // otherwise leave a sentence half-written on screen for good.
           content: r.text,
           steps: r.steps,
+          streaming: false,
+          firstTokenMs: r.first_token_ms,
           tokens: {
             prompt: r.prompt_tokens,
             completion: r.completion_tokens,
             cached: r.cached_tokens,
           },
           ms: r.ms,
-        },
-      ]),
+        })),
+      ),
     onError: (e) => {
-      // The user's line stays on screen: retyping it after a failure is the
-      // small insult that makes a tool annoying to use.
+      // The half-written bubble goes; the user's own line stays. Retyping it
+      // after a failure is the small insult that makes a tool annoying.
+      setMsgs((m) => (m[m.length - 1]?.streaming ? m.slice(0, -1) : m))
       toast.error(e instanceof ApiError ? e.message : 'The turn failed')
     },
   })
@@ -103,8 +133,9 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
             Say something a caller would say.
             <br />
             <span className="text-2xs">
-              This proves the prompt, the knowledge and the tools — not latency, and
-              not what the speech recogniser would have heard.
+              This proves the prompt, the knowledge and the tools. The timings are
+              the model&rsquo;s own — a real call adds speech recognition, endpointing
+              and playback on top, and none of that is here.
             </span>
           </p>
         )}
@@ -122,10 +153,23 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
                 {m.role === 'user' ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="whitespace-pre-wrap text-sm">{m.content}</p>
+                <p className="whitespace-pre-wrap text-sm">
+                  {m.content}
+                  {m.streaming && (
+                    <span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-foreground/50 align-middle" />
+                  )}
+                </p>
                 {m.tokens && (
                   <p className="mt-1 flex flex-wrap gap-x-3 text-2xs text-muted-foreground">
-                    <span className="tnum">{m.ms} ms</span>
+                    {/* First word, then total. On a call the first is what the
+                        caller sits through; the second they hear through. */}
+                    {m.firstTokenMs ? (
+                      <span className="tnum">
+                        {m.firstTokenMs} ms to first word · {m.ms} ms total
+                      </span>
+                    ) : (
+                      <span className="tnum">{m.ms} ms</span>
+                    )}
                     <span className="tnum">
                       {formatNumber(m.tokens.prompt)} in
                       {m.tokens.cached > 0 && ` (${formatNumber(m.tokens.cached)} cached)`}
@@ -143,12 +187,6 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
           </div>
         ))}
 
-        {send.isPending && (
-          <p className="flex items-center gap-2 pl-8 text-xs text-muted-foreground">
-            <Bot className="h-3 w-3 animate-pulse" />
-            thinking…
-          </p>
-        )}
         <div ref={endRef} />
       </div>
 

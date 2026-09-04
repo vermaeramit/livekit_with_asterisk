@@ -344,6 +344,8 @@ export interface ChatStep {
 export interface ChatTurn {
   text: string
   steps: ChatStep[]
+  // Time to the first word, which is the number that matters on a call.
+  first_token_ms: number
   prompt_tokens: number
   completion_tokens: number
   cached_tokens: number

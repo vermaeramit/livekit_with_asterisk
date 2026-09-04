@@ -27,6 +27,7 @@ caller was actually understood to have said.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import time
@@ -100,6 +101,9 @@ class Step:
 class Reply:
     text: str
     steps: list[Step] = field(default_factory=list)
+    # How long before the model said its first word, as opposed to its last.
+    # On a call this is what the caller waits through; the total is not.
+    first_token_ms: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0
@@ -107,19 +111,27 @@ class Reply:
 
 
 async def reply(cfg, history: list[dict], api_key: str,
-                tool_specs: list[dict] | None = None) -> Reply:
-    """One assistant turn.
+                tool_specs: list[dict] | None = None, emit=None) -> Reply:
+    """One assistant turn, streamed.
 
     `history` is [{"role": "user"|"assistant", "content": str}, ...] and is
     held by the caller. Nothing is stored here: the tester is a scratchpad, and
     a test conversation should not appear in the call list beside real ones.
+
+    `emit` is awaited with each event as it happens - text deltas, and each
+    tool the moment it finishes. Streaming is not decoration: it separates the
+    time spent waiting on a tool from the time spent waiting on the model, and
+    that separation is the whole question on a real call. A single 6036 ms
+    number says nothing about which half to fix.
     """
     started = time.perf_counter()
+    emit = emit or _noop
     instructions, _, _ = await prompt_mod.build_instructions(cfg)
     instructions += CHAT_RULES
 
     client = AsyncOpenAI(api_key=api_key)
     steps: list[Step] = []
+    first_token_ms = 0
 
     # Recording is a no-op: this is not a call, so there is no call row for a
     # tool invocation to belong to. The tool code takes the callback rather
@@ -144,55 +156,108 @@ async def reply(cfg, history: list[dict], api_key: str,
 
     messages = [{"role": "system", "content": instructions}] + list(history)
     usage = {"prompt": 0, "completion": 0, "cached": 0}
+    answer = ""
 
     try:
         for _ in range(MAX_TOOL_ROUNDS):
-            resp = await client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model=cfg.llm_model,
                 temperature=cfg.llm_temperature,
                 messages=messages,
                 tools=schemas or None,
+                stream=True,
+                # Without this the usage block never arrives on a streamed
+                # response, and the tester would show a cost of zero.
+                stream_options={"include_usage": True},
             )
-            if resp.usage:
-                usage["prompt"] += resp.usage.prompt_tokens or 0
-                usage["completion"] += resp.usage.completion_tokens or 0
-                details = getattr(resp.usage, "prompt_tokens_details", None)
-                usage["cached"] += getattr(details, "cached_tokens", 0) or 0
 
-            msg = resp.choices[0].message
-            if not msg.tool_calls:
-                text = _strip_markers(msg.content or "", cfg)
-                return Reply(text=text, steps=steps,
-                             prompt_tokens=usage["prompt"],
-                             completion_tokens=usage["completion"],
-                             cached_tokens=usage["cached"],
-                             ms=int((time.perf_counter() - started) * 1000))
+            text = ""
+            # Tool calls arrive in pieces: the name in one delta, the arguments
+            # a character at a time across many. Keyed by index because that is
+            # the only field present on every fragment.
+            pending: dict[int, dict] = {}
 
-            messages.append(msg.model_dump(exclude_none=True))
-            for call in msg.tool_calls:
-                out, step = await _run_tool(call, cfg, runners, api_key)
+            async for chunk in stream:
+                if chunk.usage:
+                    usage["prompt"] += chunk.usage.prompt_tokens or 0
+                    usage["completion"] += chunk.usage.completion_tokens or 0
+                    details = getattr(chunk.usage, "prompt_tokens_details", None)
+                    usage["cached"] += getattr(details, "cached_tokens", 0) or 0
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    if not first_token_ms:
+                        # The number that matters on a call: how long before it
+                        # started SPEAKING, not how long until it finished.
+                        first_token_ms = int((time.perf_counter() - started) * 1000)
+                        await emit(stage="first_token", ms=first_token_ms)
+                    text += delta.content
+                    await emit(stage="delta", text=delta.content)
+
+                for tc in delta.tool_calls or []:
+                    slot = pending.setdefault(
+                        tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        slot["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        slot["name"] += tc.function.name
+                    if tc.function and tc.function.arguments:
+                        slot["args"] += tc.function.arguments
+
+            if not pending:
+                answer = _strip_markers(text, cfg)
+                break
+
+            # Put the assistant's own turn back, tool calls and all, or the
+            # model has no memory of having asked.
+            messages.append({
+                "role": "assistant",
+                "content": text or None,
+                "tool_calls": [
+                    {"id": c["id"], "type": "function",
+                     "function": {"name": c["name"], "arguments": c["args"]}}
+                    for c in pending.values()],
+            })
+
+            for call in pending.values():
+                out, step = await _run_tool(call["name"], call["args"], cfg,
+                                            runners, api_key)
                 steps.append(step)
-                messages.append({"role": "tool", "tool_call_id": call.id,
+                await emit(stage="step", step=dataclasses.asdict(step))
+                messages.append({"role": "tool", "tool_call_id": call["id"],
                                  "content": out})
+        else:
+            # Out of rounds. Said rather than silently truncated - a prompt
+            # that loops here would loop on a real call too, and that is the
+            # finding.
+            answer = ("(the agent kept calling tools and never answered - "
+                      f"stopped after {MAX_TOOL_ROUNDS} rounds)")
 
-        # Out of rounds. Said rather than silently truncated - a prompt that
-        # loops here would loop on a real call too, and that is the finding.
-        return Reply(
-            text=("(the agent kept calling tools and never answered - "
-                  f"stopped after {MAX_TOOL_ROUNDS} rounds)"),
-            steps=steps, prompt_tokens=usage["prompt"],
-            completion_tokens=usage["completion"], cached_tokens=usage["cached"],
-            ms=int((time.perf_counter() - started) * 1000))
+        return Reply(text=answer, steps=steps,
+                     prompt_tokens=usage["prompt"],
+                     completion_tokens=usage["completion"],
+                     cached_tokens=usage["cached"],
+                     first_token_ms=first_token_ms,
+                     ms=int((time.perf_counter() - started) * 1000))
     finally:
         await client.close()
 
 
-async def _run_tool(call, cfg, runners, api_key) -> tuple[str, Step]:
-    name = call.function.name
+async def _noop(**_):
+    return None
+
+
+async def _run_tool(name: str, raw_args: str, cfg, runners,
+                    api_key) -> tuple[str, Step]:
     t0 = time.perf_counter()
     try:
-        args = json.loads(call.function.arguments or "{}")
+        args = json.loads(raw_args or "{}")
     except json.JSONDecodeError:
+        # Streamed arguments are assembled from fragments, so a truncated
+        # stream lands here. Empty rather than a crash: the tool then fails
+        # with its own message and the step shows what arrived.
         args = {}
 
     if name == "search_knowledge_base":

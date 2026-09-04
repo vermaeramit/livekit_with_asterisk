@@ -14,15 +14,18 @@ beside real ones, and the history lives in the browser.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from .. import db, kblib
 from .. import provider_keys as pk
 from ..deps import CurrentUser, assert_campaign_visible, require_perm
-from ..schemas import ChatTurnIn, ChatTurnOut
+from ..schemas import ChatTurnIn
 
 log = logging.getLogger("admin-api")
 router = APIRouter(tags=["chat"])
@@ -32,7 +35,7 @@ router = APIRouter(tags=["chat"])
 editor = require_perm("campaign.write")
 
 
-@router.post("/campaigns/{campaign_id}/chat", response_model=ChatTurnOut)
+@router.post("/campaigns/{campaign_id}/chat")
 async def chat_turn(campaign_id: int, body: ChatTurnIn,
                     actor: CurrentUser = Depends(editor)):
     if not kblib.available():
@@ -67,18 +70,45 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
     history = [{"role": m.role, "content": m.content} for m in body.history]
     history.append({"role": "user", "content": body.message})
 
-    try:
-        out = await chat.reply(cfg, history, keys["openai"], tool_specs)
-    except Exception as e:
-        log.exception("chat turn failed for campaign %s", campaign_id)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
-                            f"{type(e).__name__}: {e}")
+    async def gen():
+        queue: asyncio.Queue[dict] = asyncio.Queue()
 
-    return ChatTurnOut(
-        text=out.text,
-        steps=[dataclasses.asdict(s) for s in out.steps],
-        prompt_tokens=out.prompt_tokens,
-        completion_tokens=out.completion_tokens,
-        cached_tokens=out.cached_tokens,
-        ms=out.ms,
-    )
+        async def on_event(**event):
+            await queue.put(event)
+
+        task = asyncio.create_task(
+            chat.reply(cfg, history, keys["openai"], tool_specs, on_event))
+
+        try:
+            # The queue drains as the model produces, so words appear while it
+            # is still thinking. Waiting on it with a timeout rather than on
+            # the task keeps a long tool call from starving the connection.
+            while not task.done() or not queue.empty():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    event = {"stage": "working"}
+                yield json.dumps(event) + "\n"
+            out = await task
+        except Exception as e:
+            log.exception("chat turn failed for campaign %s", campaign_id)
+            yield json.dumps({"stage": "error",
+                              "message": f"{type(e).__name__}: {e}"}) + "\n"
+            return
+
+        yield json.dumps({
+            "stage": "done",
+            "text": out.text,
+            "steps": [dataclasses.asdict(s) for s in out.steps],
+            "prompt_tokens": out.prompt_tokens,
+            "completion_tokens": out.completion_tokens,
+            "cached_tokens": out.cached_tokens,
+            "first_token_ms": out.first_token_ms,
+            "ms": out.ms,
+        }) + "\n"
+
+    return StreamingResponse(
+        gen(), media_type="application/x-ndjson",
+        # nginx buffers proxied responses by default, which would hold every
+        # word back until the end and defeat the whole point.
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
