@@ -3774,6 +3774,26 @@ The score is the number that explains a wrong answer. "Lender Plus Flex"
 matched the wrong motorcycle at 0.57 and nothing on any page said so at the
 time.
 
+### It opens the way a call opens
+
+A call begins with the greeting and the caller answers it. A tester that starts
+on an empty screen makes its first turn unlike every real call: the agent has
+not introduced itself, and the first thing typed is a reply to nothing.
+
+`_render` moved out of `voice_agent.py` into `prompt.py` as `render_spoken` so
+both can use one definition - the admin API cannot import `voice_agent`, which
+needs livekit, and a second copy of the rules about defaults after the pipe
+would be a second copy to get wrong.
+
+It immediately showed something that had been true and invisible:
+
+    "Kya meri baat {{cus_name}} ji se ho rahi hai?"
+      ->  "Kya meri baat ji se ho rahi hai?"
+
+That is what a caller hears when the dialler sends no name and the placeholder
+carries no default - a case the comment beside `_render` has warned about since
+it was written, and which nothing ever displayed.
+
 ### What it deliberately does not prove
 
 No STT, no TTS, no endpointing, no barge-in. So it proves the prompt, the

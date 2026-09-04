@@ -245,6 +245,22 @@ async def reply(cfg, history: list[dict], api_key: str,
         await client.close()
 
 
+def opening(cfg) -> str:
+    """What the agent says first, exactly as a call would say it.
+
+    A real call opens with the greeting and the caller answers it. A tester
+    that starts on an empty screen makes its first turn structurally different
+    from every call - the model has not introduced itself, and the caller's
+    first line is a reply to nothing.
+
+    Rendered through the same substitution a call uses, with NO dialler
+    context, so placeholders fall back to the defaults after the pipe. That is
+    honest rather than convenient: it is what a caller hears when the dialler
+    sends nothing, which happens.
+    """
+    return prompt_mod.render_spoken(cfg.greeting, {}) or ""
+
+
 async def _noop(**_):
     return None
 

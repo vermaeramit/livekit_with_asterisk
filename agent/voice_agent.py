@@ -217,32 +217,11 @@ def _caller_context(dialler: dict[str, str]):
     return c
 
 
-# {{cus_name}} / {{modalname|आपकी गाड़ी}} in anything spoken to the caller.
-#
-# A default after the pipe is not decoration. The dialler does not always send
-# every field - X-language arrives empty today - and a greeting that renders as
-# "क्या मेरी बात  जी से हो रही है?" is worse than one that never used the name.
-# Without a default the placeholder becomes empty and the double space is
-# collapsed, which is the least bad of the remaining options.
-_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_]+)\s*(?:\|([^}]*))?\}\}")
-
-
-def _render(template: str | None, dialler: dict[str, str]) -> str | None:
-    """Substitute dialler context into a spoken string.
-
-    Only ever applied to things SAID to the caller - greeting, transfer and
-    limit messages. Never to `instructions`: those are the cacheable prompt
-    prefix, and a caller's name inside them would make every call's prefix
-    unique and silently kill the prompt cache.
-    """
-    if not template or "{{" not in template:
-        return template
-
-    def one(m: re.Match) -> str:
-        key, default = m.group(1), (m.group(2) or "")
-        return (dialler.get(f"dialer.{key}") or default).strip()
-
-    return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(one, template)).strip()
+# Substituting dialler context into spoken strings lives in prompt.py, which
+# the admin API can import - it has no livekit in it. The chat tester has to
+# render a greeting exactly as a call would, and a second copy of the rules
+# about defaults after the pipe would be a second copy to get wrong.
+_render = prompt_mod.render_spoken
 
 
 def _sip_attr(participant, *keys):

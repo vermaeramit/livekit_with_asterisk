@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { BookOpen, Bot, RotateCcw, Send, User, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, Input } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
-import { ApiError, postStream } from '@/lib/api'
+import { ApiError, api, postStream } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
 import type { ChatStep, ChatTurn } from '@/types'
 
@@ -18,6 +18,9 @@ type Msg = {
   // the total is not, because they are already being spoken to by then.
   firstTokenMs?: number
   streaming?: boolean
+  // The greeting. Marked so it can be labelled: it is not something the model
+  // composed, it is the campaign's own line.
+  opening?: boolean
 }
 
 /** Replace the last message, which is always the one being written. */
@@ -39,6 +42,26 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [draft, setDraft] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
+
+  // A call opens with the greeting and the caller answers it. Starting on an
+  // empty screen would make the tester's first turn unlike every real call:
+  // the agent would not have introduced itself, and the first thing typed
+  // would be a reply to nothing.
+  const opening = useQuery({
+    queryKey: ['chat-opening', campaignId],
+    queryFn: () => api<{ greeting: string }>(`/campaigns/${campaignId}/chat/opening`),
+    staleTime: 60_000,
+  })
+  const greeting = opening.data?.greeting ?? ''
+
+  useEffect(() => {
+    if (greeting && !msgs.length) {
+      setMsgs([{ role: 'assistant', content: greeting, opening: true }])
+    }
+    // Only when the greeting arrives, and only into an empty conversation -
+    // re-seeding mid-chat would drop what somebody was in the middle of.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [greeting])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -119,7 +142,9 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setMsgs([])}
+          onClick={() =>
+            setMsgs(greeting ? [{ role: 'assistant', content: greeting, opening: true }] : [])
+          }
           disabled={!msgs.length || send.isPending}
         >
           <RotateCcw className="h-3.5 w-3.5" />
@@ -128,9 +153,9 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        {!msgs.length && (
-          <p className="mt-16 text-center text-xs text-muted-foreground">
-            Say something a caller would say.
+        {msgs.length <= 1 && (
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            Answer it the way a caller would.
             <br />
             <span className="text-2xs">
               This proves the prompt, the knowledge and the tools. The timings are
@@ -159,6 +184,13 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
                     <span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-foreground/50 align-middle" />
                   )}
                 </p>
+                {m.opening && (
+                  <p className="mt-0.5 text-2xs text-muted-foreground">
+                    the campaign&rsquo;s greeting — a real call fills{' '}
+                    <span className="font-mono">{'{{placeholders}}'}</span> from the
+                    dialler, and there is no dialler here
+                  </p>
+                )}
                 {m.tokens && (
                   <p className="mt-1 flex flex-wrap gap-x-3 text-2xs text-muted-foreground">
                     {/* First word, then total. On a call the first is what the

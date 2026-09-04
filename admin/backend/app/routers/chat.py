@@ -35,6 +35,30 @@ router = APIRouter(tags=["chat"])
 editor = require_perm("campaign.write")
 
 
+@router.get("/campaigns/{campaign_id}/chat/opening")
+async def chat_opening(campaign_id: int,
+                       actor: CurrentUser = Depends(editor)):
+    """The greeting, rendered the way a call renders it.
+
+    Its own request rather than a field on the config the page already has:
+    the placeholder substitution has rules about defaults after the pipe, and
+    a copy of those in the browser would be a copy to get wrong.
+    """
+    await assert_campaign_visible(actor, campaign_id)
+    if not kblib.available():
+        return {"greeting": ""}
+
+    store = kblib.agent_module("store")
+    chat = kblib.agent_module("chat")
+    row = await db.pool().fetchrow(
+        "SELECT name FROM agent_config WHERE campaign_id = $1 ORDER BY id LIMIT 1",
+        campaign_id)
+    if row is None:
+        return {"greeting": ""}
+    cfg = await store.load_config(row["name"])
+    return {"greeting": chat.opening(cfg)}
+
+
 @router.post("/campaigns/{campaign_id}/chat")
 async def chat_turn(campaign_id: int, body: ChatTurnIn,
                     actor: CurrentUser = Depends(editor)):
