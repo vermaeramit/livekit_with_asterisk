@@ -24,11 +24,34 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 import aiohttp
-from livekit.agents import llm as lk_llm
 
 import toolfmt
 
 log = logging.getLogger("voice-agent")
+
+
+class ToolError(Exception):
+    """What the MODEL should be told when a tool fails.
+
+    Not an internal error: the message is written for the model to read out or
+    work around, and the wording of several of them was chosen on real calls.
+    """
+
+
+def _tool_error(message: str) -> Exception:
+    """livekit's ToolError where livekit exists, ours where it does not.
+
+    This module is mounted into the admin API for the chat tester, which has
+    no livekit installed. Importing it at the top made every tester turn a 500
+    with a traceback about an agents framework that has nothing to do with
+    chat - so the import happens here, on the failure path, and both callers
+    get an exception carrying the same message.
+    """
+    try:
+        from livekit.agents import llm as lk_llm
+        return lk_llm.ToolError(message)
+    except Exception:
+        return ToolError(message)
 
 # Off by default, by decision: clients host their APIs wherever they like and an
 # allowlist was judged too much friction. Turn it on with
@@ -118,7 +141,15 @@ FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
 def build(spec: dict, call_id: int | None, record: Callable,
           speak: Callable | None = None,
           note_gap: Callable | None = None):
-    """-> a livekit function tool for one campaign_tools row."""
+    """-> a livekit function tool for one campaign_tools row.
+
+    livekit is imported HERE and not at the top of the file. The admin API
+    mounts this module for the chat tester and does not have livekit installed
+    - a module-level import made every tester turn a 500, with a traceback
+    about an agents framework that has nothing to do with chat.
+    """
+    from livekit.agents import llm as lk_llm
+
     name, schema, run = build_raw(spec, call_id, record, speak, note_gap)
     return lk_llm.function_tool(run, raw_schema={
         "name": name, "description": schema["description"],
@@ -267,7 +298,7 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
         if BLOCK_PRIVATE and _host_is_private(url):
             await done(err="blocked: private address")
             log.warning("tool %s blocked: %s resolves to a private address", name, url)
-            raise lk_llm.ToolError(
+            raise _tool_error(
                 "That lookup is not available. Tell the caller you cannot check "
                 "it right now.")
 
@@ -311,7 +342,7 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
             # ToolError, not an exception: the model needs something it can say.
             # Raising anything else here ends the turn and the caller hears
             # nothing at all.
-            raise lk_llm.ToolError(what_to_say(
+            raise _tool_error(what_to_say(
                 "timeout",
                 "That system did not respond in time. Tell the caller you could "
                 "not fetch it and offer to continue without it."))
@@ -319,7 +350,7 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
             await done(err=f"{type(e).__name__}: {e}"[:200])
             gap(f"{type(e).__name__}: {e}"[:200])
             log.exception("tool %s failed", name)
-            raise lk_llm.ToolError(
+            raise _tool_error(
                 "That lookup failed. Tell the caller you could not check it "
                 "right now.")
         finally:
@@ -343,7 +374,7 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
         if status >= 400:
             gap(f"HTTP {status}: {text[:160]}" if text else f"HTTP {status}")
             log.warning("tool %s -> HTTP %s", name, status)
-            raise lk_llm.ToolError(what_to_say(
+            raise _tool_error(what_to_say(
                 str(status),
                 f"The lookup returned an error ({status}). Tell the caller you "
                 "could not retrieve it."))

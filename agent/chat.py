@@ -220,8 +220,13 @@ async def _run_tool(call, cfg, runners, api_key) -> tuple[str, Step]:
 
     try:
         out = await run(None, **args)
+    except tools_mod.ToolError as e:
+        # A tool failure the model is MEANT to read - "no dealer for that PIN
+        # code", not a stack trace. The wording of several of these was chosen
+        # on real calls, so it is passed through unchanged.
+        out = str(e)
     except Exception as e:
-        # The model is shown the same thing a call would show it.
+        log.exception("tool %s failed in chat", name)
         out = f"The lookup failed: {type(e).__name__}"
     return str(out), Step(kind="tool", name=name, args=args,
                           result=str(out)[:600],
