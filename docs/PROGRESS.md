@@ -3905,6 +3905,65 @@ than a 404. The prefix is routing; it was never authorisation.
 
 ---
 
+## Tier 2, and the load test that disabled a live campaign (4 Sep 2026)
+
+### The ceiling moved, and it was not where the dashboard said
+
+The OpenAI dashboard read **Usage tier 2, 2,000,000 TPM**, and the project page
+agreed. The API disagreed: `x-ratelimit-limit-tokens: 200000`.
+
+Both were true. There are two organisations, and two keys:
+
+    /opt/aivoice/.env        worxpertise-bzwkdt     200,000 TPM
+    campaign 1's own key     user-ri5qpaqq...     2,000,000 TPM
+
+Calls use the campaign's key, not the platform one - `provider_keys` has rows
+for campaigns 1 and 3 and nothing tenant-wide. So the first measurement was of
+a key nothing runs on. The header `openai-organization` is what settled it, and
+it took asking for the same query three times to get there.
+
+### The runs
+
+| | 10 | 20 | 30 |
+|---|---|---|---|
+| errors | 0 | 0 | **10** |
+| p50 | 2364 | 2391 | 2354 |
+| p95 | 3080 | 3317 | 3650 |
+| llm | 1096 | 1216 | 1214 |
+| eou / tts | 758 / 781 | 762 / 802 | 770 / 802 |
+
+Twenty concurrent with no errors, where the last attempt lost nine of twenty.
+
+At thirty, ten failed and **the latency did not move**. That is the signature of
+a gate rather than saturation: under real load the successful calls slow down
+first. These did not, so twenty got in and ten were refused. The user then named
+it - their STT/TTS concurrency is set to 20.
+
+So the binding limit is now a number in a provider account, not anything in
+this system.
+
+### Two scripts that both reported success and left the campaign off
+
+`loadtest-restore.sql` put back exactly what the snapshot held, and the
+snapshot held `transfer: false, postback: false, tools: []`. Campaign 1 came
+out of the test with its transfer, its five tools and a postback that had
+delivered 113 times all still disabled - and both scripts said they had worked.
+
+The snapshot IS taken before the changes. The fault is that prepare used
+`ON CONFLICT DO UPDATE`: run it twice and the second run records the state the
+FIRST run created. Now `DO NOTHING`, and it says so loudly when it finds a
+snapshot older than the current run - which means the previous restore never
+happened.
+
+**And a piece of my own reasoning was wrong**, which is worth recording because
+it drove a decision: I read `UPDATE 5` as proof that five tools had been on.
+`UPDATE` reports rows matched, not rows changed - `SET enabled = false` touches
+all five whether or not any were true. The restore was rebuilt from real
+evidence instead: 113 postback deliveries dated before the run, and a transfer
+setting seen earlier the same day.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
@@ -3919,6 +3978,15 @@ than a 404. The prefix is routing; it was never authorisation.
 - **The dialler's password is its username** - theirs to change, ours to raise
 - **`DIALSTATUS` on the OLD `_X.` route** - handled on `_c.`, not there. A
   campaign still on a plain SIP target gets silence when nobody answers
+- **`aivoice-agent-1` will not start** - `[Errno 98] address already in use` on
+  8081, so five workers run and systemd reports six active. It does not bind
+  today because the STT/TTS cap is 20 and five workers carry 50, but it is
+  exactly the silent failure the code comment beside AGENT_HTTP_PORT warns of
+- **The load test's dialplan counters read 0** on a run where 30 calls
+  succeeded. They measured something that existed when Asterisk was a
+  container. A zero beside a successful run is worse than no column
+- ~~Buy $30 of OpenAI credits~~ - **done**, and the ceiling moved: 20 concurrent
+  clean where it used to lose nine. Old note follows for the reasoning
 - **Buy $30 of OpenAI credits** - reaches Tier 2, 200k -> 2M TPM, ~5 -> ~54
   sustained concurrent calls. Then re-run `loadtest.sh 20 0.7 700` and find out
   where OUR ceiling is, which today's run never reached

@@ -33,6 +33,15 @@
 BEGIN;
 
 -- Taken before anything changes, so the restore is a record rather than a guess.
+--
+-- DO NOTHING, not DO UPDATE. This script used to overwrite the snapshot every
+-- time it ran, which meant a second run - after the first had already turned
+-- everything off - recorded the OFF state as the thing to restore. Both
+-- scripts then reported success and the campaign stayed disabled: transfer,
+-- five tools and a postback that had delivered 113 times.
+--
+-- With DO NOTHING the first snapshot survives, and the restore deletes it when
+-- it is applied, so the next prepare takes a fresh one.
 INSERT INTO platform_settings (key, value)
 SELECT 'loadtest_snapshot', jsonb_build_object(
            'taken_at',   now(),
@@ -43,7 +52,7 @@ SELECT 'loadtest_snapshot', jsonb_build_object(
                (SELECT jsonb_agg(id ORDER BY id) FROM campaign_tools
                  WHERE campaign_id = 1 AND enabled), '[]'::jsonb)
        )::text
-ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+ON CONFLICT (key) DO NOTHING;
 
 UPDATE agent_config
    SET transfer_enabled = false,
@@ -54,8 +63,17 @@ UPDATE campaign_tools SET enabled = false WHERE campaign_id = 1;
 
 COMMIT;
 
-SELECT 'snapshot taken' AS step, value FROM platform_settings
- WHERE key = 'loadtest_snapshot';
+-- Said loudly, because it means the previous run was never restored and the
+-- values in the snapshot are older than they look.
+SELECT CASE
+         WHEN (value::jsonb ->> 'taken_at')::timestamptz < now() - interval '2 minutes'
+         THEN '!! SNAPSHOT IS FROM AN EARLIER RUN - restore was never applied. '
+              'It still holds the state from before THAT run, which is the one '
+              'to put back.'
+         ELSE 'snapshot taken'
+       END AS step,
+       value
+  FROM platform_settings WHERE key = 'loadtest_snapshot';
 
 SELECT transfer_enabled, postback_enabled,
        (SELECT count(*) FROM campaign_tools WHERE campaign_id = 1 AND enabled) AS tools_on
