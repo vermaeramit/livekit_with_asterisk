@@ -19,7 +19,8 @@ import {
   Undo2,
   Waves,
   X,
-  Bot,} from 'lucide-react'
+  Bot,
+  FileClock,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
@@ -30,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
 import { TermList } from '@/components/TermList'
 import { CampaignChat } from '@/components/CampaignChat'
+import { PromptVersions } from '@/components/PromptVersions'
 import { ChatWidgetPanel } from '@/components/ChatWidgetPanel'
 import { TransferHours } from '@/components/TransferHours'
 import { VoicePreview } from '@/components/VoicePreview'
@@ -129,7 +131,7 @@ const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
   | 'conversation' | 'voice' | 'knowledge' | 'tools' | 'routing' | 'keys'
-  | 'limits' | 'postback' | 'try' | 'history'
+  | 'limits' | 'postback' | 'try' | 'prompts' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
@@ -147,6 +149,9 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   // After everything that configures the agent and before the audit log:
   // it is what you do once you have changed something.
   { key: 'try', label: 'Try it', icon: Bot },
+  // Beside History rather than under Conversation: it is something you
+  // consult after a change went wrong, not part of writing the prompt.
+  { key: 'prompts', label: 'Prompt history', icon: FileClock },
   { key: 'history', label: 'History', icon: History },
 ]
 
@@ -1185,6 +1190,14 @@ export function CampaignConfig() {
               and that is the panel above. */}
           <ChatWidgetPanel campaignId={campaignId} />
         </div>
+      )}
+
+      {tab === 'prompts' && (
+        <PromptVersions
+          campaignId={campaignId}
+          current={value.instructions ?? ''}
+          canEdit={canEdit}
+        />
       )}
 
       {tab === 'history' && (

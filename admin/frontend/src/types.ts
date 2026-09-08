@@ -330,6 +330,16 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface PromptVersion {
+  id: number
+  campaign_id: number
+  // The whole text: the list exists to copy one out or put it back.
+  instructions: string
+  n_tokens: number | null
+  created_by: string | null
+  created_at: string
+}
+
 export interface ChatWidget {
   id: number
   campaign_id: number

@@ -3964,6 +3964,42 @@ setting seen earlier the same day.
 
 ---
 
+## Going back to a prompt that worked (4 Sep 2026)
+
+Asked for: a tab showing recent prompts with their date, so an earlier one can
+be copied back, and unwanted ones deleted.
+
+The history already existed. `config_audit` records every `agent_config` save
+with `{"instructions": {"from": ..., "to": ...}}` - the full text on both
+sides. It could not be used for this, and the reason is the delete: **an audit
+trail you can delete from is not an audit trail.** So `prompt_versions` is a
+separate, editable list and the audit stays untouched. Both hold the same text
+and only one of them can be edited, which is the point.
+
+**A version holds the text as it was BEFORE the save**, not after. The current
+prompt is in the editor; nobody needs to restore what they are looking at. A
+row here is a prompt you can go back TO, which is the only reason to keep one.
+
+**Restoring keeps what it replaces.** The outgoing prompt becomes the newest
+version, so a restore can be undone by restoring again - and somebody who
+clicks the wrong row has not lost the thing they were working on.
+
+Saved only when the instructions actually change, so editing a voice or a
+threshold does not fill the list with identical copies. Capped at 50, oldest
+dropped.
+
+**The token count is shown against each version.** Prompt size is what decides
+how many calls run at once - 17,000 tokens a turn is what held concurrency at
+six on the old tier - so it belongs next to the version rather than in a
+tooltip. Seeing that an old prompt was 9,000 tokens is the sort of thing that
+changes a decision.
+
+Migration 045 seeds each campaign with its current prompt, so the tab is not
+empty until somebody happens to edit. Without it the first edit would show one
+version and no sign that anything came before it.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

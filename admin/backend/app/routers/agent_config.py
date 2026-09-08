@@ -12,11 +12,11 @@ import re
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import audit, db, secretlib
+from .. import audit, db, kblib, secretlib
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
                        CampaignRoute, CampaignRouteCreate, CopyHours,
-                       PostbackOut, PromptTokens)
+                       PostbackOut, PromptTokens, PromptVersion)
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -179,6 +179,13 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     sets = ", ".join(
         f"{k} = ${i}" + ("::jsonb" if k in JSON_COLS else "")
         for i, k in enumerate(fields, start=2))
+    # The text as it was, before it is overwritten. Saved only when the prompt
+    # actually changes, so editing a voice or a threshold does not fill the
+    # list with identical copies.
+    if "instructions" in fields and fields["instructions"] != before.get("instructions"):
+        await _keep_version(campaign_id, tenant_id, before.get("instructions"),
+                            actor.email)
+
     await db.pool().execute(
         f"UPDATE agent_config SET {sets}, updated_at = now() WHERE campaign_id = $1",
         campaign_id, *values)
@@ -233,6 +240,105 @@ async def copy_hours(campaign_id: int, body: CopyHours,
                                 {"from": before["transfer_hours"],
                                  "to": source["transfer_hours"]}})
     return AgentConfigOut(**await _get(campaign_id))
+
+
+# Enough to go back through a week of edits, and bounded so a campaign that is
+# tuned every hour does not grow without limit. The oldest go first; anything
+# worth keeping longer is worth keeping outside a rolling list.
+MAX_VERSIONS = 50
+
+
+async def _keep_version(campaign_id: int, tenant_id: int | None,
+                        text: str | None, who: str | None) -> None:
+    """Store one previous prompt, and drop the oldest beyond the cap."""
+    if not (text or "").strip():
+        return
+    try:
+        n_tokens = None
+        if kblib.available():
+            n_tokens = kblib.kb().ntok(text)
+    except Exception:
+        # A token count is a nicety. Losing the version because counting it
+        # failed would not be.
+        n_tokens = None
+
+    await db.pool().execute(
+        """INSERT INTO prompt_versions (campaign_id, tenant_id, instructions,
+                                        n_tokens, created_by)
+           VALUES ($1, $2, $3, $4, $5)""",
+        campaign_id, tenant_id, text, n_tokens, who)
+
+    await db.pool().execute(
+        """DELETE FROM prompt_versions
+            WHERE campaign_id = $1
+              AND id NOT IN (SELECT id FROM prompt_versions
+                              WHERE campaign_id = $1
+                              ORDER BY created_at DESC LIMIT $2)""",
+        campaign_id, MAX_VERSIONS)
+
+
+@router.get("/prompt-versions", response_model=list[PromptVersion])
+async def list_prompt_versions(campaign_id: int,
+                               user: CurrentUser = Depends(active_user)):
+    """Every kept version, newest first, with the full text.
+
+    The text is sent in full rather than as a preview: the point of the list is
+    to copy one out or put it back, and a second request per row to fetch what
+    is already stored would be a round trip for nothing.
+    """
+    await assert_campaign_visible(user, campaign_id)
+    rows = await db.pool().fetch(
+        """SELECT id, campaign_id, instructions, n_tokens, created_by, created_at
+             FROM prompt_versions WHERE campaign_id = $1
+            ORDER BY created_at DESC""", campaign_id)
+    return [PromptVersion(**dict(r)) for r in rows]
+
+
+@router.post("/prompt-versions/{version_id}/restore",
+             response_model=AgentConfigOut)
+async def restore_prompt_version(campaign_id: int, version_id: int,
+                                 actor: CurrentUser = Depends(editor)):
+    """Put an old prompt back, keeping the current one as a new version.
+
+    Nothing is lost by restoring: what is being replaced becomes the newest
+    entry in the list, so a restore can be undone by restoring again.
+    """
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+    row = await db.pool().fetchrow(
+        "SELECT instructions FROM prompt_versions "
+        " WHERE id = $1 AND campaign_id = $2", version_id, campaign_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such version")
+
+    before = await _get(campaign_id)
+    if before.get("instructions") != row["instructions"]:
+        await _keep_version(campaign_id, tenant_id, before.get("instructions"),
+                            actor.email)
+        await db.pool().execute(
+            "UPDATE agent_config SET instructions = $2, updated_at = now() "
+            " WHERE campaign_id = $1", campaign_id, row["instructions"])
+        await audit.record(actor, entity="agent_config",
+                           entity_id=before["name"], action="restore_prompt",
+                           tenant_id=tenant_id, campaign_id=campaign_id,
+                           changes={"instructions": {
+                               "from": before.get("instructions"),
+                               "to": row["instructions"]}})
+    return AgentConfigOut(**await _get(campaign_id))
+
+
+@router.delete("/prompt-versions/{version_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def delete_prompt_version(campaign_id: int, version_id: int,
+                                actor: CurrentUser = Depends(editor)):
+    """Remove one version.
+
+    This list is a working set, not a record - config_audit still holds every
+    change with both sides of the text, and nothing here can touch that.
+    """
+    await assert_campaign_visible(actor, campaign_id)
+    await db.pool().execute(
+        "DELETE FROM prompt_versions WHERE id = $1 AND campaign_id = $2",
+        version_id, campaign_id)
 
 
 @router.get("/routes", response_model=list[CampaignRoute])

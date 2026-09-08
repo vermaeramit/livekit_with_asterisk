@@ -179,6 +179,18 @@ def _hhmm(day: str, value) -> tuple[int, int]:
     return h, m
 
 
+class PromptVersion(BaseModel):
+    id: int
+    campaign_id: int
+    # The whole text. The list exists to copy one out or put it back, and a
+    # second request per row for something already stored is a round trip for
+    # nothing.
+    instructions: str
+    n_tokens: int | None = None
+    created_by: str | None = None
+    created_at: datetime
+
+
 class CopyHours(BaseModel):
     """Which campaign to take transfer hours from."""
     from_campaign_id: int
