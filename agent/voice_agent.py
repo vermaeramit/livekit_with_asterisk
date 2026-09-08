@@ -589,12 +589,28 @@ class KBAgent(Agent):
 
     # ────────────────────────── knowledge ──────────────────────────
 
+    # This description used to read "use this ONLY when the REFERENCE
+    # INFORMATION in your instructions does not answer the question". On a
+    # knowledge base of any size the instructions carry titles, not text, and
+    # there is no REFERENCE INFORMATION section at all - so the condition could
+    # never be met and ONLY was a brake with nothing to release it.
+    #
+    # Call 538: thirteen turns about buying a motorcycle, zero searches, and an
+    # answer about i3s that came from the model's training rather than from the
+    # customer's documents. It was right by luck.
+    #
+    # Keep this docstring lean. It is not documentation - it is the tool
+    # description sent to the model on every turn.
     @function_tool
     async def search_knowledge_base(self, context: RunContext, query: str) -> str:
         """Look up details in the company documents.
 
-        Use this ONLY when the REFERENCE INFORMATION in your instructions does not
-        answer the caller's question.
+        Call this whenever the caller asks about a product, a price, a
+        specification, a feature, an offer or a policy and the answer is not
+        already written out in your instructions in full.
+
+        A list of document titles is not an answer. If all you have is a title,
+        search. Knowing that a document exists is not knowing what is in it.
 
         Args:
             query: A short search query in ENGLISH describing what to find, e.g.

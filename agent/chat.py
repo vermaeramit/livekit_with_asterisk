@@ -68,12 +68,22 @@ _KB_TOOL = {
     "function": {
         "name": "search_knowledge_base",
         "description": ("Look something up in the knowledge base. Use it "
-                        "whenever the answer is not already in front of you."),
+                        "whenever the visitor asks about a product, a price, a "
+                        "specification, a feature, an offer or a policy and the "
+                        "answer is not already written out in front of you. A "
+                        "list of document titles is not an answer."),
         "parameters": {
             "type": "object",
             "properties": {
+                # ENGLISH, and not the visitor's words. Measured on this KB:
+                # an English query scores 0.44-0.48 where the same question in
+                # raw Devanagari scores 0.13-0.20 and ranks the wrong chunk.
+                # The documents are in English; the query has to meet them.
                 "query": {"type": "string",
-                          "description": "What to look for, in the caller's own words."},
+                          "description": ("What to look for, in ENGLISH - a short "
+                                          "phrase, not a sentence. Always English, "
+                                          "even when the visitor writes in another "
+                                          "language.")},
             },
             "required": ["query"],
         },

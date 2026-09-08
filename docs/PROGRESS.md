@@ -4000,6 +4000,79 @@ version and no sign that anything came before it.
 
 ---
 
+## A rule that pointed at nothing (8 Sep 2026)
+
+Call 538: thirteen turns about buying a motorcycle, and `kb_hits = 0` on every
+single one. The knowledge base was on and healthy. It was never opened.
+
+At turn 9 the agent said "जी अमित जी, Splendor Plus में i3s नहीं आता है". That
+sentence did not come from the customer's documents. It came from GPT-4.1-mini.
+**It was also correct** - which is the part worth sitting with, because nothing
+in the process made it so. The same KB has i3s under HF Deluxe and Splendor
+Xtec, so a search could as easily have surfaced the wrong model and produced a
+confident wrong answer. Right and reliable are different things, and only one
+of them was ever true here.
+
+### The prompt named a section that did not exist
+
+The knowledge section is titled by mode:
+
+```
+full  ->  === REFERENCE INFORMATION ===
+index ->  === AVAILABLE DOCUMENTS (use search_knowledge_base for details) ===
+```
+
+The grounding rules underneath were written once, for both, and opened with:
+
+> The "REFERENCE INFORMATION" section above is your primary source. Answer from it.
+
+In `index` mode there is no such section. The first and most emphatic rule -
+under a heading saying it overrides every other instruction - referred to
+something that was not in the prompt. Above it sat a list of document titles,
+which reads a great deal like knowledge. The model did what it was told.
+
+### And the tool talked itself out of being called
+
+`search_knowledge_base` described itself as:
+
+> Use this **ONLY** when the REFERENCE INFORMATION in your instructions does not
+> answer the caller's question.
+
+A condition that can never be satisfied, and `ONLY` as the brake. The prompt
+said don't bother and the tool agreed.
+
+Both are now written for the mode they are actually in. The index-mode rules say
+plainly that the section is a list of titles, that the model has read none of
+them, and that any product fact needs a search first. The tool description drops
+`ONLY` and says that knowing a title is not knowing what is in it.
+
+### The developer note that would have shipped to the model
+
+Caught in review, and worth writing down: with `@function_tool` **the docstring
+is the tool description**. The explanation of this bug was first written into
+that docstring - where it would have been sent to the model on every turn, and
+where it would have reintroduced the phrase "REFERENCE INFORMATION" while trying
+to explain why that phrase was the problem. It is a `#` comment above the method
+now. Docstrings on tools are prompt, not documentation.
+
+### The same mistake in the chat tester
+
+Found while checking the other engine. `chat.py` asked for its query "in the
+caller's own words" - undoing §9's measurement, where an English query scores
+0.44-0.48 against this KB and the same question in raw Devanagari scores
+0.13-0.20 and ranks the wrong chunk. The voice agent got that right; the chat
+path was written later and did not inherit it. Both ask for English now.
+
+### What this changes about reading logs
+
+A call with no `TOOL search_knowledge_base` line used to read as healthy - layer
+1 covered it. In `index` mode it means the opposite: the prompt held only
+titles, so an answer with no search behind it came from the model's own
+training. RUNBOOK now carries both readings side by side, because the wrong one
+is what let this call look fine.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

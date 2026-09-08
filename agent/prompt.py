@@ -10,7 +10,23 @@ import re
 
 import hours
 
-GROUNDING_RULES = """
+# Two sets, because the section above them is two different things.
+#
+# In FULL mode the documents are in the prompt. In INDEX mode - which is what a
+# knowledge base of any size ends up in - only the TITLES are there, and the
+# model has to search to see a word of the content.
+#
+# There used to be one set, and it opened with "the REFERENCE INFORMATION
+# section above is your primary source; answer from it." In index mode that
+# section is called AVAILABLE DOCUMENTS and holds nothing but titles, so the
+# first and most important rule pointed at something that did not exist.
+#
+# Call 538 is what that looks like: thirteen turns about buying a motorcycle,
+# ZERO searches, and a flat "Splendor Plus does not have i3s" that came out of
+# the model's training rather than out of the customer's documents. It happened
+# to be right. Nothing in the process made it so.
+
+GROUNDING_FULL = """
 
 KNOWLEDGE RULES - these override every other instruction:
 - The "REFERENCE INFORMATION" section above is your primary source. Answer from it.
@@ -21,6 +37,22 @@ KNOWLEDGE RULES - these override every other instruction:
   A confident wrong number is far worse than admitting you do not know - the caller
   will act on it.
 - Do not fill gaps with general knowledge.
+"""
+
+GROUNDING_INDEX = """
+
+KNOWLEDGE RULES - these override every other instruction:
+- The "AVAILABLE DOCUMENTS" section above is a LIST OF TITLES. It does not
+  contain the documents. You have not read any of them.
+- Before stating ANY fact about a product - a price, a specification, a feature,
+  whether something is available, an offer, a policy - call
+  search_knowledge_base first. Knowing a title is not knowing what is in it.
+- Answer only from what the search returns. If it returns nothing useful, say
+  plainly that you do not have that information and offer to find out.
+- Never answer a product question from your own knowledge, even when you are
+  confident. You may be describing a different model, a different year or a
+  different market, and the caller will act on it.
+- Never invent or guess a price, date, phone number, policy, name, or availability.
 """
 
 TRANSFER_RULES = """
@@ -75,7 +107,9 @@ async def build_instructions(cfg) -> tuple[str, str, int]:
             label = ("REFERENCE INFORMATION" if kb_mode == "full" else
                      "AVAILABLE DOCUMENTS (use search_knowledge_base for details)")
             instructions += f"\n\n=== {label} ===\n{text}\n=== END ===\n"
-        instructions += GROUNDING_RULES
+        # The rules have to describe the section that was actually written
+        # above them - see the note beside them.
+        instructions += GROUNDING_FULL if kb_mode == "full" else GROUNDING_INDEX
     if cfg.transfer_enabled:
         instructions += TRANSFER_RULES
         # The hours are enforced in the agent whatever this says. This is here

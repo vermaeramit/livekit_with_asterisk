@@ -450,8 +450,26 @@ kb=True(index, 8200 tok)    <- too big to inline; only headings are in the promp
 The switch is `agent_config.kb_inline_max_tokens` (default 6000). Below it the KB goes into
 the prompt whole; above it only a heading index goes in and the model uses the tool.
 
-A `TOOL search_knowledge_base(...)` line in the log means layer 1 did not cover the
-question. Common questions should **not** produce one — that is the whole point.
+What a missing `TOOL search_knowledge_base(...)` line means depends on the mode, and
+the two readings are opposites:
+
+| mode | no search line means |
+|---|---|
+| `full` | ✅ working as intended — the answer was in the prompt |
+| `index` | 🚨 **the model answered from its own training** — the prompt held only titles |
+
+In `index` mode a call with **zero** search lines has not used the knowledge base at all.
+It may still sound right; a model that knows the product generally will produce fluent,
+confident, unsourced answers. Check `kb_hits` per turn, not the tone of the reply:
+
+```sql
+SELECT turn_no, role, kb_hits, left(text, 60) FROM turns WHERE call_id = 538 ORDER BY turn_no;
+```
+
+Call 538 is the worked example: thirteen turns, `kb_hits = 0` on every one, and a spec
+answer about i3s that came out of GPT-4.1-mini rather than out of the customer's
+documents. It was correct by luck — the same KB has i3s under two other models, and a
+search could as easily have produced the wrong one.
 
 ### KB settings
 
