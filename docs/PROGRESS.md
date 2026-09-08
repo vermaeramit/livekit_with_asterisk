@@ -4063,6 +4063,59 @@ caller's own words" - undoing §9's measurement, where an English query scores
 0.13-0.20 and ranks the wrong chunk. The voice agent got that right; the chat
 path was written later and did not inherit it. Both ask for English now.
 
+### The bug that was hiding behind it
+
+The first search after the fix returned a 403:
+
+```
+Project `proj_CMHc6...` does not have access to model `text-embedding-3-small`
+```
+
+**This was already true.** The KB had been ingested and measured on an earlier
+key; a newer project-scoped key was added when the tier was raised, and its
+allowed-models list had `gpt-4.1-mini` but not the embedding model. So chat kept
+working and retrieval was dead - and nobody found out, because the prompt bug
+meant retrieval was never attempted.
+
+Fixing either one alone would have looked like a failure. Prompt only: the
+search fires and 403s. Permission only: the model still never searches. The
+second bug was invisible for exactly as long as the first one lasted.
+
+The 591 chunks for `default` and 1301 for `default-loadtest` were all embedded
+and intact throughout - nothing was lost, the key simply could not make a query
+vector to compare them against. Fixed in the OpenAI dashboard: Project →
+Limits → Allowed models.
+
+### The save-time check that says yes to a key that cannot work
+
+`pk.validate()` runs when a key is saved, and for OpenAI it calls `/v1/models`.
+A restricted project key answers **200** to that - the key is real, it just
+cannot use the model this system needs. The check asks "is this key genuine",
+which is not the question.
+
+The right shape is already in the same file. `_check_sarvam` performs a real
+one-character synthesis, and its comment says why:
+
+> a 402 here means the key is genuine but the account is out of credits, which
+> is exactly the failure that took a production campaign down mid-load-test
+
+The thinking was written down; it was not applied to OpenAI.
+
+### Three gaps this exposed, none of them the original bug
+
+1. **The check should embed.** One word through `text-embedding-3-small` at save
+   time, and this is caught in the console instead of weeks later on a call.
+   Saved with a warning, not refused - the key is valid for the LLM.
+2. **Search should not die when embedding does.** `kb.search` is hybrid, and the
+   lexical leg needs no embedding at all - it runs entirely in Postgres. But the
+   embed call comes first, so its failure takes down the leg that would have
+   worked. Fall back to lexical, and raise a provider alert: silent degradation
+   is the same class of problem as this whole entry.
+3. **There is no way to search the KB from the console.** Whether retrieval
+   works can only be inferred from asking the bot a question and judging the
+   answer, which is how a dead embedder went unnoticed. A query box on the KB
+   page showing chunks and scores would have made this a one-minute finding.
+
 ### What this changes about reading logs
 
 A call with no `TOOL search_knowledge_base` line used to read as healthy - layer
