@@ -20,7 +20,8 @@ import {
   Waves,
   X,
   Bot,
-  FileClock,} from 'lucide-react'
+  FileClock,
+  Layers,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
@@ -34,7 +35,7 @@ import { CampaignChat } from '@/components/CampaignChat'
 import { PromptVersions } from '@/components/PromptVersions'
 import { ChatWidgetPanel } from '@/components/ChatWidgetPanel'
 import { TransferHours } from '@/components/TransferHours'
-import { VoicePreview } from '@/components/VoicePreview'
+import { SpeakButton, VoicePreview } from '@/components/VoicePreview'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
@@ -981,6 +982,108 @@ export function CampaignConfig() {
 
       {tab === 'limits' && (
         <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                Concurrent calls
+              </CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-5">
+              <Note>
+                Calls over the limit wait, hear the message below on a loop, and are connected
+                the moment a slot frees. Waiting is free: a held call has not reached the agent
+                yet, so no speech, language or voice provider is touched until it does.
+              </Note>
+
+              <Toggle
+                label="Limit how many calls run at once"
+                checked={value.max_parallel_calls !== null}
+                // 5 rather than 1 on switching on: a limit of one is almost
+                // never what somebody means, and it is the value most likely to
+                // be saved by accident.
+                onChange={(v) => set('max_parallel_calls', v ? 5 : null)}
+                hint="Off means unlimited, which is how every campaign starts."
+              />
+
+              {value.max_parallel_calls !== null && (
+                <>
+                  <div className="grid gap-5 sm:grid-cols-3">
+                    <NumberField
+                      label="Calls at once"
+                      value={value.max_parallel_calls}
+                      onChange={(v) => set('max_parallel_calls', v)}
+                      min={0}
+                      max={500}
+                    />
+                    <NumberField
+                      label="Gap between repeats"
+                      value={value.queue_gap_seconds}
+                      onChange={(v) => set('queue_gap_seconds', v)}
+                      min={1}
+                      max={60}
+                      suffix="sec"
+                    />
+                    <NumberField
+                      label="Longest wait"
+                      value={value.queue_max_wait_seconds}
+                      onChange={(v) => set('queue_max_wait_seconds', v)}
+                      min={5}
+                      max={600}
+                      suffix="sec"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <TextField
+                      label="What waiting callers hear"
+                      value={value.queue_message ?? ''}
+                      onChange={(v) => set('queue_message', v || null)}
+                      placeholder="Kripya line par baney rahiye, hum aapko jod rahe hain."
+                      hint="Synthesised once when you save and played from disk after that — never re-made per call, which is what keeps waiting free."
+                    />
+                    <SpeakButton
+                      campaignId={campaignId}
+                      value={value}
+                      text={value.queue_message ?? ''}
+                    />
+                  </div>
+
+                  <SelectField
+                    label="When the longest wait runs out"
+                    value={value.queue_timeout_action}
+                    // SelectField hands back a plain string; the options are
+                    // the only two it can be, and the column has a CHECK
+                    // constraint saying so.
+                    onChange={(v) => set('queue_timeout_action', v as 'human' | 'hangup')}
+                    options={[
+                      { value: 'human', label: 'Hand the call to a person' },
+                      { value: 'hangup', label: 'Say goodbye and hang up' },
+                    ]}
+                    hint="An outbound dialler cannot see that this campaign is full and will keep sending calls, so this is the only thing stopping a queue from growing."
+                  />
+
+                  {value.queue_timeout_action === 'hangup' && (
+                    <div className="space-y-2">
+                      <TextField
+                        label="Said before hanging up"
+                        value={value.queue_timeout_message ?? ''}
+                        onChange={(v) => set('queue_timeout_message', v || null)}
+                        placeholder="Kshama kijiye, abhi sabhi log vyast hain. Kripya thodi der baad call kijiye."
+                        hint="Without this the line simply goes dead, which sounds like a fault rather than a decision."
+                      />
+                      <SpeakButton
+                        campaignId={campaignId}
+                        value={value}
+                        text={value.queue_timeout_message ?? ''}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </CardBody>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Cost guardrails</CardTitle>

@@ -8,22 +8,15 @@ import { ApiError, authedAudio } from '@/lib/api'
 import type { AgentConfig } from '@/types'
 
 /**
- * Hear the chosen voice before a caller does.
+ * Synthesise a line on this campaign's own key and play it.
  *
- * Soniox offers seventy voices on tts-rt-v2, listed as a name, a gender and
- * half a sentence. Choosing from that is guessing, and the campaign finds out
- * what it picked on a live call.
- *
- * Campaign-scoped because the KEY is: the audio is synthesised for real, on
- * this campaign's own provider key, and billed to it exactly as its calls are.
+ * Shared by the voice picker below and by the queue message on the Limits tab,
+ * which needs the same thing with none of the surrounding controls. One
+ * implementation because there is one thing being done - and because the blob
+ * URLs have to be revoked, which is the part that gets forgotten in a copy.
  */
-export function VoicePreview({ value, campaignId }: { value: AgentConfig; campaignId: number }) {
+function useSpeak(campaignId: number, value: AgentConfig) {
   const toast = useToast()
-  // The greeting, because that is the line a caller actually hears first - the
-  // voice should be judged on the words it will really say, not on a sample
-  // sentence chosen by us.
-  const [text, setText] = useState(value.greeting || 'Namaste, main aapki kya madad kar sakti hoon?')
-  const [speed, setSpeed] = useState(1)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playing, setPlaying] = useState(false)
 
@@ -38,7 +31,7 @@ export function VoicePreview({ value, campaignId }: { value: AgentConfig; campai
   )
 
   const play = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ text, speed = 1 }: { text: string; speed?: number }) => {
       const url = await authedAudio(`/campaigns/${campaignId}/tts-preview`, {
         provider: value.tts_provider,
         model: value.tts_model,
@@ -74,6 +67,72 @@ export function VoicePreview({ value, campaignId }: { value: AgentConfig; campai
   // Nothing to synthesise with. Said plainly rather than left as a button that
   // fails when pressed.
   const missing = !value.tts_model || !value.tts_voice
+
+  return { play, stop, playing, missing }
+}
+
+/**
+ * One button, for a line that is already written somewhere else.
+ *
+ * The queue message is the case this exists for: the text is in the field next
+ * to it, and a second box to type it into again would be a way to preview
+ * something other than what gets saved.
+ */
+export function SpeakButton({
+  campaignId,
+  value,
+  text,
+}: {
+  campaignId: number
+  value: AgentConfig
+  text: string
+}) {
+  const { play, stop, playing, missing } = useSpeak(campaignId, value)
+
+  if (playing) {
+    return (
+      <Button size="sm" variant="outline" onClick={stop} type="button">
+        <Square className="h-3.5 w-3.5" />
+        Stop
+      </Button>
+    )
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      type="button"
+      onClick={() => play.mutate({ text })}
+      disabled={missing || !text.trim() || play.isPending}
+      title={missing ? 'Choose a model and a voice on the Voice tab first' : undefined}
+    >
+      {play.isPending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Play className="h-3.5 w-3.5" />
+      )}
+      Preview
+    </Button>
+  )
+}
+
+/**
+ * Hear the chosen voice before a caller does.
+ *
+ * Soniox offers seventy voices on tts-rt-v2, listed as a name, a gender and
+ * half a sentence. Choosing from that is guessing, and the campaign finds out
+ * what it picked on a live call.
+ *
+ * Campaign-scoped because the KEY is: the audio is synthesised for real, on
+ * this campaign's own provider key, and billed to it exactly as its calls are.
+ */
+export function VoicePreview({ value, campaignId }: { value: AgentConfig; campaignId: number }) {
+  // The greeting, because that is the line a caller actually hears first - the
+  // voice should be judged on the words it will really say, not on a sample
+  // sentence chosen by us.
+  const [text, setText] = useState(value.greeting || 'Namaste, main aapki kya madad kar sakti hoon?')
+  const [speed, setSpeed] = useState(1)
+  const { play, stop, playing, missing } = useSpeak(campaignId, value)
 
   return (
     <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
@@ -122,7 +181,7 @@ export function VoicePreview({ value, campaignId }: { value: AgentConfig; campai
         ) : (
           <Button
             size="sm"
-            onClick={() => play.mutate()}
+            onClick={() => play.mutate({ text, speed })}
             disabled={missing || !text.trim() || play.isPending}
           >
             {play.isPending ? (

@@ -32,6 +32,10 @@ FIELDS = (
     "kb_filler_enabled", "kb_filler_message",
     "stt_context_terms",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
+    # Read by Asterisk over ODBC as well as by this page - see migration 046.
+    "max_parallel_calls", "queue_message", "queue_audio_file",
+    "queue_gap_seconds", "queue_max_wait_seconds", "queue_timeout_action",
+    "queue_timeout_message", "queue_timeout_audio_file",
     "transfer_enabled", "transfer_to", "transfer_message",
     "transfer_confirm", "transfer_confirm_message",
     "transfer_dialler_id", "transfer_extension",
@@ -85,6 +89,30 @@ def _warnings(cfg: dict) -> list[str]:
         out.append(
             f"{label} is {marker}, but the prompt never writes it, so it will "
             f"never fire.{suggestion}")
+
+    # A concurrency limit with nothing to play. The caller who hits it hears
+    # silence and is then handed off, which reads as a dropped call - and the
+    # setting looks configured from the page, because the number is filled in.
+    if cfg.get("max_parallel_calls") is not None:
+        if not (cfg.get("queue_message") or "").strip():
+            out.append(
+                "Calls over the limit have nothing to listen to — no queue "
+                "message is set, so they are handed off immediately.")
+        elif not cfg.get("queue_audio_file"):
+            out.append(
+                "The queue message has not been synthesised yet, so it will "
+                "not play. Save it again, and check for a provider error.")
+        if cfg.get("max_parallel_calls") == 0:
+            out.append(
+                "The limit is 0, so this campaign takes no calls at all. "
+                "Leave it empty for unlimited.")
+
+    if (cfg.get("queue_timeout_action") == "hangup"
+            and cfg.get("max_parallel_calls") is not None
+            and not (cfg.get("queue_timeout_message") or "").strip()):
+        out.append(
+            "Callers who wait the full time are hung up on without being told "
+            "anything, which sounds like a fault rather than a decision.")
 
     # Transfer hours that cannot do what they look like they do. Both of these
     # only show up when a real caller asks for a person out of hours, which is

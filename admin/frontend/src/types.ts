@@ -256,6 +256,20 @@ export interface AgentConfig {
   max_prompt_tokens: number
   limit_message: string | null
 
+  // null = unlimited, which is every campaign until somebody sets one. The
+  // limit is enforced in the Asterisk dialplan before the call reaches the
+  // agent, so a caller waiting here costs nothing in STT, TTS or LLM.
+  max_parallel_calls: number | null
+  queue_message: string | null
+  queue_gap_seconds: number
+  queue_max_wait_seconds: number
+  queue_timeout_action: 'human' | 'hangup'
+  queue_timeout_message: string | null
+  // Where the synthesis landed. Read-only - written when the message is saved,
+  // and null means the audio does not exist, so nothing would play.
+  queue_audio_file: string | null
+  queue_timeout_audio_file: string | null
+
   transfer_enabled: boolean
   transfer_to: string
   transfer_message: string | null

@@ -221,6 +221,22 @@ class AgentConfigOut(BaseModel):
     max_prompt_tokens: int
     limit_message: str | None
 
+    # How many calls run at once, and what the rest hear. NULL = unlimited,
+    # which is every campaign until somebody sets one. Enforced in the Asterisk
+    # dialplan, before the call reaches LiveKit - so a waiting caller costs
+    # nothing in STT, TTS or LLM.
+    max_parallel_calls: int | None = None
+    queue_message: str | None = None
+    queue_gap_seconds: int = 8
+    queue_max_wait_seconds: int = 90
+    queue_timeout_action: str = "human"
+    queue_timeout_message: str | None = None
+    # Rendered server-side when the message is saved, never sent by the client.
+    # Returned so the page can say whether the audio actually exists - a message
+    # with no file is a message nobody will hear.
+    queue_audio_file: str | None = None
+    queue_timeout_audio_file: str | None = None
+
     transfer_enabled: bool
     transfer_to: str
     transfer_message: str | None
@@ -348,6 +364,22 @@ class AgentConfigUpdate(BaseModel):
     max_duration_sec: int | None = Field(default=None, ge=30, le=7200)
     max_prompt_tokens: int | None = Field(default=None, ge=1000, le=1_000_000)
     limit_message: str | None = Field(default=None, max_length=600)
+
+    # Send null to go back to unlimited. The PATCH reads with
+    # exclude_unset=True, so an absent field means "leave it" and an explicit
+    # null means "clear it" - the two are different on purpose here.
+    max_parallel_calls: int | None = Field(default=None, ge=0, le=500)
+    # Synthesised once when saved, so length is a cost paid at save time and
+    # not per call. Still bounded: this is a hold message, not a script.
+    queue_message: str | None = Field(default=None, max_length=600)
+    queue_gap_seconds: int | None = Field(default=None, ge=1, le=60)
+    queue_max_wait_seconds: int | None = Field(default=None, ge=5, le=600)
+    queue_timeout_action: str | None = Field(default=None,
+                                             pattern=r"^(human|hangup)$")
+    queue_timeout_message: str | None = Field(default=None, max_length=600)
+    # queue_audio_file and queue_timeout_audio_file are deliberately absent.
+    # They are where the render landed, not something a client may set - a
+    # client-supplied path here would be a path Asterisk then plays.
 
     transfer_enabled: bool | None = None
     transfer_to: str | None = Field(default=None, max_length=200)
