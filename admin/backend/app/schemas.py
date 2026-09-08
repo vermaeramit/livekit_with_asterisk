@@ -299,7 +299,35 @@ class AgentConfigUpdate(BaseModel):
 
     language: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
     greeting: str | None = Field(default=None, max_length=600)
-    instructions: str | None = Field(default=None, min_length=1, max_length=32000)
+    # Roughly 30,000 tokens. Not a quality judgement and not a model limit -
+    # gpt-4.1-mini would take far more. It is a guard against pasting a whole
+    # document in by accident, which is the mistake this catches.
+    #
+    # Raised from 32,000, which was arbitrary and started refusing a real
+    # prompt. The number that should govern the length is the token counter on
+    # the field, because every token here is paid on EVERY turn of every call.
+    # No max_length here on purpose: a Field constraint runs BEFORE the
+    # validator below, so pydantic's own "String should have at most N
+    # characters" would be the message and the advice would never be reached.
+    instructions: str | None = Field(default=None, min_length=1)
+
+    @field_validator("instructions")
+    @classmethod
+    def _instructions_are_not_a_document(cls, v):
+        """Refuse with advice rather than with a number.
+
+        "String should have at most 32000 characters" tells somebody they have
+        hit a wall and nothing about the way round it - and there is a good one
+        here that is easy to miss.
+        """
+        if v is not None and len(v) > 120_000:
+            raise ValueError(
+                f"the prompt is {len(v):,} characters, over the 120,000 limit. "
+                "Long reference material belongs in the knowledge base, where "
+                "it is looked up only when a caller asks for it - anything in "
+                "the prompt is sent on every turn of every call, and paid for "
+                "each time.")
+        return v
 
     stt_model: str | None = Field(default=None, max_length=80)
     llm_model: str | None = Field(default=None, min_length=1, max_length=80)
