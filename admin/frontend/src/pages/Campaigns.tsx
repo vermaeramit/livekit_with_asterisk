@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Info, Megaphone, Plus, Power, Settings2, Trash2 } from 'lucide-react'
+import { Info, Megaphone, Pencil, Plus, Power, Settings2, Trash2 } from 'lucide-react'
 import { PAGE, PageHeader } from '@/components/Layout'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -166,6 +166,120 @@ function CreateCampaignDialog({ open, onClose }: { open: boolean; onClose: () =>
   )
 }
 
+function EditCampaignDialog({
+  campaign,
+  onClose,
+}: {
+  campaign: Campaign | null
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const toast = useToast()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+
+  useEffect(() => {
+    if (!campaign) return
+    setName(campaign.name)
+    setDescription(campaign.description ?? '')
+  }, [campaign])
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<Campaign>(`/campaigns/${campaign!.id}`, {
+        method: 'PATCH',
+        // Only what changed. PATCH treats an absent field as "leave it", so
+        // sending the whole object would overwrite anything edited elsewhere
+        // between this dialog opening and being saved.
+        body: {
+          ...(name.trim() !== campaign!.name ? { name: name.trim() } : {}),
+          ...(description.trim() !== (campaign!.description ?? '')
+            ? { description: description.trim() || null }
+            : {}),
+        },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['campaigns'] })
+      onClose()
+      toast.success('Campaign updated')
+    },
+    onError: (e) => toast.error('Could not save', (e as Error).message),
+  })
+
+  const dirty =
+    campaign !== null &&
+    (name.trim() !== campaign.name ||
+      description.trim() !== (campaign.description ?? ''))
+
+  return (
+    <Dialog open={campaign !== null} onClose={onClose} title="Edit campaign">
+      {campaign && (
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="e-name">Name</Label>
+            <Input
+              id="e-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="e-desc">Description</Label>
+            <Input
+              id="e-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What this campaign is for"
+            />
+          </div>
+
+          <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
+            <p className="text-2xs text-muted-foreground">
+              Slug{' '}
+              <span className="font-mono text-foreground">{campaign.slug}</span>
+              {campaign.config_name && (
+                <>
+                  {' · '}config{' '}
+                  <span className="font-mono text-foreground">{campaign.config_name}</span>
+                </>
+              )}
+            </p>
+            {/* Said here rather than shown as a disabled field, which invites
+                somebody to look for the way to enable it. */}
+            <p className="mt-1 text-2xs leading-relaxed text-muted-foreground">
+              These cannot be changed. The agent loads its configuration by
+              name, and routes, knowledge-base documents and call history all
+              refer to it — renaming would leave a live campaign unable to find
+              its own prompt.
+            </p>
+          </div>
+
+          <p className="text-2xs leading-relaxed text-muted-foreground">
+            The prompt, voice, knowledge base and routing are under{' '}
+            <strong className="font-medium">Configure</strong>. Enabling and
+            disabling is the button on the row.
+          </p>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => save.mutate()}
+              loading={save.isPending}
+              disabled={!dirty || !name.trim()}
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  )
+}
+
 export function Campaigns() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -173,6 +287,7 @@ export function Campaigns() {
   const toast = useToast()
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Campaign | null>(null)
+  const [editing, setEditing] = useState<Campaign | null>(null)
   const isSuper = user?.role === 'superadmin'
 
   const campaigns = useQuery({
@@ -252,6 +367,10 @@ export function Campaigns() {
       align: 'right',
       render: (c) => (
         <div className="flex items-center justify-end gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => setEditing(c)}>
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
           <Button variant="outline" size="sm" onClick={() => navigate(`/campaigns/${c.id}/config`)}>
             <Settings2 className="h-3.5 w-3.5" />
             Configure
@@ -327,6 +446,7 @@ export function Campaigns() {
       />
 
       <CreateCampaignDialog open={creating} onClose={() => setCreating(false)} />
+      <EditCampaignDialog campaign={editing} onClose={() => setEditing(null)} />
 
       <Dialog
         open={deleting !== null}
