@@ -89,6 +89,18 @@ export function SpeakButton({
 }) {
   const { play, stop, playing, missing } = useSpeak(campaignId, value)
 
+  // Why it cannot play, in the open. A disabled button with the reason in a
+  // title attribute is a button that looks broken: the first person to meet
+  // this one had a working voice on every call and no way to see that the
+  // campaign has no tts_voice stored.
+  const blocked = missing
+    ? !value.tts_model
+      ? 'No voice model is set on the Voice tab.'
+      : 'No voice is chosen on the Voice tab.'
+    : !text.trim()
+      ? 'Write the message first.'
+      : null
+
   if (playing) {
     return (
       <Button size="sm" variant="outline" onClick={stop} type="button">
@@ -98,21 +110,25 @@ export function SpeakButton({
     )
   }
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      type="button"
-      onClick={() => play.mutate({ text })}
-      disabled={missing || !text.trim() || play.isPending}
-      title={missing ? 'Choose a model and a voice on the Voice tab first' : undefined}
-    >
-      {play.isPending ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <Play className="h-3.5 w-3.5" />
-      )}
-      Preview
-    </Button>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        type="button"
+        onClick={() => play.mutate({ text })}
+        disabled={blocked !== null || play.isPending}
+      >
+        {play.isPending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Play className="h-3.5 w-3.5" />
+        )}
+        Preview
+      </Button>
+      <span className="text-2xs text-muted-foreground">
+        {blocked ?? `${value.tts_voice} · ${value.tts_model}`}
+      </span>
+    </div>
   )
 }
 

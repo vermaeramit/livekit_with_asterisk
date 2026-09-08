@@ -35,6 +35,16 @@ services:
       # the docker socket, or write access to the dumps - would both hand a
       # web service far more than it needs to press one button.
       - /opt/aivoice/backup-trigger:/data/backup-trigger
+      # Hold messages, rendered here and played by Asterisk. Writable, and the
+      # second writable path outside the app - justified because what is in it
+      # is audio this service made from text this service was given, and
+      # because the alternative is synthesising on the call, which is the one
+      # thing the queue exists to avoid.
+      #
+      # Asterisk is native and sees /opt/aivoice/cache/hold. This container
+      # sees /data/hold. The DATABASE stores Asterisk's path - see
+      # HOLD_PLAY_DIR in holdaudio.py, and do not derive one from the other.
+      - /opt/aivoice/cache/hold:/data/hold
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.

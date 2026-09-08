@@ -7,16 +7,20 @@ progress.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import audit, db, kblib, secretlib
+from .. import audit, db, holdaudio, kblib, secretlib
+from .. import provider_keys as pk
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
                        CampaignRoute, CampaignRouteCreate, CopyHours,
                        PostbackOut, PromptTokens, PromptVersion)
+
+log = logging.getLogger("admin-api")
 
 router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 
@@ -160,6 +164,66 @@ async def _get(campaign_id: int) -> dict:
     return d
 
 
+async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
+                              cfg: dict) -> list[str]:
+    """Make sure the hold audio on disk matches what the messages now say.
+
+    Called after every save rather than only when the text changed, because the
+    VOICE is part of what the file is. Change the campaign's voice and leave the
+    message alone, and without this the callers on hold would keep hearing the
+    old voice while everyone who got through hears the new one.
+
+    Cheap when there is nothing to do: the name is a hash of the words and the
+    voice, so an unchanged message is a file that already exists and a stat
+    that finds it.
+
+    -> the problems, to be shown with the save. Never raises: a provider that
+    is down should not cost somebody the sentence they just typed.
+    """
+    pairs = (("queue_message", "queue_audio_file", "queue message"),
+             ("queue_timeout_message", "queue_timeout_audio_file",
+              "goodbye message"))
+    if not any((cfg.get(t) or "").strip() for t, _, _ in pairs):
+        # Nothing to say. Clear any paths left from a message that has since
+        # been emptied - a stale path here is audio playing that the console no
+        # longer shows anywhere.
+        await db.pool().execute(
+            "UPDATE agent_config SET queue_audio_file = NULL, "
+            " queue_timeout_audio_file = NULL WHERE campaign_id = $1", campaign_id)
+        return []
+
+    provider = cfg["tts_provider"]
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get(provider):
+        return [f"There is no {provider} key on this campaign, so the queue "
+                f"message could not be synthesised and will not play."]
+
+    problems: list[str] = []
+    for text_col, file_col, label in pairs:
+        text = (cfg.get(text_col) or "").strip()
+        if not text:
+            path = None
+        else:
+            try:
+                path = await holdaudio.render(
+                    provider=provider, api_key=keys[provider],
+                    model=cfg.get("tts_model"), voice=cfg.get("tts_voice"),
+                    language=cfg["language"], text=text)
+            except holdaudio.RenderError as e:
+                path = None
+                problems.append(f"The {label} could not be synthesised: {e}")
+            except Exception:
+                path = None
+                log.exception("hold render failed for campaign %s", campaign_id)
+                problems.append(f"The {label} could not be synthesised.")
+
+        if path != cfg.get(file_col):
+            await db.pool().execute(
+                f"UPDATE agent_config SET {file_col} = $2 WHERE campaign_id = $1",
+                campaign_id, path)
+    return problems
+
+
 @router.get("/config", response_model=AgentConfigOut)
 async def get_config(campaign_id: int, user: CurrentUser = Depends(active_user)):
     await assert_campaign_visible(user, campaign_id)
@@ -218,10 +282,20 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
         f"UPDATE agent_config SET {sets}, updated_at = now() WHERE campaign_id = $1",
         campaign_id, *values)
 
+    # After the write, so it renders what was actually saved.
+    problems = await _render_queue_audio(campaign_id, tenant_id,
+                                         await _get(campaign_id))
+
     await audit.record(actor, entity="agent_config", entity_id=before["name"],
                        action="update", tenant_id=tenant_id, campaign_id=campaign_id,
                        changes=audit.diff(before, fields))
-    return AgentConfigOut(**await _get(campaign_id))
+
+    out = await _get(campaign_id)
+    # The provider's own words, on the save that caused them. A later GET falls
+    # back to the standing "has not been synthesised" warning, which is still
+    # true and still points at the same field.
+    out["warnings"] = out["warnings"] + problems
+    return AgentConfigOut(**out)
 
 
 @router.post("/config/copy-hours", response_model=AgentConfigOut)

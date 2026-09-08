@@ -88,8 +88,15 @@ class PreviewError(Exception):
 
 
 async def soniox(api_key: str, *, model: str, voice: str, language: str,
-                 text: str, speed: float = 1.0) -> bytes:
-    """-> mp3 bytes."""
+                 text: str, speed: float = 1.0,
+                 audio_format: str = _FORMAT,
+                 sample_rate: int | None = None) -> bytes:
+    """-> mp3 bytes, or raw PCM when asked for it.
+
+    audio_format/sample_rate exist for the hold-message render, which needs
+    signed 16-bit PCM at a telephony rate rather than something a browser can
+    play. Defaults leave the preview exactly as it was.
+    """
     stream_id = uuid.uuid4().hex
     config = {
         "api_key": api_key,
@@ -101,10 +108,15 @@ async def soniox(api_key: str, *, model: str, voice: str, language: str,
         # preview does not go through the agent's code at all.
         "language": language.split("-")[0].lower(),
         "voice": voice,
-        "audio_format": _FORMAT,
+        "audio_format": audio_format,
         "speed": speed,
         "stream_id": stream_id,
     }
+    # "Required for raw audio formats" - the plugin's own words. Sending it for
+    # mp3 as well would be harmless, but sending it ONLY where it is needed is
+    # what keeps the preview request byte-identical to what it was.
+    if sample_rate is not None:
+        config["sample_rate"] = sample_rate
 
     audio = bytearray()
     try:
@@ -180,8 +192,9 @@ def _sarvam_blocking(api_key: str, payload: dict) -> bytes:
 
 
 async def sarvam(api_key: str, *, model: str, voice: str, language: str,
-                 text: str, speed: float = 1.0) -> bytes:
-    """-> mp3 bytes.
+                 text: str, speed: float = 1.0,
+                 codec: str = _FORMAT, sample_rate: int = 22050) -> bytes:
+    """-> mp3 bytes, or a wav when asked for one.
 
     The language goes through UNCHANGED. Sarvam wants the regional code and
     that is what the campaign stores, so the conversion Soniox needs would be
@@ -193,8 +206,8 @@ async def sarvam(api_key: str, *, model: str, voice: str, language: str,
         "speaker": voice,
         "pace": speed,
         "model": model,
-        "speech_sample_rate": 22050,
-        "output_audio_codec": "mp3",
+        "speech_sample_rate": sample_rate,
+        "output_audio_codec": codec,
     }
     # Mirrors the plugin: these are rejected on the models that do not have
     # them, so they are sent only where the plugin sends them.
@@ -207,8 +220,12 @@ async def sarvam(api_key: str, *, model: str, voice: str, language: str,
 
 
 async def openai(api_key: str, *, model: str, voice: str, language: str,
-                 text: str, speed: float = 1.0) -> bytes:
-    """-> mp3 bytes.
+                 text: str, speed: float = 1.0,
+                 response_format: str = _FORMAT) -> bytes:
+    """-> mp3 bytes, or raw PCM when asked for it.
+
+    OpenAI's "pcm" is documented as 24 kHz, 16-bit, mono, little-endian, with
+    no header - which is exactly what Asterisk reads from a .sln24 file.
 
     `language` is accepted and ignored, so the three providers share one
     signature. OpenAI has no language parameter: the voice speaks whatever the
@@ -226,7 +243,7 @@ async def openai(api_key: str, *, model: str, voice: str, language: str,
     try:
         async with client.audio.speech.with_streaming_response.create(
             input=text, model=model, voice=voice,
-            response_format="mp3", speed=speed,
+            response_format=response_format, speed=speed,
         ) as stream:
             async for chunk in stream.iter_bytes():
                 audio.extend(chunk)
