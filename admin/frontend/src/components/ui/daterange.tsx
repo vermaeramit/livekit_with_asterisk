@@ -161,7 +161,13 @@ export function DateRangeField({
 
       {open && (
         <div
-          className="absolute right-0 z-50 mt-1 flex max-w-[calc(100vw-2rem)] gap-0 overflow-auto rounded-lg border border-border bg-card shadow-lg"
+          // w-max, and it matters. An absolutely positioned box shrinks to fit
+          // the width of its POSITIONING PARENT, which here is one narrow
+          // column of the filter grid - so the two months had nowhere to sit
+          // side by side and .rdp-months wrapped them onto separate rows.
+          // max-content lets it take the width it actually needs; the max-w
+          // below still folds it back on a screen too narrow for two.
+          className="absolute right-0 z-50 mt-1 flex w-max max-w-[calc(100vw-2rem)] gap-0 overflow-auto rounded-lg border border-border bg-card shadow-lg"
           // The library themes itself from these. Pointed at the console's own
           // tokens so it follows light and dark without a second palette.
           style={
