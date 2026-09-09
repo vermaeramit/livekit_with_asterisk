@@ -584,6 +584,14 @@ class AgentConfigUpdate(BaseModel):
 
 # ───────────────────────────── knowledge base ─────────────────────────────
 
+class KbSearchIn(BaseModel):
+    # English, and short. The agent's tool asks for English because it was
+    # measured on this corpus: an English query scores 0.44-0.48 where the same
+    # question in raw Devanagari scores 0.13-0.20 and ranks the wrong chunk.
+    # A tester that encourages the other thing would teach the wrong lesson.
+    query: str = Field(min_length=1, max_length=400)
+
+
 class KbDocument(BaseModel):
     id: int
     campaign_id: int | None

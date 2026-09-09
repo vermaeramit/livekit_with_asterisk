@@ -23,6 +23,7 @@ import {
   FileClock,
   Layers,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
+import { KnowledgeSearch } from '@/components/KnowledgeSearch'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
 import { CampaignTools } from '@/components/CampaignTools'
@@ -896,6 +897,15 @@ export function CampaignConfig() {
               rows={4}
               hint="Optional one-paragraph description of what the documents cover. Helps the agent decide when to search."
             />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Try a search</CardTitle>
+            </CardHeader>
+            <CardBody>
+              <KnowledgeSearch campaignId={campaignId} />
             </CardBody>
           </Card>
         </div>

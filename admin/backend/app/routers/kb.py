@@ -33,7 +33,7 @@ SUPPORTED_EXT: tuple[str, ...] = (
     tuple(getattr(kblib.kb(), "SUPPORTED", (".pdf",)))
     if kblib.available() else (".pdf", ".docx"))
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
-from ..schemas import KbDocument, KbIngestResult
+from ..schemas import KbDocument, KbIngestResult, KbSearchIn
 
 log = logging.getLogger("admin-api")
 
@@ -304,6 +304,87 @@ async def delete_document(doc_id: int, actor: CurrentUser = Depends(editor)):
     await audit.record(actor, entity="kb_document", entity_id=doc["filename"],
                        action="delete", tenant_id=doc["tenant_id"],
                        campaign_id=doc["campaign_id"])
+
+
+@router.post("/campaigns/{campaign_id}/kb/search")
+async def search_kb(campaign_id: int, body: KbSearchIn,
+                    user: CurrentUser = Depends(active_user)):
+    """Ask the knowledge base a question, the way the agent asks it.
+
+    There was no way to do this. Whether retrieval worked could only be
+    inferred from asking the bot something and judging the answer, which is how
+    an embedder that had been dead for weeks went unnoticed: chat still
+    answered, fluently, from the model's own training.
+
+    It runs the agent's OWN kb.search - not a copy - so the thresholds, the
+    hybrid query and the English-query advice are the ones a call gets.
+
+    Two things it does deliberately differently:
+
+      min_score 0   so near misses are visible. "Nothing found" and "found it
+                    at 0.19 against a threshold of 0.20" need different
+                    answers, and only one of them is a knowledge-base problem.
+      top_k 10      because the question being asked here is "what is in
+                    there", not "what would the agent say".
+
+    Each hit says whether the campaign's own threshold would have kept it, and
+    which leg matched - `vec` is the embedding, `lex` is trigram matching
+    inside Postgres. All `lex` and no `vec` means the embeddings are not
+    working, which is the failure this whole endpoint exists to make visible.
+    """
+    if not kblib.available():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"the knowledge base is not configured: "
+                            f"{kblib.why_unavailable()}")
+
+    tenant_id = await assert_campaign_visible(user, campaign_id)
+    cfg = await db.pool().fetchrow(
+        "SELECT name, kb_min_score FROM agent_config "
+        " WHERE campaign_id = $1 ORDER BY id LIMIT 1", campaign_id)
+    if cfg is None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "this campaign has no agent config")
+
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get("openai"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no OpenAI key is set for this campaign or its client - "
+            "the query cannot be embedded")
+
+    # Collected rather than raised: a search that fell back to lexical still
+    # returns results, and the fact that it had to is the single most useful
+    # thing this page can say.
+    degraded: list[str] = []
+    hits = await kblib.kb().search(
+        body.query, config_name=cfg["name"], top_k=10, min_score=0.0,
+        api_key=keys["openai"], on_degraded=degraded.append)
+
+    names = {}
+    if hits:
+        rows = await db.pool().fetch(
+            "SELECT id, filename, title FROM kb_documents WHERE id = ANY($1::bigint[])",
+            list({h["doc_id"] for h in hits}))
+        names = {r["id"]: (r["title"] or r["filename"]) for r in rows}
+
+    threshold = float(cfg["kb_min_score"])
+    return {
+        "query": body.query,
+        "min_score": threshold,
+        # The provider's own words when the embedding could not be made.
+        "degraded": degraded[0] if degraded else None,
+        "hits": [{
+            "id": h["id"],
+            "document": names.get(h["doc_id"], f"document {h['doc_id']}"),
+            "page": h.get("page"),
+            "heading": h.get("heading"),
+            "content": h["content"],
+            "score": round(float(h["score"]), 3),
+            "src": h["src"],
+            # Would a call have used this one, or is it below the line?
+            "used": float(h["score"]) >= threshold,
+        } for h in hits],
+    }
 
 
 @router.get("/kb/documents/{doc_id}/chunks")
