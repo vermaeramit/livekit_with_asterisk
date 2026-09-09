@@ -11,7 +11,9 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { addDays, parseISO, startOfDay } from 'date-fns'
 import { PAGE, PageHeader } from '@/components/Layout'
+import { DateRangeField } from '@/components/ui/daterange'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, EmptyState, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
 import { api, buildQuery } from '@/lib/api'
@@ -106,8 +108,15 @@ export function Calls() {
         campaign_id: campaignId || undefined,
         end_reason: endReason === 'transferred' ? undefined : endReason || undefined,
         transferred: endReason === 'transferred' ? true : undefined,
-        date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-        date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+        // LOCAL day boundaries. new Date('2026-09-09') reads that as UTC
+        // midnight, and the API filters `started_at < date_to` - so asking for
+        // calls "to 9 Sept" cut them off at 05:30 IST on the 9th and most of
+        // the day was missing from its own results. The list renders times in
+        // the browser's zone, so the filter has to work in it too.
+        date_from: dateFrom ? startOfDay(parseISO(dateFrom)).toISOString() : undefined,
+        // The end date is INCLUSIVE here and exclusive in the query, so it is
+        // the start of the next day that gets sent.
+        date_to: dateTo ? startOfDay(addDays(parseISO(dateTo), 1)).toISOString() : undefined,
       }),
     [page, search, campaignId, endReason, dateFrom, dateTo],
   )
@@ -204,25 +213,13 @@ export function Calls() {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="from">From</Label>
-              <Input
-                id="from"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => update({ date_from: e.target.value, page: '1' })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="to">To</Label>
-              <Input
-                id="to"
-                type="date"
-                value={dateTo}
-                onChange={(e) => update({ date_to: e.target.value, page: '1' })}
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dates">Dates</Label>
+            <DateRangeField
+              from={dateFrom}
+              to={dateTo}
+              onChange={(r) => update({ date_from: r.from, date_to: r.to, page: '1' })}
+            />
           </div>
         </div>
 
