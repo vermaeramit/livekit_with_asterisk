@@ -562,6 +562,45 @@ export function Dashboard() {
           </CardBody>
         </Card>
       </div>
+
+      {/* Last, and deliberately plain prose. Response time is three numbers
+          added together and a percentile on top of that, and everyone who has
+          asked about it has asked the same two questions - what is being timed,
+          and why there are two of them. The caveat at the end is the one thing
+          the figures cannot say about themselves. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>What these numbers mean</CardTitle>
+        </CardHeader>
+        <CardBody className="max-w-4xl space-y-3 text-2xs leading-relaxed text-muted-foreground">
+          <p>
+            <strong className="font-medium text-foreground">Response time</strong> is the
+            silence the caller sits through: from the moment they stop speaking to the
+            first sound of the reply. It adds three things — noticing they have finished
+            (which includes transcription), the language model&rsquo;s first token, and the
+            first audio out of the voice provider. It is not how long the reply lasts,
+            and it is measured per turn, not per call.
+          </p>
+          <p>
+            <strong className="font-medium text-foreground">Median</strong> is the middle
+            turn — half were faster than this.{' '}
+            <strong className="font-medium text-foreground">p95</strong> is the 95th:
+            ninety-five turns in a hundred were faster, and five were worse. The median
+            says what the system usually feels like; p95 says when it feels broken. A
+            call runs fifteen or twenty turns, so that worst 5% turns up in most of them
+            — it is the pause where a caller says &ldquo;hello?&rdquo;.
+          </p>
+          <p>
+            <strong className="font-medium text-foreground">
+              Turns that searched the knowledge base read lower than they really were.
+            </strong>{' '}
+            A tool call runs the language model twice — once to decide to search, once to
+            answer — and only the first is timed. The search itself and the second
+            request are not in these figures, so on a campaign that leans on its
+            knowledge base the real wait is longer than what is shown here.
+          </p>
+        </CardBody>
+      </Card>
     </div>
   )
 }
