@@ -12,10 +12,12 @@ it will come back with garbled labels: "Knowlege Bse", "Astersik", numbers that
 drift. This is not a prompt problem and no amount of "make sure the text is
 correct" fixes it.
 
-So the prompts are ordered by how much text they need:
+So the prompts are ordered by how much text they need. Fewer words is not a
+lesser picture — it is usually a better one:
 
 | Prompt | Words in the image | Use it for |
 |---|---|---|
+| **0 — Everything in one** | 0, or 6 | **Start here.** One image for the whole platform |
 | **1 — Call journey** | ~10 | A slide showing how a call flows |
 | **2 — What it does** | ~14 | A capability overview |
 | **3 — Architecture** | ~25 | A technical slide — expect to fix the labels |
@@ -26,11 +28,94 @@ Mermaid diagram at the bottom of this file instead: paste it into
 mermaid.live, or into any Markdown that renders Mermaid, and export the SVG.
 The text will be perfect because it is text, not a picture of text.
 
-A good working method: generate the picture from prompt 1 or 4, and put the
-real words on top of it in PowerPoint or Figma.
+The method that works best: generate a wordless picture from prompt 0, then put
+the real words on top of it in PowerPoint, Figma or Canva. It takes five minutes
+and it is the difference between a slide that looks made and one that looks
+generated.
 
 **Replace the name.** These say "Voice Console". Put the product's real name in
 before generating, or leave the name out entirely and add it yourself.
+
+---
+
+## Prompt 0 — everything in one image
+
+The whole platform as a single picture: the journey a call takes, what the agent
+can do along the way, and the infrastructure underneath it. This is the one to
+use if only one image is wanted.
+
+It carries **no text**, on purpose. That is not a compromise — it is what makes
+the difference between a picture that looks bought and a picture that looks
+generated. The icons carry the meaning, and any words go on top afterwards in
+PowerPoint, Figma or Canva, where they will be spelled correctly and in the
+right font. The labels to use are listed further down this file.
+
+```
+Create one premium, modern technology illustration for a product landing page.
+16:9, highly detailed, flat vector with soft three-dimensional depth.
+
+COMPOSITION — a single sweeping journey from the lower left to the upper right.
+
+At the lower left, a stylised telephone handset outline. A vivid soundwave
+leaves it and flows across the whole frame in a smooth S-curve. The wave passes
+through four floating glass panels, each tilted slightly in three dimensions and
+overlapping the curve. Each panel carries exactly one simple line icon and
+nothing else:
+  - panel 1: a soundwave inside a circle
+  - panel 2: an open book
+  - panel 3: a speech bubble
+  - panel 4: two human figures side by side
+
+As the wave leaves the fourth panel it resolves into a clean rising line chart
+inside a larger frosted dashboard panel at the upper right, with a few small
+bars and one upward line.
+
+Underneath the whole curve, faint and low contrast, a horizontal row of small
+server racks and database cylinders suggests the infrastructure without pulling
+attention. Above the curve, a few small dots connected by thin lines drift like
+a light network.
+
+STYLE — deep indigo and violet gradient background. Frosted glass panels with
+thin white borders and a soft inner glow. A warm coral accent used sparingly,
+only on the soundwave itself. Soft ambient shadows, gentle bloom, generous
+empty space in the upper left. Calm, clean, expensive looking. No photographic
+elements, no stock-illustration people, no cartoon robots.
+
+TEXT — absolutely no text anywhere in the image. No letters, no numbers, no
+labels, no captions, no logo, no watermark. The icons carry the meaning.
+```
+
+### The same image with six words in it
+
+If the labels have to be part of the picture rather than added on top. Six is
+about the limit before spelling starts to fail, so check every word before
+using it.
+
+```
+[ Use the whole prompt above, then replace its final TEXT paragraph with this: ]
+
+TEXT — exactly six words appear in the image, one small clean sans-serif label
+centred beneath each panel, in light grey, all lowercase:
+  - beneath panel 1: "listen"
+  - beneath panel 2: "know"
+  - beneath panel 3: "answer"
+  - beneath panel 4: "handover"
+  - beneath the telephone at the lower left: "call"
+  - beneath the dashboard panel at the upper right: "measure"
+No other text of any kind. No title, no caption, no logo, no watermark. Spell
+each word exactly as written.
+```
+
+### If the first result is not right
+
+These three changes fix most of what comes back wrong, one at a time:
+
+- **Too busy** — remove the drifting network of dots, and the server row.
+- **Too flat** — ask for "stronger depth of field, the front panel in sharp
+  focus and the back panels softly blurred".
+- **Wrong mood** — swap "deep indigo and violet" for "near-black charcoal with
+  a single electric blue accent" for something more serious, or "soft cream and
+  warm sand with a deep teal accent" for something friendlier.
 
 ---
 
