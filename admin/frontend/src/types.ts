@@ -602,6 +602,9 @@ export interface ProviderKeyWritten {
   // Key is genuine, account is empty. Saved, but the client will not get a
   // call answered until they top up.
   no_credits: boolean
+  // Saved, and something it will be asked to do will not work. Shown in
+  // place of the ordinary success toast.
+  warning?: string | null
 }
 
 export interface CampaignTool {

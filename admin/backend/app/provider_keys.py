@@ -35,6 +35,11 @@ class Validation:
     # the save - the key is correct and the balance is a separate problem the
     # client can fix without touching us - but the console must say so, loudly.
     no_credits: bool = False
+    # The key works and something it will be asked to do does not. Same
+    # principle as no_credits and a different sentence each time, so it carries
+    # the text rather than a flag. A save with one of these still succeeds; the
+    # console shows it instead of the ordinary "saved".
+    warning: str | None = None
 
 
 def _status_of(req: urllib.request.Request) -> tuple[int, str]:
@@ -53,6 +58,64 @@ def _status_of(req: urllib.request.Request) -> tuple[int, str]:
         return 0, f"{type(e).__name__}: {e}"
 
 
+def _embed_model() -> str:
+    """The model the knowledge base actually embeds with.
+
+    Read from kb.py rather than written out again here. A check that validates
+    a different model from the one that runs is a check that passes while the
+    thing it guards is broken - which is the exact failure this function exists
+    to catch, so it would be a poor place to reintroduce it.
+    """
+    try:
+        from . import kblib
+        if kblib.available():
+            return kblib.kb().EMBED_MODEL
+    except Exception:
+        pass
+    return "text-embedding-3-small"
+
+
+def _openai_can_embed(key: str) -> Validation | None:
+    """-> a warning if this key cannot embed, or None if it can.
+
+    /v1/models answers 200 for a project-scoped key whose allowed-models list
+    does not include the embedding model. That is not a hypothetical: it is
+    what happened here. Chat kept working, retrieval was dead, and nobody found
+    out for weeks because a separate bug meant retrieval was never attempted.
+
+    So this asks the question that matters - "can this key do the work" rather
+    than "is this key genuine" - by doing one word's worth of it. The cost is a
+    single token, which is the same reason _check_sarvam synthesises one
+    character instead of trusting an endpoint that answers 200 to anything.
+    """
+    model = _embed_model()
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/embeddings",
+        data=json.dumps({"model": model, "input": "ok"}).encode(),
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json"},
+        method="POST")
+    code, body = _status_of(req)
+    if code == 200:
+        return None
+    if code == 429:
+        # Rate limited, not refused. The key can embed; it is busy.
+        return None
+    if code in (403, 404) or "model_not_found" in body:
+        return Validation(
+            True,
+            f"key saved, but this OpenAI project cannot use {model}",
+            warning=(f"The key works for the language model, but this project "
+                     f"is not allowed to use {model}. The knowledge base needs "
+                     f"it: without it every search fails and the agent answers "
+                     f"from its own training instead of your documents. Add it "
+                     f"under Project → Limits → Allowed models."))
+    # Anything else is not a clear answer, and inventing a warning from an
+    # unclear one would train somebody to ignore warnings.
+    log.warning("openai embedding check inconclusive: %s", code)
+    return None
+
+
 def _check_openai(key: str) -> Validation:
     # /v1/models is free and authenticated - a wrong key returns 401. Verified
     # against the live API rather than assumed.
@@ -62,7 +125,8 @@ def _check_openai(key: str) -> Validation:
     )
     code, body = _status_of(req)
     if code == 200:
-        return Validation(True, "key accepted by OpenAI")
+        # Authenticated. Now the question that /v1/models cannot answer.
+        return _openai_can_embed(key) or Validation(True, "key accepted by OpenAI")
     if code in (401, 403):
         return Validation(False, "OpenAI rejected this key")
     if code == 429:

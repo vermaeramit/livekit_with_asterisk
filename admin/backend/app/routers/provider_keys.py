@@ -89,7 +89,8 @@ async def set_client_key(tenant_id: int, provider: str, body: ProviderKeySet,
                        changes={"scope": "client", "hint": hint})
     return ProviderKeyWritten(provider=provider, hint=hint,
                               message=result.message,
-                              no_credits=result.no_credits)
+                              no_credits=result.no_credits,
+                              warning=result.warning)
 
 
 @router.delete("/clients/{tenant_id}/keys/{provider}",
@@ -138,7 +139,8 @@ async def set_campaign_key(campaign_id: int, provider: str, body: ProviderKeySet
                        changes={"scope": "campaign", "hint": hint})
     return ProviderKeyWritten(provider=provider, hint=hint,
                               message=result.message,
-                              no_credits=result.no_credits)
+                              no_credits=result.no_credits,
+                              warning=result.warning)
 
 
 @router.delete("/campaigns/{campaign_id}/keys/{provider}",

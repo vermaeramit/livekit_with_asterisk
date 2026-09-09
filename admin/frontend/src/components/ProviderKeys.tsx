@@ -73,7 +73,15 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
     onSuccess: (r) => {
       refresh()
       close()
-      if (r.no_credits) {
+      // Checked first: a key that cannot do the job is a worse problem than
+      // one that cannot pay for it, and it is the one nothing else will
+      // mention until a caller is on the line.
+      if (r.warning) {
+        toast.error(
+          `${PROVIDERS[r.provider]?.label ?? r.provider} key saved, with a problem`,
+          r.warning,
+        )
+      } else if (r.no_credits) {
         toast.error(
           `${PROVIDERS[r.provider]?.label ?? r.provider} key saved, but the account has no credits`,
           'The key is valid. Calls will fail until the provider account is topped up.',

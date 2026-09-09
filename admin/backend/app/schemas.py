@@ -1373,6 +1373,10 @@ class ProviderKeyWritten(BaseModel):
     # is correct - but the console has to say so, or the first anyone hears of
     # it is a caller being handed to a human.
     no_credits: bool = False
+    # Saved, and something it will be asked to do will not work. Carries
+    # the sentence rather than a flag: each of these needs different
+    # words, and the console shows it in place of the ordinary 'saved'.
+    warning: str | None = None
 
 
 # --- campaign tools ----------------------------------------------------------
