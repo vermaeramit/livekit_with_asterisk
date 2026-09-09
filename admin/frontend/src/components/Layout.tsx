@@ -58,7 +58,7 @@ const NAV: NavItem[] = [
   // Platform economics rather than a tenant's business: a wrong price here
   // misprices every call on the system, not one campaign's.
   { kind: 'link', to: '/rates', label: 'Provider rates', icon: Wallet, needs: ['rates.manage'] },
-  { kind: 'link', to: '/diallers', label: 'Diallers', icon: PhoneForwarded, needs: ['campaign.write'] },
+  { kind: 'link', to: '/diallers', label: 'Dialers', icon: PhoneForwarded, needs: ['campaign.write'] },
   { kind: 'link', to: '/backups', label: 'Backups', icon: Database, needs: ['system.manage'] },
 ]
 

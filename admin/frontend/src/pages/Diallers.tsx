@@ -67,7 +67,7 @@ export function Diallers() {
     onSuccess: () => {
       setDraft(null)
       qc.invalidateQueries({ queryKey: ['diallers'] })
-      toast.success('Dialler saved')
+      toast.success('Dialer saved')
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not save that'),
   })
@@ -76,7 +76,7 @@ export function Diallers() {
     mutationFn: (id: number) => api(`/diallers/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['diallers'] })
-      toast.success('Dialler removed')
+      toast.success('Dialer removed')
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not remove that'),
   })
@@ -84,13 +84,13 @@ export function Diallers() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Diallers"
+        title="Dialers"
         description="Where a campaign's calls go when the agent hands them to a person. Add one here and it works on the next transfer — no server access, no restart."
         actions={
           canEdit ? (
             <Button size="sm" onClick={() => setDraft({ ...BLANK })}>
               <Plus className="h-3.5 w-3.5" />
-              Add a dialler
+              Add a dialer
             </Button>
           ) : undefined
         }
@@ -106,8 +106,8 @@ export function Diallers() {
         ) : !diallers.data?.length ? (
           <EmptyState
             icon={Radio}
-            title="No diallers"
-            hint="Add one with the host, port, username and password from the dialler team. Until then campaigns keep using the transfer target typed on their own page."
+            title="No dialers"
+            hint="Add one with the host, port, username and password from the dialer team. Until then campaigns keep using the transfer target typed on their own page."
           />
         ) : (
           <div className="divide-y divide-border/70">
@@ -183,7 +183,7 @@ export function Diallers() {
       <Dialog
         open={draft !== null}
         onClose={() => setDraft(null)}
-        title={draft?.id ? 'Edit dialler' : 'Add a dialler'}
+        title={draft?.id ? 'Edit dialer' : 'Add a dialer'}
       >
         {draft && (
           <div className="space-y-4">
@@ -193,7 +193,7 @@ export function Diallers() {
                 id="d-name"
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                placeholder="Main office dialler"
+                placeholder="Main office dialer"
               />
             </div>
 
@@ -209,7 +209,7 @@ export function Diallers() {
               <p className="text-2xs leading-relaxed text-muted-foreground">
                 What Asterisk calls this trunk —{' '}
                 <span className="font-mono">IAX2/&lt;peer&gt;/&lt;extension&gt;</span>. Any
-                name you like, as long as no two diallers share one. It is also the
+                name you like, as long as no two dialers share one. It is also the
                 username sent, unless you set a different one below.
               </p>
             </div>
@@ -230,7 +230,7 @@ export function Diallers() {
               <div>
                 <p className="text-xs font-medium">Connection</p>
                 <p className="mt-0.5 text-2xs leading-relaxed text-muted-foreground">
-                  From the dialler team. Saved here, it takes effect on the next
+                  From the dialer team. Saved here, it takes effect on the next
                   transfer — no restart, and nothing to change on the server.
                 </p>
               </div>
@@ -295,7 +295,7 @@ export function Diallers() {
               {draft.host && !draft.secret && !draft.hadSecret ? (
                 <p className="text-2xs leading-relaxed text-amber-600 dark:text-amber-500">
                   A host with no password builds a trunk that cannot log in. That
-                  looks like the dialler being down, not like a missing field.
+                  looks like the dialer being down, not like a missing field.
                 </p>
               ) : null}
 
@@ -312,7 +312,7 @@ export function Diallers() {
               label="Active"
               checked={draft.active}
               onChange={(v) => setDraft({ ...draft, active: v })}
-              hint="Turning this off stops transfers to it immediately — including for campaigns already pointed at it, which then fall through to the no-route message. Use it to take a dialler out of service without editing every campaign."
+              hint="Turning this off stops transfers to it immediately — including for campaigns already pointed at it, which then fall through to the no-route message. Use it to take a dialer out of service without editing every campaign."
             />
 
             <div className="flex justify-end gap-2">

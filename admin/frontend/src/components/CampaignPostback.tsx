@@ -46,7 +46,7 @@ function FieldList({
 
       {fields.length === 0 ? (
         <p className="text-2xs leading-relaxed text-muted-foreground">
-          Nothing set — only the facts are sent (identifiers, duration, outcome, what the dialler
+          Nothing set — only the facts are sent (identifiers, duration, outcome, what the dialer
           gave us). Nothing is read out of the conversation.
         </p>
       ) : (
@@ -212,7 +212,7 @@ export function CampaignPostback({
             onChange={(v) => set('postback_full_payload', v)}
             hint={
               value.postback_full_payload
-                ? 'On: the fields arrive under "extracted", alongside "call" (duration, outcome, recording id), "dialer" (whatever your dialler sent) and "tools" (what your own APIs answered).'
+                ? 'On: the fields arrive under "extracted", alongside "call" (duration, outcome, recording id), "dialer" (whatever your dialer sent) and "tools" (what your own APIs answered).'
                 : 'Off: the payload is just the fields above, flat, and nothing else — { "payment_mode": "cash", "pincode": "122015" }. Note there is then no id in it, so the receiving end cannot tie the record back to a call.'
             }
           />

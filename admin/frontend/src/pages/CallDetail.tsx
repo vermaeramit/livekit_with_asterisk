@@ -299,7 +299,7 @@ const DIALLER_FIELDS: Record<string, { label: string; toModel: boolean }> = {
   'dialer.calltype': { label: 'Call type', toModel: true },
   'dialer.lead_id': { label: 'Lead ID', toModel: false },
   'dialer.sr_id': { label: 'Service request', toModel: false },
-  'dialer.call_unique': { label: 'Dialler call ID', toModel: false },
+  'dialer.call_unique': { label: 'Dialer call ID', toModel: false },
   'dialer.language': { label: 'Language requested', toModel: false },
 }
 
@@ -332,7 +332,7 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
       <CardHeader className="flex items-center justify-between">
         <CardTitle className="flex items-center gap-1.5">
           <PhoneIncoming className="h-3.5 w-3.5 text-muted-foreground" />
-          From the dialler
+          From the dialer
         </CardTitle>
         <span className="text-2xs text-muted-foreground">
           {rows.length} field{rows.length === 1 ? '' : 's'}
@@ -354,7 +354,7 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
               {r.isNew && (
                 <span
                   className="rounded bg-warning/10 px-1 py-px font-mono text-2xs font-medium text-warning"
-                  title="The dialler is sending this and nothing here has been told what it means. Stored, but not given to the model."
+                  title="The dialer is sending this and nothing here has been told what it means. Stored, but not given to the model."
                 >
                   {r.key.replace(/^dialer\./, '')}
                 </span>
@@ -364,7 +364,7 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
           </div>
         ))}
         <p className="pt-1 text-2xs leading-relaxed text-muted-foreground">
-          Everything the dialler sent is stored and shown here. Only the three marked{' '}
+          Everything the dialer sent is stored and shown here. Only the three marked{' '}
           <span className="font-medium text-primary">in prompt</span> reach the model — a model
           given a lead ID will eventually read it out to the caller, so new fields are recorded
           and withheld until someone decides otherwise.

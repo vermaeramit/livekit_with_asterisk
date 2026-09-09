@@ -539,13 +539,13 @@ export function CampaignConfig() {
               hint="Spoken the moment the call connects. Leave empty to let the caller speak first."
             />
             <Note>
-              The dialler sends who is calling and what they own. Use{' '}
+              The dialer sends who is calling and what they own. Use{' '}
               <code>{'{{cus_name}}'}</code>, <code>{'{{modalname}}'}</code> or{' '}
               <code>{'{{calltype}}'}</code> instead of typing one caller's details
               in — a hardcoded name is correct for exactly one person.
               <br />
               <strong>Give each one a fallback</strong> after a pipe:{' '}
-              <code>{'{{cus_name|आप}}'}</code>. The dialler does not always send
+              <code>{'{{cus_name|आप}}'}</code>. The dialer does not always send
               every field, and without a fallback the sentence is spoken with a
               gap in it — “क्या मेरी बात जी से हो रही है?”
             </Note>
@@ -1070,7 +1070,7 @@ export function CampaignConfig() {
                       { value: 'human', label: 'Hand the call to a person' },
                       { value: 'hangup', label: 'Say goodbye and hang up' },
                     ]}
-                    hint="An outbound dialler cannot see that this campaign is full and will keep sending calls, so this is the only thing stopping a queue from growing."
+                    hint="An outbound dialer cannot see that this campaign is full and will keep sending calls, so this is the only thing stopping a queue from growing."
                   />
 
                   {value.queue_timeout_action === 'hangup' && (
@@ -1156,7 +1156,7 @@ export function CampaignConfig() {
               />
 
               <SelectField
-                label="Dialler"
+                label="Dialer"
                 value={value.transfer_dialler_id ? String(value.transfer_dialler_id) : ''}
                 onChange={(v) => set('transfer_dialler_id', v ? Number(v) : null)}
                 options={[
@@ -1171,7 +1171,7 @@ export function CampaignConfig() {
                       label: d.active ? d.name : `${d.name} (inactive)`,
                     })),
                 ]}
-                hint="Which dialler takes this campaign's transfers. Diallers are set up on the Diallers page."
+                hint="Which dialer takes this campaign's transfers. Dialers are set up on the Dialers page."
               />
 
               {value.transfer_dialler_id ? (
@@ -1181,7 +1181,7 @@ export function CampaignConfig() {
                   onChange={(v) => set('transfer_extension', v.trim() || null)}
                   placeholder="5000"
                   className="font-mono"
-                  hint="The extension to ring on that dialler. Two campaigns may use the same number on different diallers — which dialler is what this campaign's setting decides."
+                  hint="The extension to ring on that dialer. Two campaigns may use the same number on different dialers — which dialer is what this campaign's setting decides."
                 />
               ) : (
                 <TextField

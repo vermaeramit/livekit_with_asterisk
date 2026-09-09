@@ -188,7 +188,7 @@ export function CampaignChat({ campaignId }: { campaignId: number }) {
                   <p className="mt-0.5 text-2xs text-muted-foreground">
                     the campaign&rsquo;s greeting — a real call fills{' '}
                     <span className="font-mono">{'{{placeholders}}'}</span> from the
-                    dialler, and there is no dialler here
+                    dialer, and there is no dialer here
                   </p>
                 )}
                 {m.tokens && (
