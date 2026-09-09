@@ -193,7 +193,7 @@ export function Diallers() {
                 id="d-name"
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                placeholder="Hero MotoCorp dialler"
+                placeholder="Main office dialler"
               />
             </div>
 

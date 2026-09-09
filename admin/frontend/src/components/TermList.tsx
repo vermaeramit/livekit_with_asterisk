@@ -108,7 +108,7 @@ export function TermList({
               add()
             }
           }}
-          placeholder="Splendor Plus, Passion Pro, HF Deluxe"
+          placeholder="product names, plan names, place names"
           maxLength={2000}
         />
         <Button

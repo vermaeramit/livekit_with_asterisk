@@ -66,10 +66,11 @@ export function KnowledgeSearch({ campaignId }: { campaignId: number }) {
       <div>
         <p className="text-2xs leading-relaxed text-muted-foreground">
           The agent&rsquo;s own search, with its own thresholds — what you see here is
-          what a call gets. <strong className="font-medium">Ask in English</strong>,
-          the way the agent&rsquo;s tool does: on this corpus an English query scores
-          0.44&ndash;0.48 where the same question in Devanagari scores 0.13&ndash;0.20
-          and ranks the wrong passage.
+          what a call gets.{' '}
+          <strong className="font-medium">Ask in the language the documents are
+          written in</strong>, the way the agent&rsquo;s tool does. A question typed
+          in another script scores far lower against the same passage and tends to
+          rank the wrong one, which is why the agent translates before it searches.
         </p>
       </div>
 
@@ -80,7 +81,7 @@ export function KnowledgeSearch({ campaignId }: { campaignId: number }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && query.trim()) run.mutate()
           }}
-          placeholder="Splendor Plus i3s idle start stop"
+          placeholder="cancellation policy refund"
           maxLength={400}
         />
         <Button onClick={() => run.mutate()} disabled={!query.trim() || run.isPending}>

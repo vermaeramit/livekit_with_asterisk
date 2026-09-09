@@ -252,7 +252,7 @@ export function KnowledgeGaps() {
                 id="gap-note"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Uploaded the Splendor Flex brochure"
+                placeholder="Uploaded the new price list"
                 autoFocus
               />
               <p className="text-2xs leading-relaxed text-muted-foreground">
