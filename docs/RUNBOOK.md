@@ -471,6 +471,47 @@ answer about i3s that came out of GPT-4.1-mini rather than out of the customer's
 documents. It was correct by luck — the same KB has i3s under two other models, and a
 search could as easily have produced the wrong one.
 
+### Is retrieval actually working?
+
+**Configure → Knowledge → Try a search.** It runs the agent's own `kb.search`, so
+what it shows is what a call gets - with `min_score` dropped to 0 and `top_k` raised
+to 10, because "nothing found" and "found it at 0.19 against a threshold of 0.20"
+need different answers and only one of them is a knowledge-base problem.
+
+Read the badge on each row:
+
+| badge | leg | means |
+|---|---|---|
+| `meaning` | `vec` | the embedding matched — normal |
+| `words` | `lex` | trigram matching inside Postgres, which needs no provider |
+
+**All `words` and no `meaning` is the tell.** Trigrams keep working when the
+embedder is dead, so retrieval degrades instead of failing and the answers simply
+get worse. The panel says so outright; before it existed this was invisible for
+weeks while chat kept answering fluently from the model's own training.
+
+If the query cannot be embedded at all, the panel shows the provider's error and
+says calls are answering the same degraded way. That failure also writes one
+`call_errors` row per call, which the existing provider-error alert counts.
+
+```bash
+# the same lexical leg from the server, with no provider involved at all
+docker exec -i admin-api python - <<'EOF'
+import asyncio, sys
+sys.path.insert(0, "/app/kblib")
+import kb
+async def main():
+    for h in await kb._lexical_only("cancellation policy refund", "default", 3, 0.20):
+        print(round(h["score"], 3), h["src"], "|", (h.get("heading") or "")[:50])
+asyncio.run(main())
+EOF
+```
+
+> ⚠️ **A key OpenAI accepts is not a key that can embed.** A project-scoped key
+> answers 200 to `/v1/models` while its allowed-models list omits the embedding
+> model. Saving a key in the console now tests this and warns — but a key changed
+> in the OpenAI dashboard rather than here is never re-checked.
+
 ### Per-campaign call limit
 
 How many calls a campaign runs at once, and what the rest hear while they wait.

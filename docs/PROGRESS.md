@@ -4235,6 +4235,100 @@ means `Answer()`, and the dialler's CDR will count a queued call as connected.
 
 ---
 
+## Four things one dead embedder taught us (9 Sep 2026)
+
+A project key that could not use `text-embedding-3-small` had broken retrieval
+for weeks, and nothing anywhere said so. Fixing the key was ten minutes. These
+are the four things that let it hide, each fixed on its own.
+
+### 1. The lexical leg was dying with the vector one
+
+`kb.search` is hybrid, and the trigram half needs no provider at all - it runs
+entirely inside Postgres. But the embed call came first, so its failure took
+down the half that would have worked. Every search returned "the knowledge base
+is unavailable" while the documents sat there, matchable.
+
+Now an embedding failure falls back to lexical alone. **Degraded, and never
+quietly** - lexical misses anything phrased differently from the document, which
+is most of what a caller says. It says so in the log, it writes a `call_errors`
+row so the existing alert rule counts it, and the chat path logs it.
+
+The row is written at the end of the call with everything else. An insert in the
+middle of a turn is latency the caller pays for, and this call is already
+degraded. First failure wins: the rest are the same fault repeating, and a
+hundred identical rows would drown the alert rather than sharpen it.
+
+Verified by calling `_lexical_only` directly against the live database - 3 hits
+at 0.567, higher than the vector scores, because that query was literal English
+keywords and that is exactly when trigrams win. Failure-path code that has never
+run is failure-path code that does not work.
+
+### 2. The key check asked the wrong question
+
+`pk.validate` called `/v1/models`, which a restricted project key answers **200**
+to. The check asked "is this key genuine", which was never the question.
+
+It embeds one word now. The cost is a single token, and the reasoning was
+already written in the same file beside `_check_sarvam`, which synthesises one
+character rather than trusting an endpoint that answers 200 to anything - it had
+simply never been applied to OpenAI.
+
+The model name is read from `kb.py`, not repeated. A check that validates a
+different model from the one that runs is a check that passes while the thing it
+guards is broken, which would be a poor bug to reintroduce here of all places.
+
+The save still succeeds - the key is valid for the LLM - and returns a warning
+instead. The console shows it ahead of `no_credits`: a key that cannot do the job
+is worse than one that cannot pay for it, and nothing else will mention it until
+a caller is on the line.
+
+### 3. A voice nobody had chosen
+
+Found while checking why a Preview button was disabled. The `default` campaign
+stored no `tts_voice` at all, and every call was using **Priya** - a name in
+`voice_agent.py`, not a setting. The console showed an empty box.
+
+The comment beside that line already said what this costs: Soniox withdrew
+Meera, Maya, Noah, Jack, Claire, Sofia and Elise in one version change, and a
+voice the model does not have fails at construction. The campaign goes silent
+mid-call on a date nothing here would have warned about. The knowledge existed;
+it was not anywhere somebody would meet it in time.
+
+The names moved to `agent/tts_defaults.py`, which imports nothing so the console
+can read it - `voice_agent` pulls in livekit, which is not installed there. The
+agent reads what the console reads, so the console cannot name a voice the agent
+stopped using.
+
+**And a second finding from reading that function**: an OpenAI campaign is never
+sent a voice at all. The field is filled in, looks obeyed, and does nothing.
+
+### 4. There was no way to ask the knowledge base anything
+
+The root cause of the delay. Whether retrieval worked could only be inferred
+from asking the bot a question and judging the answer - and a model that knows
+the subject generally will answer fluently, confidently and without sources.
+
+**Configure → Knowledge → Try a search** runs the agent's own `kb.search`, with
+two deliberate differences: `min_score` 0, so a near miss can be told apart from
+nothing at all, and `top_k` 10, because the question here is what is in there
+rather than what the agent would say. Every row says which leg matched, so a
+result set that is all words and no meaning names the dead embedder outright.
+
+### The placeholders were one client's motorcycles
+
+Raised on review: four placeholders named Hero models and a fifth suggested
+"Hero MotoCorp dialler". This is a product with several clients - those read as
+somebody else's system to whoever logs in next. Replaced with the shape of the
+answer rather than an example from one knowledge base.
+
+The search panel's help text went the same way: it quoted 0.44-0.48 against
+0.13-0.20, which is a real measurement on one corpus and not a general fact.
+Code comments and this file keep the real names - they record what happened, and
+"Splendor Plus Flex reached the knowledge base as Lender Plus Flex" is only
+useful with the words that broke.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
