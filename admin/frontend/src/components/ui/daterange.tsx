@@ -179,21 +179,21 @@ export function DateRangeField({
               // The library ships 44px day cells, which is a touch target for
               // a phone. This is a filter on a desk, beside three other
               // controls, and at that size two months filled half the screen.
-              '--rdp-day-width': '1.75rem',
-              '--rdp-day-height': '1.75rem',
-              '--rdp-day_button-width': '1.75rem',
-              '--rdp-day_button-height': '1.75rem',
+              '--rdp-day-width': '1.5rem',
+              '--rdp-day-height': '1.5rem',
+              '--rdp-day_button-width': '1.5rem',
+              '--rdp-day_button-height': '1.5rem',
               '--rdp-day_button-border-radius': '0.3rem',
               '--rdp-day_button-border': '1px solid transparent',
               '--rdp-selected-border': '1px solid var(--rdp-accent-color)',
-              '--rdp-months-gap': '1rem',
-              '--rdp-nav_button-width': '1.5rem',
-              '--rdp-nav_button-height': '1.5rem',
-              '--rdp-nav-height': '1.75rem',
+              '--rdp-months-gap': '0.75rem',
+              '--rdp-nav_button-width': '1.25rem',
+              '--rdp-nav_button-height': '1.25rem',
+              '--rdp-nav-height': '1.5rem',
             } as React.CSSProperties
           }
         >
-          <div className="flex w-28 shrink-0 flex-col gap-0.5 border-r border-border/70 bg-muted/30 p-1.5">
+          <div className="flex w-24 shrink-0 flex-col gap-px border-r border-border/70 bg-muted/30 p-1.5">
             {PRESETS.map((p) => (
               <button
                 key={p.label}
@@ -213,7 +213,7 @@ export function DateRangeField({
             </button>
           </div>
 
-          <div className="p-2.5">
+          <div className="p-2">
             <DayPicker
               mode="range"
               numberOfMonths={2}
@@ -231,12 +231,12 @@ export function DateRangeField({
                 '[&_.rdp-month_caption]:text-xs [&_.rdp-caption_label]:font-medium',
               )}
             />
-            <div className="mt-1 flex items-center justify-between gap-3 border-t border-border/70 px-0.5 pt-2">
+            <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-border/70 px-0.5 pt-1.5">
               <span className="text-2xs text-muted-foreground">
                 {draft?.from
                   ? draft.to
                     ? `${format(draft.from, 'd MMM')} – ${format(draft.to, 'd MMM yyyy')}`
-                    : 'Pick the last day, or apply for everything since this one'
+                    : `${format(draft.from, 'd MMM')} – pick the last day`
                   : 'Pick the first day'}
               </span>
               <div className="flex gap-2">
