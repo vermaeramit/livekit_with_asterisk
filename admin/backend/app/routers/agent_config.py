@@ -64,6 +64,25 @@ _MARKER_LIKE = re.compile(r"\[[A-Za-z_][A-Za-z0-9_]{1,14}\]")
 _MARKER_MIN_USES = 3
 
 
+def _tts_defaults():
+    """The agent's own fallback names, read rather than copied.
+
+    A console that names a voice the agent stopped using is worse than one that
+    says nothing - so this reads the module the agent reads, and falls back to
+    an object that says nothing if the mount is not there.
+    """
+    try:
+        if kblib.available():
+            return kblib.agent_module("tts_defaults")
+    except Exception:
+        log.exception("could not read the agent's TTS defaults")
+
+    class _Unknown:
+        SONIOX_VOICE = "its built-in voice"
+        SONIOX_MODEL = "its built-in model"
+    return _Unknown()
+
+
 def _warnings(cfg: dict) -> list[str]:
     """Things that are wrong but not invalid, so a save is never blocked.
 
@@ -93,6 +112,32 @@ def _warnings(cfg: dict) -> list[str]:
         out.append(
             f"{label} is {marker}, but the prompt never writes it, so it will "
             f"never fire.{suggestion}")
+
+    # A voice that is not stored anywhere is not "the provider's default" -
+    # it is a name written in the agent's code, and Soniox has withdrawn seven
+    # of them in one version change before. The console shows an empty box and
+    # nothing else says which voice is really speaking.
+    provider = cfg.get("tts_provider")
+    if provider == "soniox":
+        d = _tts_defaults()
+        if not (cfg.get("tts_voice") or "").strip():
+            out.append(
+                f"No voice is chosen, so calls use {d.SONIOX_VOICE} — a "
+                f"fallback in the agent, not a setting. Soniox has withdrawn "
+                f"voices before, and one that is gone fails mid-call. Choose "
+                f"one on the Voice tab.")
+        if not (cfg.get("tts_model") or "").strip():
+            out.append(
+                f"No voice model is chosen, so calls use {d.SONIOX_MODEL} — a "
+                f"fallback in the agent, not a setting.")
+    elif provider == "openai" and (cfg.get("tts_voice") or "").strip():
+        # Worth saying even though nothing is broken: the field is filled in,
+        # looks obeyed, and is not sent. Somebody choosing a voice here and
+        # hearing a different one has no way to find out why.
+        out.append(
+            "The voice is not used on OpenAI — the agent does not send one, so "
+            "the plugin's own default speaks. The field applies to Soniox and "
+            "Sarvam.")
 
     # A concurrency limit with nothing to play. The caller who hits it hears
     # silence and is then handed off, which reads as a dropped call - and the

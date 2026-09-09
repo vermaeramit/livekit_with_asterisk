@@ -40,6 +40,7 @@ import greeting_cache
 import hours
 import prompt as prompt_mod
 import tools as tools_mod
+import tts_defaults
 
 # NOTE: livekit.agents.inference.TurnDetector is the newer API, but its signature
 # (base_url/api_key/conn_options) shows it can call a remote gateway. Turn
@@ -136,7 +137,8 @@ def _stt_kwargs(cfg):
 
 
 def _tts_kwargs(cfg):
-    kw = {"target_language_code": cfg.language, "model": cfg.tts_model or "bulbul:v3"}
+    kw = {"target_language_code": cfg.language,
+          "model": cfg.tts_model or tts_defaults.SARVAM_MODEL}
     voice = os.getenv("SARVAM_TTS_VOICE") or cfg.tts_voice
     if voice:
         kw["speaker"] = voice
@@ -980,7 +982,8 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
             kw["model"], kw["speaker"] = "bulbul:v3", "shubh"
         return sarvam.TTS(**kw, api_key=key)
     if provider == "openai":
-        model = (cfg.tts_model if use_config_model else None) or "gpt-4o-mini-tts"
+        model = ((cfg.tts_model if use_config_model else None)
+                 or tts_defaults.OPENAI_MODEL)
         return openai.TTS(model=model, api_key=key)
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
@@ -998,9 +1001,11 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
         # reads the list from Soniox per model rather than holding its own copy.
         return soniox.TTS(
             api_key=key,
-            model=(cfg.tts_model if use_config_model else None) or "tts-rt-v2",
+            model=((cfg.tts_model if use_config_model else None)
+                   or tts_defaults.SONIOX_MODEL),
             language=_soniox_lang(cfg.language),
-            voice=(cfg.tts_voice if use_config_model else None) or "Priya",
+            voice=((cfg.tts_voice if use_config_model else None)
+                   or tts_defaults.SONIOX_VOICE),
             sample_rate=_TTS_NATIVE_RATE["soniox"],
         )
     raise ValueError(f"unknown TTS provider '{provider}'")
