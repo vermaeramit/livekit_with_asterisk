@@ -1,3 +1,4 @@
+
 # Everyday commands
 
 The short list. Everything here is something that gets typed on a normal day —
@@ -58,6 +59,22 @@ Changing something in the **console** needs no restart at all. Config is read at
 the start of every call.
 
 ---
+
+## Who is holding a call slot
+
+Live, while calls are happening. The slot count is what a campaign's concurrency
+limit counts - a call in the queue is NOT in here, which is the point: it has not
+reached the agent, so it is costing nothing in STT, TTS or LLM.
+
+```bash
+watch -n1 'echo "--- slots ---"; asterisk -rx "group show channels"; echo "--- channels ---"; asterisk -rx "core show channels concise" | cut -d! -f1,5'
+
+# what the dialplan reads for an extension
+asterisk -rx 'dialplan eval function ODBC_QUEUECFG(700)'
+```
+
+More channels than slots means calls are waiting. Equal numbers mean nobody is.
+See [RUNBOOK.md](RUNBOOK.md) for what the answer's fields mean.
 
 ## Is everything up?
 

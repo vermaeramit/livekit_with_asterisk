@@ -471,6 +471,74 @@ answer about i3s that came out of GPT-4.1-mini rather than out of the customer's
 documents. It was correct by luck — the same KB has i3s under two other models, and a
 search could as easily have produced the wrong one.
 
+### Per-campaign call limit
+
+How many calls a campaign runs at once, and what the rest hear while they wait.
+Set in the console under **Configure → Limits → Concurrent calls**. Empty means
+unlimited, which is what every campaign is until somebody sets one.
+
+The wait happens in the DIALPLAN, before the Dial to LiveKit. A held call has no
+room, no agent job, no STT stream and no LLM request behind it - it is a channel
+and a file being read off disk. That is the whole reason it is there and not in
+the agent: on the other side of the Dial, every held caller would be paying for
+three providers to sit in silence, at the moment the system is already full.
+
+```bash
+# what the dialplan will read for an extension
+asterisk -rx 'dialplan eval function ODBC_QUEUECFG(700)'
+#   1^5^/opt/aivoice/cache/hold/83d5..^10^90^human^
+#   campaign^limit^audio^gap^maxwait^action^goodbye
+#   an empty limit is unlimited; an empty ANSWER is also unlimited
+
+# who is holding a slot right now
+asterisk -rx "group show channels"
+
+# the same, from the database side
+docker exec -i postgres psql -U aivoice -d aivoice -c "SELECT did, cfg FROM queue_routes ORDER BY did;"
+
+# the decisions, live
+journalctl -t asterisk -f | grep -- "-->"
+```
+
+> ⚠️ **A limit of 1 is a test setting.** It is the quickest way to prove the
+> queue works and the easiest thing to leave behind: every second concurrent
+> call then waits. Put it back before walking away.
+
+**It fails open, in three places** - no row for the DID, an empty limit, or an
+unreachable database all send the call straight to the agent. A limit is a cost
+control, not a fuse that stops every call, and a lookup that cannot answer must
+never be able to take the whole campaign down.
+
+**It is not a FIFO.** Whoever tests the count in the second a slot frees takes
+it, so a caller who has waited two minutes can be passed by one who has waited
+five seconds. Real ordering, and "you are third in line", are what `app_queue`
+is for - considered, and deliberately left.
+
+**The message length is the granularity.** `Playback()` cannot be interrupted,
+so a slot freeing one second into a seven-second message is taken six seconds
+later. During the gap the count is checked every second. Shorter message,
+shorter tail.
+
+**A limit of 5 can briefly hold 6.** Two calls arriving in the same instant can
+both pass the test before either joins the group. Accepted deliberately: the
+alternative is join-then-verify-then-leave, and if leaving a group does not
+behave the way it reads, every waiting call counts itself and nothing ever gets
+in again. A cost control may overshoot by one; it may not deadlock.
+
+The audio is rendered once, when the message is saved, into
+`/opt/aivoice/cache/hold/` - named by a hash of the text AND the voice, so
+changing either produces a different file and the old one is never asked for.
+`.sln` is 8 kHz raw PCM, which is what the trunk carries. Nothing is resampled.
+
+```bash
+ls -la /opt/aivoice/cache/hold/     # ~16 KB per second of speech at 8 kHz
+```
+
+To change what the dialplan reads, edit the view in a migration - **not**
+`func_odbc.conf`. That was the point of putting the field list in migration 047:
+Asterisk's config is hand-edited on a box carrying calls, and the repo's copy has
+already drifted behind the running one.
+
 ### KB settings
 
 ```sql

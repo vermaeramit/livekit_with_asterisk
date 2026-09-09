@@ -4126,6 +4126,115 @@ is what let this call look fine.
 
 ---
 
+## Waiting, without paying for it (9 Sep 2026)
+
+Asked for: a per-campaign limit on concurrent calls, a message on a loop for
+everyone over it, and connection the moment a slot frees. Then, sharpening it:
+*"jb tak yha connect na ho hmari stt tts llm cost na aaye"* - nothing should be
+spent until the caller is actually talking to the agent.
+
+That sentence decided the architecture. **The wait is in the dialplan, before
+the Dial to LiveKit.** A held call has no room, no agent job, no STT stream and
+no LLM request behind it; it is a channel and a file being read off disk. Put
+the wait on the other side of the Dial - in the agent, where it would have been
+easier - and every held caller is paying three providers to sit in silence, at
+the exact moment the system is already full. The cheap-looking option was the
+expensive one.
+
+### Nothing is resampled, because nothing has to be
+
+The first plan was ffmpeg in the admin image, or a resampling library. Both were
+wrong. Asterisk reads raw signed 16-bit PCM from a file whose extension names
+the rate - `.sln` at 8 kHz, `.sln16`, `.sln24` - and all three providers can be
+asked for exactly that. Soniox takes `audio_format=pcm_s16le` with an explicit
+`sample_rate`, so it is asked for 8 kHz, which is what the trunk carries anyway.
+
+That was not remembered, it was read: the answer was in the livekit plugin
+already installed on the server. Same move as §"Reading the plugin rather than
+remembering the API", and it turned a dependency decision into a parameter.
+
+The extension is chosen from the rate that came BACK, not the one requested. A
+provider quietly ignoring a sample-rate parameter would otherwise write a file
+named 8 kHz and playing at 24 - a chipmunk on a loop, with no error anywhere.
+For the same reason the bytes decide whether there is a RIFF header, rather than
+a per-provider assumption.
+
+### Two paths for one directory
+
+admin-api is in Docker and writes `/data/hold`. Asterisk is native and reads
+`/opt/aivoice/cache/hold`. The database stores **Asterisk's**. Neither is derived
+from the other, because they are two filesystems' names for one directory and
+guessing one from the other is a file that renders perfectly and never plays.
+
+The directory has to exist with the right owner BEFORE the container starts.
+Left to Docker it is created as root, and the write fails with nothing saying
+why.
+
+### What the existing code had already decided
+
+Three things were found rather than designed, and following them was better than
+improving on them:
+
+- `greeting_cache` already names its file after the text AND the voice, so an
+  edit produces a different name and there is nothing to clear. Copied exactly.
+- `func_odbc.conf` already had a live `[TRANSFER]` entry joining columns with
+  `^` and escaping with `SQL_ESC`. The new `[QUEUECFG]` looks the same because
+  it should.
+- `transfer_routes` was already a VIEW, and migration 033 says why: it is the
+  entire surface `asterisk_ro` can reach. `queue_routes` is the same idea.
+- `setup-transfer-routing.sh` already backed up with a timestamp, replaced its
+  block rather than stacking it, and asserted its anchor appeared exactly once
+  before writing anything. `setup-queue-limit.sh` is that script's shape.
+
+One deliberate difference: `transfer_routes` returns columns and lets
+func_odbc.conf join them; `queue_routes` joins them itself. That file is
+hand-edited on a box carrying live calls and the repo's copy has already drifted
+behind the running one - so the field list lives in a migration, and Asterisk's
+config is touched once for this feature and then not again.
+
+### Three things it does not do, all on purpose
+
+**It is not a FIFO.** Whoever tests the count in the second a slot frees takes
+it. A caller who has waited two minutes can be passed by one who has waited
+five. Real ordering is what `app_queue` is for; that was put to the user and
+deliberately left for later.
+
+**A limit of 5 can briefly hold 6.** Two calls arriving in the same instant can
+both pass the test before either joins the group. The fix would be
+join-then-verify-then-leave - and if leaving a group does not behave the way it
+reads, every waiting call counts itself and nothing ever gets in again. A cost
+control may overshoot by one. It may not deadlock.
+
+**The message length is the granularity.** An earlier promise in this
+conversation - "poll faster the longer somebody has waited" - turned out to be
+worthless once written: `Playback()` cannot be interrupted, so the cycle is the
+message plus the gap no matter how often the intention is to check. What
+replaced it is checking every second THROUGH the gap, which is a real
+improvement, and saying plainly that a slot freeing one second into a
+seven-second message is taken six seconds later.
+
+### Fails open, in three places
+
+No row for the DID, an empty limit, or an unreachable database all send the call
+straight to the agent. The ODBC pool has one connection, shared with the
+`iax_peers` realtime lookups, and every inbound call now does a query on it. A
+limit is a cost control; it must not be able to become the thing that stops
+every call.
+
+### The dialler cannot see any of this
+
+On an outbound campaign the dialler has no idea the bot is full and keeps
+sending calls, so the only brake is the maximum wait and what happens after it.
+That is why the wait defaults short, and why it is per campaign: an inbound
+caller chose to ring and will hold; somebody who just answered their phone will
+not.
+
+The answered-call consequence was raised twice and accepted: playing anything
+means `Answer()`, and the dialler's CDR will count a queued call as connected.
+`Progress()` and early media would avoid that and were offered.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
