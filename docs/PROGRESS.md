@@ -4329,6 +4329,56 @@ useful with the words that broke.
 
 ---
 
+## One date control, and two silent failures (9 Sep 2026)
+
+The calls list had two boxes wanting `yyyy-mm-dd` typed into them twice.
+Replaced with one control: presets down the left, two months, the range on the
+button.
+
+`react-day-picker` rather than the jQuery picker that was suggested. That one
+needs jQuery and Moment - neither of which this app has, Moment is in
+maintenance mode - and it is imperative DOM code inside React, which is where
+"the calendar says one date and the table shows another" comes from. This one
+uses date-fns, already installed, and themes off the console's own CSS
+variables.
+
+### The filter was hiding the day you asked for
+
+`new Date('2026-09-09').toISOString()` is UTC midnight, and the API filters
+`started_at < date_to`. So "to 9 Sept" cut the results off at 05:30 IST on the
+9th, and most of that day was missing from its own results. The list renders
+times in the browser's zone, so the filter works in local days now, and the end
+date is inclusive - it is the start of the next day that gets sent.
+
+Nobody had reported this. Two text boxes nobody enjoyed using are two text boxes
+whose answers nobody checked.
+
+### Three rounds of "make it smaller" that changed nothing
+
+Worth writing down, because both failures were silent and both looked like
+taste.
+
+**The CSS variables were on the wrong element.** react-day-picker declares every
+`--rdp-*` on `.rdp-root` itself, and a custom property declared on an element
+beats one inherited from its parent. Setting them on the popover did nothing at
+all: the cells stayed at the shipped 44px while the font-size shrank, because
+the font-size was a class and everything else was a variable. They belong on
+DayPicker's own `style` prop.
+
+**Tailwind turns underscores in an arbitrary variant into spaces.**
+`[&_.rdp-day_button]:font-normal` compiles to `& .rdp-day button` - matching
+nothing, reporting nothing. Same for `.rdp-month_caption` and
+`.rdp-caption_label`. `.rdp-weekday` has no underscore and was the only rule
+that ever applied, which is why the weekday row was small and grey while
+everything around it stayed large. Those overrides live in a plain stylesheet
+now, where the class names can be written as they are.
+
+With both fixed, the actual problem was visible in one line of the library's
+CSS: `font-size: large; font-weight: bold` on the month caption **and on every
+selected day**. The numbers inside a chosen range were never going to shrink.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
