@@ -176,22 +176,30 @@ export function DateRangeField({
               '--rdp-accent-background-color': 'hsl(var(--primary) / 0.12)',
               '--rdp-range_middle-background-color': 'hsl(var(--primary) / 0.12)',
               '--rdp-today-color': 'hsl(var(--primary))',
-              '--rdp-day-width': '2.25rem',
-              '--rdp-day-height': '2.25rem',
-              '--rdp-day_button-width': '2.25rem',
-              '--rdp-day_button-height': '2.25rem',
-              '--rdp-day_button-border-radius': '0.375rem',
-              '--rdp-months-gap': '1.25rem',
+              // The library ships 44px day cells, which is a touch target for
+              // a phone. This is a filter on a desk, beside three other
+              // controls, and at that size two months filled half the screen.
+              '--rdp-day-width': '1.75rem',
+              '--rdp-day-height': '1.75rem',
+              '--rdp-day_button-width': '1.75rem',
+              '--rdp-day_button-height': '1.75rem',
+              '--rdp-day_button-border-radius': '0.3rem',
+              '--rdp-day_button-border': '1px solid transparent',
+              '--rdp-selected-border': '1px solid var(--rdp-accent-color)',
+              '--rdp-months-gap': '1rem',
+              '--rdp-nav_button-width': '1.5rem',
+              '--rdp-nav_button-height': '1.5rem',
+              '--rdp-nav-height': '1.75rem',
             } as React.CSSProperties
           }
         >
-          <div className="flex w-32 shrink-0 flex-col gap-0.5 border-r border-border/70 bg-muted/30 p-2">
+          <div className="flex w-28 shrink-0 flex-col gap-0.5 border-r border-border/70 bg-muted/30 p-1.5">
             {PRESETS.map((p) => (
               <button
                 key={p.label}
                 type="button"
                 onClick={() => apply(p.range())}
-                className="rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                className="rounded px-2 py-1 text-left text-2xs hover:bg-muted"
               >
                 {p.label}
               </button>
@@ -199,13 +207,13 @@ export function DateRangeField({
             <button
               type="button"
               onClick={() => apply(undefined)}
-              className="mt-1 rounded border-t border-border/70 px-2 py-1.5 pt-2 text-left text-xs text-muted-foreground hover:bg-muted"
+              className="mt-0.5 rounded border-t border-border/70 px-2 py-1 pt-1.5 text-left text-2xs text-muted-foreground hover:bg-muted"
             >
               Any date
             </button>
           </div>
 
-          <div className="p-2">
+          <div className="p-2.5">
             <DayPicker
               mode="range"
               numberOfMonths={2}
@@ -214,9 +222,16 @@ export function DateRangeField({
               onSelect={setDraft}
               disabled={{ after: new Date() }}
               weekStartsOn={1}
-              className="text-sm"
+              // The weekday row and the month name have no variables of their
+              // own, so they are reached the only other way that keeps this
+              // component in one file.
+              className={cn(
+                'text-xs',
+                '[&_.rdp-weekday]:text-2xs [&_.rdp-weekday]:font-normal',
+                '[&_.rdp-month_caption]:text-xs [&_.rdp-caption_label]:font-medium',
+              )}
             />
-            <div className="flex items-center justify-between gap-3 border-t border-border/70 px-1 pt-2">
+            <div className="mt-1 flex items-center justify-between gap-3 border-t border-border/70 px-0.5 pt-2">
               <span className="text-2xs text-muted-foreground">
                 {draft?.from
                   ? draft.to
