@@ -168,30 +168,6 @@ export function DateRangeField({
           // max-content lets it take the width it actually needs; the max-w
           // below still folds it back on a screen too narrow for two.
           className="absolute right-0 z-50 mt-1 flex w-max max-w-[calc(100vw-2rem)] gap-0 overflow-auto rounded-lg border border-border bg-card shadow-lg"
-          // The library themes itself from these. Pointed at the console's own
-          // tokens so it follows light and dark without a second palette.
-          style={
-            {
-              '--rdp-accent-color': 'hsl(var(--primary))',
-              '--rdp-accent-background-color': 'hsl(var(--primary) / 0.12)',
-              '--rdp-range_middle-background-color': 'hsl(var(--primary) / 0.12)',
-              '--rdp-today-color': 'hsl(var(--primary))',
-              // The library ships 44px day cells, which is a touch target for
-              // a phone. This is a filter on a desk, beside three other
-              // controls, and at that size two months filled half the screen.
-              '--rdp-day-width': '1.5rem',
-              '--rdp-day-height': '1.5rem',
-              '--rdp-day_button-width': '1.5rem',
-              '--rdp-day_button-height': '1.5rem',
-              '--rdp-day_button-border-radius': '0.3rem',
-              '--rdp-day_button-border': '1px solid transparent',
-              '--rdp-selected-border': '1px solid var(--rdp-accent-color)',
-              '--rdp-months-gap': '0.75rem',
-              '--rdp-nav_button-width': '1.25rem',
-              '--rdp-nav_button-height': '1.25rem',
-              '--rdp-nav-height': '1.5rem',
-            } as React.CSSProperties
-          }
         >
           <div className="flex w-24 shrink-0 flex-col gap-px border-r border-border/70 bg-muted/30 p-1.5">
             {PRESETS.map((p) => (
@@ -222,13 +198,47 @@ export function DateRangeField({
               onSelect={setDraft}
               disabled={{ after: new Date() }}
               weekStartsOn={1}
+              // Arrows at the outer edges rather than both stacked in one
+              // corner, which is what every date range picker does and what
+              // makes two months read as one control.
+              navLayout="around"
+              // ON THE ROOT, and it has to be. The library declares every
+              // --rdp-* variable on .rdp-root itself, and a property declared
+              // on an element beats one inherited from its parent - so the
+              // same block sitting on the popover did nothing at all, and the
+              // 44px cells stayed 44px however small the numbers got.
+              style={
+                {
+                  '--rdp-accent-color': 'hsl(var(--primary))',
+                  '--rdp-accent-background-color': 'hsl(var(--primary) / 0.10)',
+                  '--rdp-range_middle-background-color': 'hsl(var(--primary) / 0.10)',
+                  '--rdp-today-color': 'hsl(var(--primary))',
+                  // Cell and button the SAME size. A button smaller than its
+                  // cell leaves a gap at each side, and a selected range then
+                  // reads as separate blobs instead of one band.
+                  '--rdp-day-width': '1.9rem',
+                  '--rdp-day-height': '1.9rem',
+                  '--rdp-day_button-width': '1.9rem',
+                  '--rdp-day_button-height': '1.9rem',
+                  // Rounded square, not a circle. A circle inside a continuous
+                  // band is what made the row look like beads on a string.
+                  '--rdp-day_button-border-radius': '0.25rem',
+                  '--rdp-day_button-border': '1px solid transparent',
+                  '--rdp-selected-border': '1px solid var(--rdp-accent-color)',
+                  '--rdp-months-gap': '1rem',
+                  '--rdp-nav_button-width': '1.5rem',
+                  '--rdp-nav_button-height': '1.5rem',
+                  '--rdp-nav-height': '1.75rem',
+                } as React.CSSProperties
+              }
               // The weekday row and the month name have no variables of their
               // own, so they are reached the only other way that keeps this
               // component in one file.
               className={cn(
-                'text-xs',
-                '[&_.rdp-weekday]:text-2xs [&_.rdp-weekday]:font-normal',
+                'text-xs font-normal',
+                '[&_.rdp-weekday]:text-2xs [&_.rdp-weekday]:font-normal [&_.rdp-weekday]:text-muted-foreground',
                 '[&_.rdp-month_caption]:text-xs [&_.rdp-caption_label]:font-medium',
+                '[&_.rdp-day_button]:font-normal',
               )}
             />
             <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-border/70 px-0.5 pt-1.5">
