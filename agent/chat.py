@@ -289,7 +289,14 @@ async def _run_tool(name: str, raw_args: str, cfg, runners,
     if name == "search_knowledge_base":
         hits = await kb.search(args.get("query", ""), config_name=cfg.name,
                                top_k=cfg.kb_top_k, min_score=cfg.kb_min_score,
-                               api_key=api_key)
+                               api_key=api_key,
+                               # No call to hang a call_errors row on here, so
+                               # this ends in the log. Worth saying anyway: the
+                               # tester is where somebody would try to work out
+                               # why answers went vague, and "lexical only" is
+                               # the answer.
+                               on_degraded=lambda m: log.error(
+                                   "chat KB degraded to lexical only: %s", m))
         out = "\n\n".join(h["content"] for h in hits) or "Nothing found."
         # kb.search returns doc_id and not a name, which is enough for the
         # agent and useless to a person: "which document said that" is the

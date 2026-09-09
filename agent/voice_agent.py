@@ -282,6 +282,12 @@ class KBAgent(Agent):
         # stays None-tolerant rather than becoming a constructor argument that
         # has to be threaded through every path that builds an agent.
         self.call_id: int | None = None
+        # Set when a search had to fall back to lexical because the embedding
+        # could not be made. Kept rather than written on the spot: a DB insert
+        # in the middle of a turn is latency the caller pays for, and this is
+        # already a degraded call. Written once, at the end, with everything
+        # else - see the call_errors insert.
+        self.kb_degraded: str | None = None
         self.last_kb_ms = 0
         # Which chunks answered the current turn, best score first. Cleared when
         # the turn is written down, so it never carries into the next one.
@@ -652,7 +658,8 @@ class KBAgent(Agent):
         try:
             hits = await kb.search(query, self.cfg.name,
                                    self.cfg.kb_top_k, self.cfg.kb_min_score,
-                                   api_key=self.keys.get("openai"))
+                                   api_key=self.keys.get("openai"),
+                                   on_degraded=self._kb_degraded)
         except Exception:
             logger.exception("kb search failed")
             return "The knowledge base is unavailable right now."
@@ -702,6 +709,16 @@ class KBAgent(Agent):
         return kb.format_context(hits)
 
     # ────────────────────────── handoff ──────────────────────────
+
+    def _kb_degraded(self, message: str) -> None:
+        """A search ran without its embedding leg. First one wins.
+
+        The first is the one that says what broke; the ones after it are the
+        same failure repeating, and a hundred identical rows would drown the
+        alert rather than sharpen it.
+        """
+        if self.kb_degraded is None:
+            self.kb_degraded = message
 
     @function_tool
     async def transfer_to_human(self, context: RunContext, reason: str) -> str:
@@ -1955,6 +1972,20 @@ async def entrypoint(ctx: JobContext):
                     call_id, error_detail["source"],
                     error_detail.get("provider"), error_detail.get("code"),
                     error_detail["message"])
+
+            # Not fatal - the call carried on, on lexical matching alone -
+            # but it IS a provider failure, and the alert rule counts rows in
+            # this table. A broken embedder makes one row per call, which is
+            # exactly the shape that rule was built to notice.
+            if getattr(agent, "kb_degraded", None):
+                await (await store.pool()).execute(
+                    """INSERT INTO call_errors (call_id, tenant_id, campaign_id,
+                                                source, provider, code, message)
+                       SELECT c.id, c.tenant_id, c.campaign_id,
+                              'kb', 'openai', NULL, $2
+                         FROM calls c WHERE c.id = $1""",
+                    call_id,
+                    f"knowledge base ran without embeddings: {agent.kb_degraded}")
 
             # Independent of how the call ended: what the caller SPOKE is not
             # part of the transfer outcome.

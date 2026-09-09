@@ -647,17 +647,43 @@ def _web_filename(name: str) -> str:
 
 async def search(query: str, config_name: str = "default",
                  top_k: int = 3, min_score: float = 0.25,
-                 api_key: str | None = None) -> list[dict]:
+                 api_key: str | None = None,
+                 on_degraded=None) -> list[dict]:
     """Hybrid: cosine similarity + trigram word similarity.
 
     word_similarity, NOT similarity: the latter compares whole strings, so a
     250-token chunk against a 6-word question scores near zero and the lexical
     leg never fires. word_similarity asks how well the query matches SOME PART
     of the chunk - which is the actual question.
+
+    on_degraded(message) is called if the embedding could not be made and this
+    fell back to lexical alone. Passing it is how a caller turns a silent
+    downgrade into something somebody finds out about.
     """
     if not query.strip():
         return []
-    qvec = _vec((await embed([query], api_key=api_key))[0])
+    try:
+        qvec = _vec((await embed([query], api_key=api_key))[0])
+    except Exception as e:
+        # The lexical leg needs no embedding at all - it is trigram matching
+        # inside Postgres. Letting the embedder take it down as well means
+        # answering nothing because HALF the search was unavailable, and that
+        # is what happened: a project key without access to the embedding model
+        # made every search return "the knowledge base is unavailable" while
+        # the documents sat there, matchable.
+        #
+        # Degraded, and never quietly. Lexical alone misses anything phrased
+        # differently from the document, which is most of what a caller says -
+        # so this must read as a fault being worked around, not as normal.
+        log.error("kb embedding failed (%s) - falling back to lexical only. "
+                  "Retrieval is degraded until this is fixed.",
+                  type(e).__name__, exc_info=True)
+        if on_degraded is not None:
+            try:
+                on_degraded(str(e)[:300])
+            except Exception:
+                log.exception("on_degraded callback failed")
+        return await _lexical_only(query, config_name, top_k, min_score)
     rows = await (await store.pool()).fetch(
         """
         WITH vec AS (
@@ -682,6 +708,29 @@ async def search(query: str, config_name: str = "default",
 
     hits = [dict(r) for r in rows if r["score"] is not None and r["score"] >= min_score]
     hits.sort(key=lambda h: h["score"], reverse=True)
+    return hits[:top_k]
+
+
+async def _lexical_only(query: str, config_name: str, top_k: int,
+                        min_score: float) -> list[dict]:
+    """The half of search() that does not need a provider.
+
+    Same threshold and the same shape as the lexical leg of the hybrid query,
+    so the caller cannot tell the difference except by the scores being worse -
+    and by the error in the log that got us here.
+    """
+    rows = await (await store.pool()).fetch(
+        """SELECT id, doc_id, page, heading, content,
+                  word_similarity($3, content) AS score, 'lex' AS src
+             FROM kb_chunks
+            WHERE config_name = $1
+              AND word_similarity($3, content) > $4
+            ORDER BY word_similarity($3, content) DESC
+            LIMIT $2""",
+        config_name, top_k, query, LEX_THRESHOLD)
+    hits = [dict(r) for r in rows
+            if r["score"] is not None and r["score"] >= min_score]
+    log.warning("lexical-only search for %r -> %d hit(s)", query, len(hits))
     return hits[:top_k]
 
 
