@@ -1,0 +1,59 @@
+/* react-day-picker, sized for a filter rather than a phone.
+ *
+ * WHY A STYLESHEET AND NOT TAILWIND ARBITRARY VARIANTS
+ *
+ * Half of these class names contain an underscore, and Tailwind turns every
+ * underscore inside an arbitrary variant into a space: [&_.rdp-day_button]
+ * compiles to "& .rdp-day button", which matches nothing and fails silently.
+ * That is not a theory - it is what happened here, and it cost two rounds of
+ * "make it smaller" that changed nothing at all. .rdp-weekday has no
+ * underscore and was the only one that ever worked.
+ *
+ * WHAT THE LIBRARY DOES THAT HAD TO BE UNDONE
+ *
+ * It sets `font-size: large; font-weight: bold` on the month caption AND on
+ * every selected day. So the numbers inside a chosen range stayed big and
+ * heavy however small the cells were made - which is exactly what looked
+ * wrong beside a normal date range picker.
+ *
+ * Sizes are the console's own scale: 0.75rem is text-xs, 0.6875rem is text-2xs.
+ */
+
+.aivoice-daterange .rdp-month_caption,
+.aivoice-daterange .rdp-caption_label {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.aivoice-daterange .rdp-weekday {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: hsl(var(--muted-foreground));
+}
+
+/* The day, and the day when it is part of the selection. Both, because the
+   second one carries its own size and weight. */
+.aivoice-daterange .rdp-day_button,
+.aivoice-daterange .rdp-selected {
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+/* The chevrons ship at 24px and fill with the accent colour, which made two
+   large blue arrows the loudest thing in a panel of small grey text. */
+.aivoice-daterange .rdp-chevron {
+  width: 0.875rem;
+  height: 0.875rem;
+  fill: hsl(var(--muted-foreground));
+}
+
+.aivoice-daterange .rdp-button_next:hover .rdp-chevron,
+.aivoice-daterange .rdp-button_previous:hover .rdp-chevron {
+  fill: hsl(var(--foreground));
+}
+
+/* Tighter than the shipped 1.75rem: with 12px text there is nothing to clear. */
+.aivoice-daterange .rdp-month_grid {
+  border-collapse: separate;
+  border-spacing: 0;
+}

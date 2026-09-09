@@ -14,6 +14,7 @@ import { CalendarDays, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import 'react-day-picker/style.css'
+import './daterange.css'
 
 /**
  * One control for "which days", instead of two boxes wanting yyyy-mm-dd typed
@@ -234,12 +235,9 @@ export function DateRangeField({
               // The weekday row and the month name have no variables of their
               // own, so they are reached the only other way that keeps this
               // component in one file.
-              className={cn(
-                'text-xs font-normal',
-                '[&_.rdp-weekday]:text-2xs [&_.rdp-weekday]:font-normal [&_.rdp-weekday]:text-muted-foreground',
-                '[&_.rdp-month_caption]:text-xs [&_.rdp-caption_label]:font-medium',
-                '[&_.rdp-day_button]:font-normal',
-              )}
+              // The sizing that needs to reach class names with underscores
+              // in them lives in daterange.css - see the note at the top of it.
+              className="aivoice-daterange text-xs font-normal"
             />
             <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-border/70 px-0.5 pt-1.5">
               <span className="text-2xs text-muted-foreground">
