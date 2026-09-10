@@ -4379,6 +4379,76 @@ selected day**. The numbers inside a chosen range were never going to shrink.
 
 ---
 
+## Monitoring, and the first thing it found (10 Sep 2026)
+
+Asked for a page to monitor all activity. The first question back was the right
+one: *"kya latency pe impact hoga iska kuch"* — will it slow calls down. In a
+system where an `import` in the wrong place once cost 1154 ms of every call,
+that question deserved measuring rather than reassuring.
+
+Three contact points, and only one of them mattered:
+
+- **Postgres** is shared. Fixed by keeping every query on an existing index and
+  never touching `turns`.
+- **CPU** is a rounding error — 32 cores, ~27% at ten concurrent calls.
+- **Auto-refresh** is the one that could genuinely be felt, and it is purely a
+  design choice. Ten seconds, not two, and nothing at all while the tab is
+  hidden.
+
+### The agent needed no code at all
+
+The plan was a heartbeat: each worker writing a row every few seconds. That is
+code inside the process that runs calls, which is exactly what the question was
+about.
+
+It was not needed. Every worker already binds its own HTTP port, so the console
+TCP-connects to 8081-8086 from outside and gets six separate answers. Nothing in
+the call path, nothing in the agent.
+
+### A pending item that had been fixed for months
+
+Planning that step started with "first fix the Errno 98 collision on 8081".
+Checked it instead of believing it: `ss` shows six distinct processes on six
+ports and the unit file carries `AGENT_HTTP_PORT=808%i`. It was fixed long ago
+and the entry was never struck out.
+
+**A wrong pending list is worse than a short one**, because the next person plans
+around it — which is what nearly happened here.
+
+### Three services showed red that were never reachable
+
+First run of the System page: LiveKit, livekit-sip and Redis all red, all three
+healthy. admin-api is on `aivoice_default` and only `postgres` is exposed to it
+there; the other names do not resolve at all.
+
+LiveKit and sip publish on every interface, so they are probed through the host
+gateway now — the same route the workers use. **Redis was dropped entirely.** It
+publishes on `127.0.0.1:6379` on purpose and nothing outside the host can reach
+it, so there is no check to make. A red cross would say "broken" where the truth
+is "cannot see", and this page's whole value is that it is believed.
+
+Attaching admin-api to the media network would have made all three green.
+That reach is part of this service's blast radius, and trading it for a tidier
+page is the wrong way round.
+
+### What it found on day one
+
+**139 postbacks given up on, every one a 404, spread over weeks and still
+happening.** That number appeared nowhere before this page existed and nothing
+alerted on it.
+
+The URL turned out to be deliberate rather than a mistake - but the fact stands
+either way: every working endpoint on that host is under `/hdl/Common/`, the
+postback one is under `/hdl/HDLApi/`, and nothing else uses that segment. 404 is
+the server saying the path does not exist. Whatever the intent, nothing has ever
+arrived there, and the payloads are all still in `call_postbacks` if they are
+ever wanted.
+
+**There is no alert rule for postback failures.** That is the reason this ran for
+weeks unseen, and it is worth adding before the next one.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

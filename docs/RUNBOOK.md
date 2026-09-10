@@ -477,6 +477,60 @@ answer about i3s that came out of GPT-4.1-mini rather than out of the customer's
 documents. It was correct by luck — the same KB has i3s under two other models, and a
 search could as easily have produced the wrong one.
 
+### Is everything running?
+
+**System** in the console, super admin only. It answers what used to need an SSH
+session: six agent workers, LiveKit, livekit-sip, Postgres, disk on three mounts,
+the postback queue, and which campaigns are at their call limit right now.
+
+Each worker holds its own port (`AGENT_HTTP_PORT=808%i`), so this is six answers
+rather than one. admin-api reaches them through `host.docker.internal`, which
+`extra_hosts: host-gateway` provides — they are native systemd processes, so a
+container's own loopback is not the host's.
+
+**Two things are deliberately absent, and the page says so.** Asterisk listens
+only on UDP, so there is no socket to connect to; Redis publishes on
+`127.0.0.1:6379` and nothing outside the host can reach it, on purpose. Neither
+gets a red cross, because a cross means "broken" where the truth is "cannot
+see". Asterisk gets "last call received" instead — a fact, not a verdict.
+
+```bash
+# what the page checks, from the same place it checks from
+docker exec admin-api python -c "
+import socket
+for p in range(8081, 8087):
+    try:
+        socket.create_connection(('host.docker.internal', p), 1).close(); print(p, 'up')
+    except Exception as e: print(p, 'DOWN', e)"
+```
+
+> If all six workers read as down, suspect the route rather than the workers —
+> the container could not reach the gateway. `AGENT_HOST` overrides the hostname
+> if `host-gateway` is ever unavailable; the bridge IP works as a fallback.
+
+### What has been happening?
+
+**Activity** in the console. One feed, newest first, merging six things that each
+lived on their own page or on no page at all: alerts, provider failures during
+calls, configuration changes with who made them, postbacks that never arrived,
+tool calls the customer's API refused, and sign-ins.
+
+Calls are **not** in it. There are hundreds and they would bury everything else;
+the Calls page is better at calls. What is here is what asks for attention.
+
+Config rows show the field NAMES that changed and never the values — a change
+can carry a prompt, a postback URL, or both sides of a secret.
+
+### What is the model actually being sent?
+
+**Configure → Final prompt**, per campaign. Six tabs contribute to one string and
+nothing showed them together, which is how a rule ends up naming a section that
+is not in the prompt — see call 538. It runs the agent's own
+`build_instructions`, so it cannot disagree with what goes down the wire.
+
+Each section says where it came from and what it costs in tokens. Every token
+there is sent on every turn of every call.
+
 ### Is retrieval actually working?
 
 **Configure → Knowledge → Try a search.** It runs the agent's own `kb.search`, so
