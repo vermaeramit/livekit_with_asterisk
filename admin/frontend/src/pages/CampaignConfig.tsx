@@ -625,13 +625,6 @@ export function CampaignConfig() {
             <CardTitle>Voice and model</CardTitle>
           </CardHeader>
           <CardBody className="space-y-5">
-            <Note tone="warn">
-              <code>SARVAM_STT_MODEL</code> and <code>SARVAM_TTS_VOICE</code> in the server's{' '}
-              <code>.env</code> override the two fields below. If a change here has no effect on the
-              next call, that is why — check with{' '}
-              <code>grep -c 'SARVAM_TTS_VOICE\|SARVAM_STT_MODEL' /opt/aivoice/.env</code>.
-            </Note>
-
             {[value.stt_provider, value.tts_provider].includes('soniox') &&
               SONIOX_UNSUPPORTED.includes(value.language) && (
                 <Note tone="warn">

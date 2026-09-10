@@ -323,10 +323,16 @@ Set in `/opt/aivoice/.env` to persist, or exported per-run to experiment.
 | `SARVAM_HIGH_VAD` | `1` | **Biggest lever.** Cuts Sarvam's end-of-speech lag ~1000 ms → ~250 ms |
 | `MIN_ENDPOINTING_DELAY` | `0.25` | Silence before deciding the caller stopped. Lower = snappier, but cuts people off mid-thought |
 | `MAX_ENDPOINTING_DELAY` | `1.5` | Cap when the turn detector is unsure. The 4.0 default froze calls for 4 s on short closings |
-| `SARVAM_STT_MODEL` | `saarika:v2.5` | `saaras:v3` also exposes fine-grained VAD params |
-| `SARVAM_TTS_VOICE` | *(from DB)* | Sarvam speaker name |
 | `NUM_IDLE_PROCESSES` | `3` | Pre-warmed job processes (`start` mode only) |
 | `AGENT_CONFIG` | `default` | Which `agent_config` row to load |
+
+> **`SARVAM_STT_MODEL` and `SARVAM_TTS_VOICE` were removed on 10 Sep 2026.** They
+> came FIRST in the agent's `or` chain, ahead of the campaign's own setting, so a
+> value in `.env` beat the console without saying so — a voice changed in the UI
+> would save, report success, and never reach a call. The console owns those two
+> fields; the env vars predated it owning anything. Model and voice are set under
+> **Configure → Voice & model**, and the STT model falls back to `saarika:v2.5`
+> when the field is empty.
 
 Params that do **not** work on `saarika:*` — the plugin drops them silently because
 `supports_vad_params=False`: `negative_frames_count`, `negative_speech_threshold`,

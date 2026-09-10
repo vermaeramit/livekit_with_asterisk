@@ -118,8 +118,13 @@ def _stt_kwargs(cfg):
     negative_frames_count and friends are silently dropped; flush_signal measured
     as a no-op.
     """
+    # No SARVAM_STT_MODEL here any more. It used to come first in this chain,
+    # so a value in the server's .env silently beat the console - somebody could
+    # change the model, see it save, and every call would keep using the old one
+    # with nothing anywhere to say why. The console owns this field; the env var
+    # predates it owning anything.
     kw = {"language": cfg.language,
-          "model": os.getenv("SARVAM_STT_MODEL") or cfg.stt_model or "saarika:v2.5"}
+          "model": cfg.stt_model or "saarika:v2.5"}
     if os.getenv("SARVAM_STT_MODE"):
         kw["mode"] = os.getenv("SARVAM_STT_MODE")
     if os.getenv("SARVAM_HIGH_VAD"):
@@ -139,7 +144,9 @@ def _stt_kwargs(cfg):
 def _tts_kwargs(cfg):
     kw = {"target_language_code": cfg.language,
           "model": cfg.tts_model or tts_defaults.SARVAM_MODEL}
-    voice = os.getenv("SARVAM_TTS_VOICE") or cfg.tts_voice
+    # SARVAM_TTS_VOICE removed for the same reason as SARVAM_STT_MODEL above:
+    # an env var that beats the console is a console that can lie.
+    voice = cfg.tts_voice
     if voice:
         kw["speaker"] = voice
     return kw
