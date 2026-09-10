@@ -4393,10 +4393,16 @@ selected day**. The numbers inside a chosen range were never going to shrink.
 - **The dialler's password is its username** - theirs to change, ours to raise
 - **`DIALSTATUS` on the OLD `_X.` route** - handled on `_c.`, not there. A
   campaign still on a plain SIP target gets silence when nobody answers
-- **`aivoice-agent-1` will not start** - `[Errno 98] address already in use` on
-  8081, so five workers run and systemd reports six active. It does not bind
-  today because the STT/TTS cap is 20 and five workers carry 50, but it is
-  exactly the silent failure the code comment beside AGENT_HTTP_PORT warns of
+- ~~**`aivoice-agent-1` will not start**~~ - **fixed, and this note was stale.**
+  Checked 10 Sep 2026: `ss -ltnp` shows six distinct python processes bound to
+  8081 through 8086, and `/etc/systemd/system/aivoice-agent@.service` carries
+  `Environment=AGENT_HTTP_PORT=808%i`. All six workers are running. The
+  per-instance port went in and the entry was never struck out.
+
+  Worth the check rather than the assumption: a pending list that is wrong is
+  worse than a short one, because the next person plans around it. It also
+  means the console can health-check each worker by connecting to its own port,
+  with no code in the agent at all.
 - **The load test's dialplan counters read 0** on a run where 30 calls
   succeeded. They measured something that existed when Asterisk was a
   container. A zero beside a successful run is worse than no column
