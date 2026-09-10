@@ -126,10 +126,13 @@ export function System() {
             <div className="flex items-start gap-2 pt-1.5 text-2xs leading-relaxed text-muted-foreground">
               <PhoneCall className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                <strong className="font-medium text-foreground">Asterisk is not in this
-                list.</strong>{' '}
-                It listens only on UDP, so there is nothing here to connect to and no
-                honest check to make. What can be said is when it last delivered a call:{' '}
+                <strong className="font-medium text-foreground">Asterisk and Redis are
+                not in this list</strong>, because neither can honestly be checked from
+                here — Asterisk listens only on UDP, and Redis is published on the
+                host&rsquo;s own loopback and deliberately reachable by nothing else. A red
+                cross would say &ldquo;broken&rdquo; where the truth is &ldquo;cannot
+                see&rdquo;. What <em>can</em> be said is when Asterisk last delivered a
+                call:{' '}
                 {h.last_call_at ? (
                   <>
                     <strong className="font-medium text-foreground">

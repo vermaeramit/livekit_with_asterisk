@@ -89,11 +89,23 @@ AGENT_PORTS = tuple(range(int(os.getenv("AGENT_PORT_BASE", "8081")),
                           int(os.getenv("AGENT_PORT_BASE", "8081"))
                           + int(os.getenv("AGENT_WORKERS", "6"))))
 
-# Containers, reachable by name on the shared network.
+# Reached through the HOST, on the ports they publish - not by container name.
+#
+# admin-api is on aivoice_default and only `postgres` is exposed to it there;
+# livekit, sip and redis do not resolve from here at all. That is deliberate and
+# worth keeping: this service's reach is part of its blast radius, and widening
+# it to make a status page green would be the wrong trade.
+#
+# Both of these publish on all interfaces (*:7880, *:5080), so the host gateway
+# reaches them.
+#
+# REDIS IS NOT IN THIS LIST. It publishes on 127.0.0.1:6379 only, on purpose, so
+# nothing outside the host can reach it - including this container. There is no
+# check to make, and a red cross would say "broken" where the truth is "cannot
+# see". It is named in the note beside Asterisk instead.
 SERVICES = (
-    ("LiveKit", "livekit", 7880, "carries the audio between Asterisk and the agent"),
-    ("LiveKit SIP", "sip", 5080, "turns the call from Asterisk into a room"),
-    ("Redis", "redis", 6379, "holds the SIP trunk and dispatch rule"),
+    ("LiveKit", AGENT_HOST, 7880, "carries the audio between Asterisk and the agent"),
+    ("LiveKit SIP", AGENT_HOST, 5080, "turns the call from Asterisk into a room"),
 )
 
 # Half a second. These run at once, so the page waits for the slowest, and a
