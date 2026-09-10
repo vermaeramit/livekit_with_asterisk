@@ -179,6 +179,44 @@ def _hhmm(day: str, value) -> tuple[int, int]:
     return h, m
 
 
+class ServiceCheck(BaseModel):
+    name: str
+    detail: str
+    # Reachable, which is not the same as healthy - the page says so rather
+    # than letting a green tick imply more than a TCP connect can prove.
+    ok: bool
+    # worker | service. Six of one and a handful of the other, and they fail
+    # for different reasons.
+    kind: str
+
+
+class DiskUsage(BaseModel):
+    name: str
+    path: str
+    ok: bool
+    total_gb: float
+    free_gb: float
+    free_pct: float
+
+
+class CampaignSlots(BaseModel):
+    campaign: str
+    limit: int
+    in_use: int
+
+
+class SystemHealth(BaseModel):
+    checks: list[ServiceCheck]
+    disks: list[DiskUsage]
+    # A fact, not a verdict. Asterisk is native and listens only on UDP, so
+    # there is no socket to probe; how long a gap is too long depends on the
+    # time of day, and the reader knows that where this endpoint does not.
+    last_call_at: datetime | None = None
+    postbacks_pending: int = 0
+    postbacks_failed: int = 0
+    slots: list[CampaignSlots] = Field(default_factory=list)
+
+
 class ActivityEvent(BaseModel):
     """One thing that happened, from whichever table recorded it."""
     # alert | error | config | postback | tool | login

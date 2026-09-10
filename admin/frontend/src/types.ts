@@ -344,6 +344,39 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface ServiceCheck {
+  name: string
+  detail: string
+  // Reachable, not healthy. The page is careful about the difference.
+  ok: boolean
+  kind: 'worker' | 'service'
+}
+
+export interface DiskUsage {
+  name: string
+  path: string
+  ok: boolean
+  total_gb: number
+  free_gb: number
+  free_pct: number
+}
+
+export interface CampaignSlots {
+  campaign: string
+  limit: number
+  in_use: number
+}
+
+export interface SystemHealth {
+  checks: ServiceCheck[]
+  disks: DiskUsage[]
+  // A fact, not a verdict — Asterisk speaks only UDP and cannot be probed.
+  last_call_at: string | null
+  postbacks_pending: number
+  postbacks_failed: number
+  slots: CampaignSlots[]
+}
+
 export interface ActivityEvent {
   kind: 'alert' | 'error' | 'config' | 'postback' | 'tool' | 'login'
   severity: 'info' | 'warning' | 'critical'

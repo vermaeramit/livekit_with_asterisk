@@ -45,6 +45,17 @@ services:
       # sees /data/hold. The DATABASE stores Asterisk's path - see
       # HOLD_PLAY_DIR in holdaudio.py, and do not derive one from the other.
       - /opt/aivoice/cache/hold:/data/hold
+    extra_hosts:
+      # The six agent workers are NATIVE systemd processes, not containers, so
+      # they are not on this network and a container's own 127.0.0.1 is not the
+      # host's. This is the documented way to reach the host from a container
+      # and it survives the network being recreated, which a hard-coded
+      # 172.18.0.1 would not.
+      #
+      # It buys exactly one thing: the console can TCP-connect to 8081-8086 and
+      # report which workers are alive - with no code in the agent and nothing
+      # in the call path.
+      - "host.docker.internal:host-gateway"
     ports:
       # Bound to localhost. Reach it through the nginx container, or an SSH
       # tunnel during development - never publish the API to the LAN directly.

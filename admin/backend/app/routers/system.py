@@ -9,6 +9,7 @@ that can trigger a restore is a page that can trigger a restore by accident.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -21,7 +22,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db
 from ..deps import CurrentUser, require_perm
-from ..schemas import BackupFile, BackupStatus, SystemAck
+from ..schemas import (BackupFile, BackupStatus, CampaignSlots, DiskUsage,
+                       ServiceCheck, SystemAck, SystemHealth)
 
 log = logging.getLogger("admin-api")
 
@@ -77,6 +79,120 @@ async def _load_ack(key: str, fingerprint: str | None) -> SystemAck | None:
         stale=bool(fingerprint and row["fingerprint"]
                    and fingerprint != row["fingerprint"]),
     )
+
+
+# Where the six agent workers listen. They are native systemd processes, so
+# they are reached through the host gateway rather than by container name - see
+# extra_hosts in admin/docker-compose.yml.
+AGENT_HOST = os.getenv("AGENT_HOST", "host.docker.internal")
+AGENT_PORTS = tuple(range(int(os.getenv("AGENT_PORT_BASE", "8081")),
+                          int(os.getenv("AGENT_PORT_BASE", "8081"))
+                          + int(os.getenv("AGENT_WORKERS", "6"))))
+
+# Containers, reachable by name on the shared network.
+SERVICES = (
+    ("LiveKit", "livekit", 7880, "carries the audio between Asterisk and the agent"),
+    ("LiveKit SIP", "sip", 5080, "turns the call from Asterisk into a room"),
+    ("Redis", "redis", 6379, "holds the SIP trunk and dispatch rule"),
+)
+
+# Half a second. These run at once, so the page waits for the slowest, and a
+# service that has not answered in 500 ms on a local network is not answering.
+_PROBE_TIMEOUT = 0.5
+
+# Below this, recordings stop being written and nobody finds out until a call
+# is missing one.
+_DISK_WARN_PCT = 15
+
+
+async def _reachable(host: str, port: int) -> bool:
+    """Can something be connected to here. Not "is it healthy" - said so on the page."""
+    try:
+        _, w = await asyncio.wait_for(asyncio.open_connection(host, port),
+                                      _PROBE_TIMEOUT)
+        w.close()
+        try:
+            await w.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+@router.get("/system/health", response_model=SystemHealth)
+async def system_health(user: CurrentUser = Depends(superadmin)):
+    """Is everything running. Answerable in the console rather than over SSH.
+
+    WHAT THIS CANNOT SEE, and says so rather than showing a green tick that
+    means nothing: Asterisk is native and listens only on UDP - 5060 for SIP and
+    4569 for the trunk - so there is no socket here to connect to. It gets a
+    "last call received" line instead, which is a fact rather than a verdict: on
+    a quiet afternoon a long gap means nothing, and at 3pm on a weekday it means
+    everything. The reader knows which it is; this endpoint does not.
+    """
+    workers, services = await asyncio.gather(
+        asyncio.gather(*(_reachable(AGENT_HOST, p) for p in AGENT_PORTS)),
+        asyncio.gather(*(_reachable(h, p) for _, h, p, _ in SERVICES)),
+    )
+
+    checks = [
+        ServiceCheck(name=f"Agent worker {i + 1}", detail=f"port {port}",
+                     ok=ok, kind="worker")
+        for i, (port, ok) in enumerate(zip(AGENT_PORTS, workers))
+    ] + [
+        ServiceCheck(name=name, detail=why, ok=ok, kind="service")
+        for (name, _, _, why), ok in zip(SERVICES, services)
+    ]
+
+    # Postgres answers or this request would not be running, but saying so
+    # explicitly keeps the list complete rather than mysteriously missing one.
+    checks.append(ServiceCheck(name="Postgres", detail="configuration and history",
+                               ok=True, kind="service"))
+
+    disks = []
+    for label, path in (("Recordings", "/data/recordings"),
+                        ("Backups", str(BACKUP_DIR)),
+                        ("Hold messages", os.getenv("HOLD_CACHE_DIR", "/data/hold"))):
+        try:
+            u = shutil.disk_usage(path)
+        except Exception:
+            # A mount that is not there is worth showing as missing rather than
+            # omitting - an absent recordings mount is why a recording is absent.
+            disks.append(DiskUsage(name=label, path=path, ok=False,
+                                   total_gb=0, free_gb=0, free_pct=0))
+            continue
+        pct = round(u.free / u.total * 100, 1) if u.total else 0
+        disks.append(DiskUsage(
+            name=label, path=path, ok=pct >= _DISK_WARN_PCT,
+            total_gb=round(u.total / 1e9, 1), free_gb=round(u.free / 1e9, 1),
+            free_pct=pct))
+
+    last_call = await db.pool().fetchval("SELECT max(started_at) FROM calls")
+    queued = await db.pool().fetchrow(
+        """SELECT count(*) FILTER (WHERE status = 'pending')  AS pending,
+                  count(*) FILTER (WHERE status = 'failed')   AS failed
+             FROM call_postbacks""")
+
+    # What the concurrency limits built yesterday are actually doing right now.
+    slots = await db.pool().fetch(
+        """SELECT cam.name, ac.max_parallel_calls AS limit_n,
+                  count(c.id) FILTER (WHERE c.ended_at IS NULL) AS in_use
+             FROM agent_config ac
+             JOIN campaigns cam ON cam.id = ac.campaign_id
+             LEFT JOIN calls c ON c.campaign_id = ac.campaign_id
+                              AND c.ended_at IS NULL
+            WHERE ac.max_parallel_calls IS NOT NULL
+            GROUP BY cam.name, ac.max_parallel_calls
+            ORDER BY cam.name""")
+
+    return SystemHealth(
+        checks=checks, disks=disks,
+        last_call_at=last_call,
+        postbacks_pending=queued["pending"] or 0,
+        postbacks_failed=queued["failed"] or 0,
+        slots=[CampaignSlots(campaign=r["name"], limit=r["limit_n"],
+                             in_use=r["in_use"]) for r in slots])
 
 
 @router.get("/backups", response_model=BackupStatus)
