@@ -179,6 +179,33 @@ def _hhmm(day: str, value) -> tuple[int, int]:
     return h, m
 
 
+class ActivityEvent(BaseModel):
+    """One thing that happened, from whichever table recorded it."""
+    # alert | error | config | postback | tool | login
+    kind: str
+    # info | warning | critical. Alerts carry their own; the rest are assigned
+    # by what the row means - a provider giving up mid-call is always critical,
+    # somebody signing in never is.
+    severity: str
+    at: datetime
+    title: str
+    detail: str | None = None
+    # Who did it, where there is a who. Only config changes and logins have one.
+    actor: str | None = None
+    # The one extra fact worth a line: an HTTP code, an attempt count, an IP,
+    # or which fields a config change touched.
+    extra: str | None = None
+    campaign_id: int | None = None
+    campaign: str | None = None
+
+
+class ActivityFeed(BaseModel):
+    events: list[ActivityEvent]
+    # Echoed back so the page can say what window it is showing rather than
+    # assuming the one it asked for is the one it got.
+    hours: int
+
+
 class PromptSection(BaseModel):
     """One piece of the assembled prompt, and where it came from.
 

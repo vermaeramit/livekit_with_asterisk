@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 import { Layout } from '@/components/Layout'
 import { Alerts } from '@/pages/Alerts'
 import { KnowledgeGaps } from '@/pages/KnowledgeGaps'
+import { Activity } from '@/pages/Activity'
 import { Diallers } from '@/pages/Diallers'
 import { Rates } from '@/pages/Rates'
 import { Roles } from '@/pages/Roles'
@@ -78,6 +79,7 @@ export function App() {
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/gaps" element={<KnowledgeGaps />} />
         <Route path="/rates" element={<Rates />} />
+        <Route path="/activity" element={<Activity />} />
         <Route path="/diallers" element={<Diallers />} />
         <Route path="/roles" element={<Roles />} />
         <Route path="/calls" element={<Calls />} />

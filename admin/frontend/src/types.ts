@@ -344,6 +344,23 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface ActivityEvent {
+  kind: 'alert' | 'error' | 'config' | 'postback' | 'tool' | 'login'
+  severity: 'info' | 'warning' | 'critical'
+  at: string
+  title: string
+  detail: string | null
+  actor: string | null
+  extra: string | null
+  campaign_id: number | null
+  campaign: string | null
+}
+
+export interface ActivityFeed {
+  events: ActivityEvent[]
+  hours: number
+}
+
 export interface PromptSection {
   name: string
   // Which tab to go and change, which is most of what this page is for.

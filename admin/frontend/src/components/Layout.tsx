@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, ListTree, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
@@ -47,6 +47,7 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: ['analytics.read'] },
   { kind: 'link', to: '/live', label: 'Live monitor', icon: Radio, needs: ['live.read'] },
   { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts', needs: ['alerts.read'] },
+  { kind: 'link', to: '/activity', label: 'Activity', icon: ListTree, needs: ['campaign.write'] },
   { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps', needs: ['gaps.read'] },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, needs: ['campaign.write'] },

@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import alerting, db, postback
 from .config import settings
-from .routers import (agent_config, alerts, analytics, auth, calls,
+from .routers import (activity, agent_config, alerts, analytics, auth, calls,
                       diallers, gaps,
                       rates, roles,
                       campaigns, chat, kb, kb_sources, live,
@@ -98,6 +98,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(provider_keys.router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+app.include_router(activity.router, prefix="/api")
 
 
 @app.get("/api/health")
