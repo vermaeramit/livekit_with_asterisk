@@ -120,7 +120,10 @@ async def _reachable(host: str, port: int) -> bool:
         return False
 
 
-@router.get("/system/health", response_model=SystemHealth)
+# The router already carries prefix="/system" - see the top of the file. This
+# said "/system/health" and served /api/system/system/health, which 404s in a
+# way that looks like the page is broken rather than the path.
+@router.get("/health", response_model=SystemHealth)
 async def system_health(user: CurrentUser = Depends(superadmin)):
     """Is everything running. Answerable in the console rather than over SSH.
 
