@@ -27,6 +27,7 @@ const KIND_LABEL: Record<string, string> = {
   no_calls: 'No calls received',
   stale_calls: 'Stuck calls',
   provider_errors: 'Provider failures',
+  postback_failures: 'Results not delivered',
 }
 
 const KIND_HELP: Record<string, string> = {
@@ -38,6 +39,8 @@ const KIND_HELP: Record<string, string> = {
   stale_calls: 'Calls left open past their duration limit, which means a worker died holding one.',
   provider_errors:
     'Errors returned by OpenAI, Soniox, Sarvam and the rest, counted as they happen rather than as a share of finished calls — a rate limit shows up while it is still going on, and the alert names the provider and the code.',
+  postback_failures:
+    'Finished calls whose result never reached your system. Counted as calls, not as a share — one campaign failing every delivery reads as a small percentage of everything and is not small at all. The alert carries the status code, because 404 is a wrong address and 500 is theirs.',
 }
 
 const UNIT: Record<string, string> = {
@@ -48,6 +51,7 @@ const UNIT: Record<string, string> = {
   no_calls: 'calls',
   stale_calls: 'calls',
   provider_errors: 'errors',
+  postback_failures: 'calls',
 }
 
 function DeliveryBadge({ alert }: { alert: Alert }) {

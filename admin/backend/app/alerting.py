@@ -133,6 +133,44 @@ async def _evaluate(rule: dict) -> tuple[float | None, bool, str]:
                 f"{total} provider error(s) in {rule['window_minutes']} "
                 f"minutes - {_describe(rows)}")
 
+    if kind == "postback_failures":
+        # Calls whose result never reached the customer. Nothing watched this,
+        # and 139 of them accumulated over weeks - every one a 404, still
+        # happening, and visible nowhere until the System page was built.
+        #
+        # Counted on the postback rows rather than as a share of calls: a
+        # percentage of finished calls would read as small and healthy while
+        # every single delivery failed for one campaign.
+        #
+        # created_at, because this table has no updated_at - it carries
+        # created_at, sent_at and next_attempt_at, and the last of those is a
+        # time in the future. So the window means "calls that ended in the last
+        # N minutes and did not get through", which is the question worth
+        # asking anyway.
+        pb_scope = (f"cam.tenant_id = $1 AND p.created_at > now() - interval "
+                    f"'{window}'")
+        if rule["campaign_id"] is not None:
+            pb_scope += f" AND p.campaign_id = ${len(args)}"
+        rows = await db.pool().fetch(f"""
+            SELECT p.last_status_code AS code, count(*) AS n
+              FROM call_postbacks p
+              JOIN campaigns cam ON cam.id = p.campaign_id
+             WHERE {pb_scope} AND p.status = 'failed'
+             GROUP BY 1 ORDER BY n DESC""", *args)
+
+        total = sum(r["n"] for r in rows)
+        if not total:
+            return 0, False, ""
+        # The status code, because it decides who to call. 404 is a wrong URL
+        # and ours to fix; 401 is a credential; 500 is theirs; nothing at all
+        # is a host that did not answer.
+        detail = "; ".join(
+            f"{r['n']}x " + (f"HTTP {r['code']}" if r["code"] else "no response")
+            for r in rows[:3])
+        return (total, total >= rule["threshold"],
+                f"{total} call result(s) never reached the customer's system in "
+                f"{rule['window_minutes']} minutes - {detail}")
+
     column = {
         "error_rate": "c.end_reason = 'error'",
         "transfer_rate": "c.transferred_to IS NOT NULL",
