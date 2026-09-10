@@ -344,6 +344,33 @@ export interface KbDocument {
   updated_at: string
 }
 
+export interface PromptSection {
+  name: string
+  // Which tab to go and change, which is most of what this page is for.
+  source: string
+  text: string
+  tokens: number
+}
+
+export interface PromptTool {
+  name: string
+  json_schema: string
+  tokens: number
+}
+
+export interface FinalPrompt {
+  text: string
+  // Everything but the date line: identical on every call, so the provider
+  // caches it.
+  cached_text: string
+  kb_mode: string
+  kb_tokens: number
+  total_tokens: number
+  cached_tokens: number
+  sections: PromptSection[]
+  tools: PromptTool[]
+}
+
 export interface PromptVersion {
   id: number
   campaign_id: number

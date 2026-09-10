@@ -179,6 +179,48 @@ def _hhmm(day: str, value) -> tuple[int, int]:
     return h, m
 
 
+class PromptSection(BaseModel):
+    """One piece of the assembled prompt, and where it came from.
+
+    The source matters as much as the text: the point of the preview is that
+    six tabs contribute to one string, and knowing which tab to go and change
+    is most of what somebody wants from it.
+    """
+    name: str
+    source: str
+    text: str
+    tokens: int
+
+
+class PromptTool(BaseModel):
+    name: str
+    # json_schema, not schema: a field called `schema` shadows an attribute on
+    # BaseModel and pydantic says so at import time.
+    #
+    # Pretty-printed, because it is read rather than parsed.
+    json_schema: str
+    # Counted on the compact form - that is what is billed, not the indented
+    # version shown on screen.
+    tokens: int
+
+
+class FinalPrompt(BaseModel):
+    """What the model actually receives, assembled by the agent's own code."""
+    text: str
+    # Everything except the date line. Byte-identical across every call on this
+    # campaign, which is what earns OpenAI's prompt cache - so it is worth
+    # seeing on its own.
+    cached_text: str
+    kb_mode: str
+    kb_tokens: int
+    total_tokens: int
+    cached_tokens: int
+    sections: list[PromptSection]
+    # Sent beside the prompt, not inside it, and paid for on every turn just
+    # the same. The agent's own two are not here - see _tool_summary.
+    tools: list[PromptTool] = Field(default_factory=list)
+
+
 class PromptVersion(BaseModel):
     id: int
     campaign_id: int

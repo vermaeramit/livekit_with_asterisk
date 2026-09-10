@@ -18,7 +18,8 @@ from .. import provider_keys as pk
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
                        CampaignRoute, CampaignRouteCreate, CopyHours,
-                       PostbackOut, PromptTokens, PromptVersion)
+                       PostbackOut, PromptTokens, PromptVersion,
+                       FinalPrompt, PromptSection, PromptTool)
 
 log = logging.getLogger("admin-api")
 
@@ -267,6 +268,142 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
                 f"UPDATE agent_config SET {file_col} = $2 WHERE campaign_id = $1",
                 campaign_id, path)
     return problems
+
+
+@router.get("/config/final-prompt", response_model=FinalPrompt)
+async def final_prompt(campaign_id: int,
+                       user: CurrentUser = Depends(active_user)):
+    """The prompt as the model will actually receive it.
+
+    Assembled from six places that nothing in the console showed together: the
+    text on the Conversation tab, the knowledge base or its index, the grounding
+    rules, the transfer rules, the opening hours, and the date. Reading them one
+    tab at a time is how a rule ends up referring to a section that is not
+    there - which is exactly what happened, and cost thirteen turns of a call
+    answered from the model's own training instead of the customer's documents.
+
+    It runs the agent's OWN build_instructions, not a copy. A preview
+    reassembled here would be a preview of this endpoint, and the one thing it
+    must never do is disagree with what goes down the wire.
+    """
+    if not kblib.available():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"the agent library is not available: "
+                            f"{kblib.why_unavailable()}")
+
+    await assert_campaign_visible(user, campaign_id)
+    row = await db.pool().fetchrow(
+        "SELECT name FROM agent_config WHERE campaign_id = $1 ORDER BY id LIMIT 1",
+        campaign_id)
+    if row is None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "this campaign has no agent config")
+
+    store = kblib.agent_module("store")
+    pm = kblib.agent_module("prompt")
+    ntok = kblib.kb().ntok
+
+    # The same object the agent builds a call from, loaded the same way.
+    cfg = await store.load_config(row["name"])
+    cached, kb_mode, kb_tokens = await pm.build_instructions(cfg)
+
+    # Appended per call and deliberately outside the cached prefix - see the
+    # note beside it in the agent. Shown, because it is in what the model
+    # receives, and marked, because it is the one part that differs call to
+    # call and is paid for again every time.
+    per_call = ""
+    if getattr(cfg, "prompt_datetime", False):
+        per_call = "\n\n" + pm.now_line(getattr(cfg, "prompt_timezone", None))
+
+    sections = _split_prompt(pm, cfg, cached, kb_mode, per_call, ntok)
+
+    return FinalPrompt(
+        text=cached + per_call,
+        cached_text=cached,
+        kb_mode=kb_mode,
+        kb_tokens=kb_tokens,
+        total_tokens=ntok(cached + per_call),
+        cached_tokens=ntok(cached),
+        sections=sections,
+        tools=await _tool_summary(campaign_id, ntok),
+    )
+
+
+def _split_prompt(pm, cfg, cached: str, kb_mode: str, per_call: str,
+                  ntok) -> list[PromptSection]:
+    """Break the finished prompt into the pieces it was made from.
+
+    Built by walking the string rather than by re-running the assembly, so the
+    parts always add up to the whole. Anything unaccounted for is returned as
+    its own row instead of disappearing - a breakdown that quietly loses a
+    section is worse than no breakdown, because it is believed.
+    """
+    out: list[PromptSection] = []
+    rest = cached
+
+    def take(name: str, source: str, piece: str) -> None:
+        nonlocal rest
+        if not piece or not rest.startswith(piece):
+            return
+        rest = rest[len(piece):]
+        out.append(PromptSection(name=name, source=source, text=piece,
+                                 tokens=ntok(piece)))
+
+    take("Your instructions", "Conversation tab", cfg.instructions)
+
+    # The knowledge block runs to its own end marker, so it can be lifted out
+    # exactly however long it is.
+    marker = "\n=== END ===\n"
+    if rest.startswith("\n\n=== ") and marker in rest:
+        end = rest.index(marker) + len(marker)
+        piece, rest = rest[:end], rest[end:]
+        out.append(PromptSection(
+            name=("Knowledge base" if kb_mode == "full"
+                  else "Knowledge base index"),
+            source=("Knowledge tab — the documents themselves" if kb_mode == "full"
+                    else "Knowledge tab — titles only, the agent searches for the rest"),
+            text=piece, tokens=ntok(piece)))
+
+    take("Knowledge rules", "Built in — written for this knowledge mode",
+         pm.GROUNDING_FULL if kb_mode == "full" else pm.GROUNDING_INDEX)
+    take("Handover rules", "Built in — added when handover is on", pm.TRANSFER_RULES)
+
+    if rest.strip():
+        out.append(PromptSection(
+            name="Opening hours", source="Limits & handoff tab",
+            text=rest, tokens=ntok(rest)))
+
+    if per_call:
+        out.append(PromptSection(
+            name="Date and time", source="Added on every call, never cached",
+            text=per_call, tokens=ntok(per_call)))
+    return out
+
+
+async def _tool_summary(campaign_id: int, ntok) -> list[PromptTool]:
+    """The campaign's tools, as the model is shown them.
+
+    Sent alongside the prompt rather than inside it, and paid for on every turn
+    just the same - which is the reason to show them here at all.
+
+    The two the agent adds itself - the knowledge search and the handover - are
+    not in this list, because their definitions live in the agent behind a
+    livekit decorator this process cannot import. Saying so is better than
+    quietly presenting an incomplete total as a complete one.
+    """
+    store = kblib.agent_module("store")
+    tools_mod = kblib.agent_module("tools")
+    out: list[PromptTool] = []
+    for spec in await store.load_tools(campaign_id):
+        try:
+            name, schema, _ = tools_mod.build_raw(spec, None, lambda *a, **k: None)
+        except Exception:
+            log.exception("could not describe tool for campaign %s", campaign_id)
+            continue
+        out.append(PromptTool(name=name,
+                              json_schema=json.dumps(schema, indent=2),
+                              tokens=ntok(json.dumps(schema))))
+    return out
 
 
 @router.get("/config", response_model=AgentConfigOut)

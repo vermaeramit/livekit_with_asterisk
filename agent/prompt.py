@@ -6,9 +6,14 @@ cache and the warming stops working. Hence one function, imported by both.
 """
 from __future__ import annotations
 
+import datetime
+import logging
 import re
+import zoneinfo
 
 import hours
+
+log = logging.getLogger("prompt")
 
 # Two sets, because the section above them is two different things.
 #
@@ -92,6 +97,33 @@ def render_spoken(template: str | None, dialler: dict[str, str]) -> str | None:
         return (dialler.get(f"dialer.{key}") or default).strip()
 
     return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(one, template)).strip()
+
+
+def now_line(tz_name: str | None) -> str:
+    """The one line that tells the agent what day it is.
+
+    Spelled out - weekday, month by name, 12-hour clock - because the model has
+    to reason with it ("कल" means tomorrow's date, not the string "tomorrow") and
+    an ISO stamp invites it to read the digits aloud to the caller.
+
+    An unknown timezone falls back to +05:30, not to UTC. Every caller on this
+    system is in India, and a clock silently five and a half hours out looks
+    like it is working right up until somebody books a morning appointment.
+    """
+    tz = None
+    if tz_name:
+        try:
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            log.warning("unknown timezone %r - using +05:30", tz_name)
+    if tz is None:
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30), "IST")
+    now = datetime.datetime.now(tz)
+    return ("CURRENT DATE AND TIME: "
+            + now.strftime("%A, %d %B %Y, %I:%M %p ").replace(" 0", " ")
+            + (tz_name or "IST")
+            + "\nUse this to work out what the caller means by today, "
+              "tomorrow, this evening, next week and so on.")
 
 
 async def build_instructions(cfg) -> tuple[str, str, int]:

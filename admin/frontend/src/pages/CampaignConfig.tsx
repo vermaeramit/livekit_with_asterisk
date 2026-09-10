@@ -21,6 +21,7 @@ import {
   X,
   Bot,
   FileClock,
+  FileText,
   Layers,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { KnowledgeSearch } from '@/components/KnowledgeSearch'
@@ -36,6 +37,7 @@ import { CampaignChat } from '@/components/CampaignChat'
 import { PromptVersions } from '@/components/PromptVersions'
 import { ChatWidgetPanel } from '@/components/ChatWidgetPanel'
 import { TransferHours } from '@/components/TransferHours'
+import { FinalPromptPanel } from '@/components/FinalPrompt'
 import { SpeakButton, VoicePreview } from '@/components/VoicePreview'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
@@ -133,7 +135,7 @@ const SONIOX_UNSUPPORTED = ['od-IN']
 
 type TabKey =
   | 'conversation' | 'voice' | 'knowledge' | 'tools' | 'routing' | 'keys'
-  | 'limits' | 'postback' | 'try' | 'prompts' | 'history'
+  | 'limits' | 'postback' | 'final' | 'try' | 'prompts' | 'history'
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'conversation', label: 'Conversation', icon: MessageSquare },
@@ -148,6 +150,10 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   // Its own tab: what leaves this system afterwards is a different concern
   // from how the call is run, and it has a log of its own to show.
   { key: 'postback', label: 'Send to API', icon: Send },
+  // Last of the settings tabs and first of the ones that show a result:
+  // six tabs above contribute to one string, and nothing showed them
+  // together until this.
+  { key: 'final', label: 'Final prompt', icon: FileText },
   // After everything that configures the agent and before the audit log:
   // it is what you do once you have changed something.
   { key: 'try', label: 'Try it', icon: Bot },
@@ -1293,6 +1299,17 @@ export function CampaignConfig() {
 
       {tab === 'postback' && (
         <CampaignPostback campaignId={campaignId} value={value} set={set} />
+      )}
+
+      {tab === 'final' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>What the model receives</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <FinalPromptPanel campaignId={campaignId} />
+          </CardBody>
+        </Card>
       )}
 
       {tab === 'try' && (
