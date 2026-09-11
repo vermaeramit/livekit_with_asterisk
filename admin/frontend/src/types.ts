@@ -200,6 +200,14 @@ export interface ToolActivityResponse {
 }
 
 /** Read from the provider with the campaign's key — never a list held here. */
+export interface RateImport {
+  written: string[]
+  // Models OpenRouter does not list. Named rather than dropped — an unpriced
+  // model shows as zero spend, which reads exactly like a cheap one.
+  missing: string[]
+  note: string
+}
+
 export interface LlmModel {
   id: string
   name: string | null

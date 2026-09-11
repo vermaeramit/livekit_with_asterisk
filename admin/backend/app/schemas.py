@@ -1320,6 +1320,14 @@ class TtsVoice(BaseModel):
     description: str | None = None
 
 
+class RateImport(BaseModel):
+    written: list[str]
+    # Models the catalogue does not list. Named rather than dropped: an
+    # unpriced model shows as zero spend, which reads exactly like a cheap one.
+    missing: list[str]
+    note: str
+
+
 class LlmModel(BaseModel):
     id: str
     name: str | None = None

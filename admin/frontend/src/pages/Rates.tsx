@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { IndianRupee, Plus, Trash2, Wallet } from 'lucide-react'
+import { Download, IndianRupee, Plus, Trash2, Wallet } from 'lucide-react'
 import { PAGE, PageHeader } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -8,6 +8,7 @@ import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Input, Label,
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
 import { formatRelative } from '@/lib/utils'
+import type { RateImport } from '@/types'
 import type { ProviderRate } from '@/types'
 
 /**
@@ -86,6 +87,26 @@ export function Rates() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not save that'),
   })
 
+  const importOpenRouter = useMutation({
+    mutationFn: () => api<RateImport>('/rates/import/openrouter', { method: 'POST' }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['rates'] })
+      if (!r.written.length && !r.missing.length) {
+        toast.success('Nothing to import', r.note)
+      } else if (r.missing.length) {
+        // Not a success. A model with no price shows as zero spend, which
+        // reads exactly like a cheap one.
+        toast.error(
+          `Priced ${r.written.length}, could not price ${r.missing.length}`,
+          `OpenRouter does not list: ${r.missing.join(', ')}`,
+        )
+      } else {
+        toast.success(`Priced ${r.written.length} model${r.written.length === 1 ? '' : 's'}`, r.note)
+      }
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not import'),
+  })
+
   const remove = useMutation({
     mutationFn: (id: number) => api(`/rates/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -112,10 +133,25 @@ export function Rates() {
         title="Provider rates"
         description="What each provider charges, in their own units. Nothing is filled in for you — a price copied from a page months ago is worse than a blank, because a blank asks to be checked."
         actions={
-          <Button size="sm" onClick={() => setEditing({ ...BLANK })}>
-            <Plus className="h-3.5 w-3.5" />
-            Add a rate
-          </Button>
+          <div className="flex gap-2">
+            {/* OpenRouter publishes its prices and they are the same for
+                everybody, so this needs no key and borrows nobody's. It reads
+                only the models actually in use - several hundred rows nobody
+                looks at would bury the handful that matter. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importOpenRouter.mutate()}
+              loading={importOpenRouter.isPending}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Import OpenRouter prices
+            </Button>
+            <Button size="sm" onClick={() => setEditing({ ...BLANK })}>
+              <Plus className="h-3.5 w-3.5" />
+              Add a rate
+            </Button>
+          </div>
         }
       />
 
