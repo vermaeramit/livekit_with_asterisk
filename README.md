@@ -238,6 +238,7 @@ livekit_with_asterisk/
 │   ├── RUNBOOK.md             ← 🔧 the long version: config, debugging, recovery
 │   ├── PROGRESS.md            ← full build log, including what did NOT work
 │   ├── DATABASE.md            ← 💾 backup, restore, and what a dump alone cannot restore
+│   ├── REPLICA.md             ← 📋 cloning a server: the values that must NOT be copied
 │   └── SERVER.md              ← inventory, ports, credentials map
 ├── migrations/                ← numbered SQL, every one safe to re-run
 │   └── 001…051_*.sql

@@ -11,6 +11,11 @@ Two paths, and they are not the same thing:
 | `/srv/aivoice` | the git checkout — **all code runs from here** |
 | `/opt/aivoice` | `.env`, `gcp/sa.json`, the agent's venv, the media stack's compose |
 
+Two **boxes**, and they are not the same thing either: `10.130.9.243` is
+development, `10.130.9.244` is production, and changes go to .243 first. Both
+prompts read `[root@localhost ~]#` — run `hostname -I` before anything that
+writes. Setting up another clone: [REPLICA.md](REPLICA.md).
+
 ---
 
 ## Deploy

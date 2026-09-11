@@ -4547,6 +4547,68 @@ cause is not. What is needed is a rule on calls that finished with
 
 ---
 
+## A clone that answered nothing for two days (11 Sep 2026)
+
+`10.130.9.244` was cloned from .243 on 9 Sep, handed to the dialler team, and
+bound to its Asterisk over IAX2. It went to production and **took no AI calls at
+all for two days.** Every caller got a human instead, which is why nobody
+noticed: the fallback worked perfectly.
+
+```
+-- Called PJSIP/700@livekit
+-- PJSIP/livekit-0000000a is ringing
+-- Nobody picked up in 25000 ms
+--> AI UNAVAILABLE - falling back to human  DIALSTATUS=NOANSWER
+```
+
+### What the evidence ruled out, one at a time
+
+`systemctl is-active` said `active` six times over. That turned out to mean
+almost nothing: the worker journal's most recent line was `registered worker`
+from **two days earlier**, and not one job had arrived since. A process can be
+alive, correctly configured, connected to the right LiveKit, and still be handed
+no work at all — and the only thing that shows it is the absence of logs.
+
+`registered worker … "url": "ws://127.0.0.1:7880"` also killed a theory worth
+recording: that the clone's workers were serving .243's calls. They were not.
+`LIVEKIT_URL` is deliberately absent from `.env`, so livekit-agents defaults to
+localhost, which is right on any box. One value that a clone could not get
+wrong.
+
+Then the `sip` container's logs, whose newest entry was dated the day of the
+clone and read `fromIP: 10.130.9.243`. **Those were .243's logs, carried over by
+the clone.** Nothing had reached .244's livekit-sip since it was created. So the
+INVITE was going somewhere else — and `pjsip.conf` still named `10.130.9.243:5080`.
+
+### Three wrong values, three different failures
+
+They were found one at a time because each one masks the next:
+
+| Value | Failure |
+|---|---|
+| `pjsip.conf` contact | INVITE goes to the other box. Rings 25 s, `NOANSWER`. **The local sip log stays empty** — there is nothing to find where you would look. |
+| trunk `allowed_addresses` | `10.130.9.243/32` on a box sending from .244. No trunk matches, no room is created, the agent is never asked. |
+| `livekit.yaml` `node_ip` | Would have answered the call and then carried no audio. Caught before a test call rather than after. |
+
+The trunk and the dispatch rule live in **Redis, not in files** — copying
+`sip/objects/*.json` deploys nothing — and recreating a trunk mints a new ID that
+the dispatch rule must be rebuilt against. That trap was already written down in
+`sip/objects/README.md`, from the time a reboot wiped both.
+
+### The one still waiting to be found
+
+`TRANSFER_SIP_HOST` defaults to a hardcoded `10.130.9.243` in `voice_agent.py`
+and is not in `.env.example`. On .244 that means **every handoff sends the caller
+to the development box**, and nothing fails until somebody asks for a person. It
+is the same shape as the other three: correct on the machine it was written for,
+silently wrong on every copy of it.
+
+Written up as [REPLICA.md](REPLICA.md) — the values a clone must not copy, what
+each one breaks, and how to prove a new box works before trusting it with
+callers. **`systemctl is-active` is not one of the proofs.**
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

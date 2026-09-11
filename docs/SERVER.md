@@ -2,6 +2,15 @@
 
 Quick-reference facts for `10.130.9.243`. For the setup history see [PROGRESS.md](PROGRESS.md).
 
+> **There are two boxes as of 11 Sep 2026.** `10.130.9.243` is **development** —
+> everything is built and proved here first. `10.130.9.244` is **production**, a
+> VM clone of this one, bound to the dialler over IAX2. Everything below
+> describes .243; the handful of values that differ on a clone, and what each
+> one breaks when it does not, are in [REPLICA.md](REPLICA.md).
+>
+> Both hosts report a hostname of `localhost.localdomain`, so the shell prompt
+> is identical on each. `hostname -I` is the only thing that tells them apart.
+
 ---
 
 ## Host
