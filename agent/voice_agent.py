@@ -1114,18 +1114,28 @@ def _llm_stack(cfg, keys: dict):
     if not FALLBACK:
         return primary
 
-    fb = _fallback_provider("llm", cfg.llm_fallback_provider, provider, keys)
+    # getattr, like prompt_datetime and kb_filler_enabled above, and for the
+    # reason this file learned the hard way: a column added to agent_config and
+    # not added to the AgentConfig dataclass in store.py reaches here as an
+    # AttributeError, and an AttributeError in here kills the call at 0s.
+    #
+    # A MISSING FALLBACK FIELD SHOULD MEAN NO FALLBACK, which is exactly what
+    # None gives - the documented degradation rather than a dead call. Matching
+    # the failure to what the field means is the whole point of the default.
+    fb = _fallback_provider("llm", getattr(cfg, "llm_fallback_provider", None),
+                            provider, keys)
     # No model, no fallback. Unlike STT and TTS there is no provider default to
     # reach for, so a half-configured fallback would fail at the moment it was
     # needed rather than at the moment it was saved.
-    if not fb or not (cfg.llm_fallback_model or "").strip():
+    fb_model = (getattr(cfg, "llm_fallback_model", None) or "").strip()
+    if not fb or not fb_model:
         if fb:
             logger.warning("llm fallback '%s' has no model set - "
                            "running on %s alone", fb, provider)
         return primary
 
     return lk_llm.FallbackAdapter(
-        [primary, _build_llm(fb, cfg, keys[fb], cfg.llm_fallback_model)],
+        [primary, _build_llm(fb, cfg, keys[fb], fb_model)],
         attempt_timeout=ATTEMPT_TIMEOUT)
 
 

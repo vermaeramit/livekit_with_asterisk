@@ -24,6 +24,11 @@ class AgentConfig:
     llm_provider: str
     llm_model: str
     llm_temperature: float
+    # NULL = no fallback, like stt_fallback_provider above. The model is stored
+    # too, and must be: unlike STT and TTS there is no provider default to reach
+    # for, because on a gateway the model name is the routing.
+    llm_fallback_provider: Optional[str]
+    llm_fallback_model: Optional[str]
     tts_provider: str
     tts_model: Optional[str]
     tts_fallback_provider: Optional[str]
