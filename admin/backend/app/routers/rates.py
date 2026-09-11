@@ -107,15 +107,15 @@ async def upsert_rate(body: ProviderRateIn,
 _OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 
 
-def _fetch_openrouter_prices() -> dict[str, tuple[Decimal, Decimal]]:
-    """-> {model id: (input per million, output per million)}."""
+def _fetch_openrouter_prices() -> dict[str, tuple[Decimal, Decimal, Decimal]]:
+    """-> {model id: (input, output, cached read) per million}."""
     req = urllib.request.Request(
         _OPENROUTER_MODELS,
         headers={"User-Agent": "AIVoice-Console/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.loads(r.read().decode("utf-8", "replace")).get("data") or []
 
-    out: dict[str, tuple[Decimal, Decimal]] = {}
+    out: dict[str, tuple[Decimal, Decimal, Decimal]] = {}
     for m in data:
         mid = m.get("id")
         pricing = m.get("pricing") or {}
@@ -123,10 +123,30 @@ def _fetch_openrouter_prices() -> dict[str, tuple[Decimal, Decimal]]:
             # OpenRouter quotes per TOKEN, as a string. This table stores
             # per_million, which is how every provider's page reads and what
             # somebody checking the number will be comparing against.
-            out[mid] = (Decimal(str(pricing["prompt"])) * 1_000_000,
-                        Decimal(str(pricing["completion"])) * 1_000_000)
+            prompt = Decimal(str(pricing["prompt"])) * 1_000_000
+            completion = Decimal(str(pricing["completion"])) * 1_000_000
         except (KeyError, TypeError, ArithmeticError):
             continue
+
+        # CACHED READS. OpenRouter does cache - its own docs put the discount
+        # between 0.1x and 0.5x depending on who serves the model - but most
+        # entries publish no field for it. gemma-4-26b-a4b-it lists exactly
+        # "prompt" and "completion" and nothing else.
+        #
+        # Where there is a price, use it. Where there is not, charge cached
+        # tokens at the FULL input rate. That overstates by whatever the real
+        # discount is, and overstating is the right direction: a cost that
+        # looks too high gets checked, and one that looks too low does not.
+        #
+        # The alternative was leaving it unpriced, which is what this import
+        # did first - and call 582 then reported 10 paise for a call that cost
+        # about 20, because 26,112 of its 47,329 prompt tokens were cached and
+        # therefore free.
+        try:
+            cached = Decimal(str(pricing["input_cache_read"])) * 1_000_000
+        except (KeyError, TypeError, ArithmeticError):
+            cached = prompt
+        out[mid] = (prompt, completion, cached)
     return out
 
 
@@ -175,8 +195,9 @@ async def import_openrouter_rates(actor: CurrentUser = Depends(superadmin)):
             # is indistinguishable from a cheap call.
             missing.append(model)
             continue
-        pin, pout = prices[model]
-        for kind, price in (("llm_input", pin), ("llm_output", pout)):
+        pin, pout, pcached = prices[model]
+        for kind, price in (("llm_input", pin), ("llm_output", pout),
+                            ("llm_cached", pcached)):
             await db.pool().execute(
                 """INSERT INTO provider_rates
                        (provider, model, kind, unit, price, currency, note, updated_by)
@@ -188,16 +209,14 @@ async def import_openrouter_rates(actor: CurrentUser = Depends(superadmin)):
                 model, kind, price, f"From OpenRouter, {today}", actor.id)
         written.append(model)
 
-    # No llm_cached row, and that is not an oversight: a gateway does not serve
-    # OpenAI's prompt cache, so cached_tokens on these calls is zero and a rate
-    # for it would price nothing. The absence is the honest record.
     await audit.record(actor, entity="provider_rate", entity_id="openrouter",
                        action="import",
                        changes={"models": {"from": None, "to": ", ".join(written)}})
     return RateImport(
         written=written, missing=missing,
-        note=f"Prices read from OpenRouter on {today}. Cached-token rates are "
-             f"not imported: a gateway has no prompt cache to charge for.")
+        note=f"Prices read from OpenRouter on {today}. Where a model publishes "
+             f"no cached-read price, cached tokens are charged at the full "
+             f"input rate - which overstates rather than under.")
 
 
 @router.delete("/rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
