@@ -168,6 +168,59 @@ exercises, and step 4 is invisible until you do.
 
 ---
 
+## Emptying the clone
+
+**After** it is proved working, not before. A clone arrives carrying the source
+box's calls, transcripts, knowledge base, audit trail and provider keys, and a
+client logging in to find somebody else's campaigns is noticed once and
+remembered for a long time.
+
+The order matters: the test call above needs a campaign to run, and the wipe
+removes every campaign. Prove the wiring first, then empty it, then build the
+real campaigns.
+
+```bash
+cd /srv/aivoice
+server-configs/reset-production-data.sh                        # dry run
+server-configs/reset-production-data.sh --confirm <NEW_IP>
+server-configs/reset-production-data.sh --confirm <NEW_IP> --recordings
+```
+
+| Kept | Removed |
+|---|---|
+| `tenants`, `users`, `roles`, `role_permissions` | calls, turns, errors, postbacks, tool invocations |
+| `provider_rates`, `platform_settings` | campaigns, agent configs, prompt versions, routes, tools |
+| tenant-level `alert_rules` | the knowledge base, chat, fired alerts, audit trail, sessions |
+| | **provider keys** and diallers |
+
+Three things the script does that are worth knowing about:
+
+- **`--confirm` takes this box's IP**, and it is checked against the interfaces
+  the machine actually holds. It is not a "type yes to continue" prompt — that
+  guards against haste, and the mistake being guarded here is being on the wrong
+  server, which feels exactly like being on the right one.
+- **It backs up first**, to `/opt/aivoice/backups/pre-reset/`, and verifies the
+  dump by listing it before deleting anything. Deliberately not the nightly
+  directory, whose 14-day retention would delete the only copy of what was
+  removed a fortnight later.
+- **It runs in one transaction and checks the kept tables afterwards.** If any of
+  them lost a row to a cascade nobody predicted, it raises and the whole thing
+  rolls back. The cascade graph has 48 edges and `calls → campaigns` is `SET
+  NULL`, not `CASCADE` — deleting campaigns leaves every call row in place with
+  a null campaign, which is exactly the sort of thing that is noticed a week
+  later.
+
+**Provider keys are removed**, so the box will not place a call until keys are
+entered again in the console. They cannot be read back out of the dump by hand —
+they are Fernet-encrypted — but the same rows still exist on the source box,
+which shares `SECRETS_KEY`.
+
+Recordings are files under `/var/spool/asterisk/recordings/` and no database row
+points at them once the calls are gone. `--recordings` deletes the `.wav` files;
+leaving them costs only disk.
+
+---
+
 ## What must NOT change
 
 Worth stating, because "it mentions a host, change it" is the wrong rule:
