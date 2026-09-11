@@ -371,6 +371,13 @@ async def set_dialler_context(call_id: int, ctx: dict) -> None:
     )
 
 
+# What the safety net writes when it closes a call nobody else closed. A
+# CONSTANT, because end_call_usage below has to recognise it to clear it - see
+# the note there. Two copies of this string would mean a call labelled as a
+# failure forever the first time somebody reworded one of them.
+SAFETY_NET_OUTCOME = "the job failed before the session started"
+
+
 async def end_call_if_open(call_id: int, reason: str, outcome: str) -> None:
     """Close a call only if nothing else already did.
 
@@ -378,6 +385,12 @@ async def end_call_if_open(call_id: int, reason: str, outcome: str) -> None:
     voice or model raises while AgentSession is being built - leaves a row with
     no ended_at. Nothing ever closes it, so it sits in the live monitor as a
     stuck call forever and skews every duration average.
+
+    ORDER IS NOT GUARANTEED. This can run BEFORE the real handler, and on call
+    583 it did: a healthy 271-second, 16-turn conversation was closed here
+    first, then reopened to 'completed' by end_call_usage - which writes
+    end_reason and not outcome, so the failure message stayed on a call that
+    never failed. end_call_usage clears it now.
     """
     await (await pool()).execute(
         """UPDATE calls
@@ -416,6 +429,15 @@ async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
                ended_at    = now(),
                duration_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
                end_reason  = $2,
+               -- Clear the safety net's message, and ONLY that message. It
+               -- writes an outcome when it closes a call nobody else closed,
+               -- and it can win the race even on a call that went perfectly -
+               -- leaving "the job failed before the session started" on 271
+               -- seconds of working conversation.
+               --
+               -- Matched exactly rather than blanked, because a real outcome
+               -- set by the shutdown handler beside this one must survive.
+               outcome     = CASE WHEN outcome = $17 THEN NULL ELSE outcome END,
                limit_hit   = $3,
                turn_count  = $4,
                llm_prompt_tokens        = $5,
@@ -448,7 +470,9 @@ async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
         (models or {}).get("llm"),
         (models or {}).get("stt"),
         (models or {}).get("tts"),
+        SAFETY_NET_OUTCOME,
     )
+
 
 async def log_turn(call_id: int, seq: int, role: str, text: str | None, **t):
     await (await pool()).execute(

@@ -1547,8 +1547,10 @@ async def entrypoint(ctx: JobContext):
     # It only writes when nothing else has, so the real shutdown handler still
     # sets the accurate reason whichever order they run in.
     async def _safety_net():
-        await store.end_call_if_open(
-            call_id, "error", "the job failed before the session started")
+        # The constant, not the words. end_call_usage matches on this exact
+        # string to clear it when the call turns out to have been fine, and two
+        # copies would mean a healthy call wearing a failure message forever.
+        await store.end_call_if_open(call_id, "error", store.SAFETY_NET_OUTCOME)
 
     ctx.add_shutdown_callback(_safety_net)
 
