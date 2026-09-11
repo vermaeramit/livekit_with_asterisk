@@ -1294,17 +1294,39 @@ async def _warm_tts(tts, seen: set[str]) -> None:
     when it in fact took none at all - a number somebody would eventually spend
     an afternoon chasing.
     """
-    t = time.perf_counter()
-    try:
-        async for ev in tts.synthesize("नमस्ते"):
+    async def once(text: str) -> float:
+        t = time.perf_counter()
+        async for ev in tts.synthesize(text):
             # Claimed before the stream ends, and the metrics arrive when it
             # ends - so by the time anybody asks, this id is already spoken for.
             seen.add(ev.request_id)
+        return (time.perf_counter() - t) * 1000
+
+    try:
+        cold = await once("नमस्ते")
+        # A SECOND one, and it is the more useful number.
+        #
+        # Every turn of every call has sat at 700-730 ms of tts_ttfb, and that
+        # flatness says fixed overhead rather than synthesis. What it does not
+        # say is whose: the plugin buffers the model's output into complete
+        # SENTENCES before sending any of it, so a turn's tts_ttfb includes
+        # waiting on the LLM to finish a sentence - it is partly a measure of
+        # the language model, wearing the TTS's name.
+        #
+        # This call cannot be: a whole string goes in at once, so the tokenizer
+        # has nothing to wait for and the connection is already open. Warm
+        # websocket plus Soniox, and nothing else.
+        #
+        #   ~700 ms here -> the floor is Soniox's, and only a provider change
+        #                   moves it
+        #   ~250 ms here -> the rest is the tokenizer waiting on the LLM, and
+        #                   that is worth attacking
+        warm = await once("ठीक है")
     except Exception:
         logger.debug("tts warm-up failed - the first reply will pay for it",
                      exc_info=True)
         return
-    logger.info("TIMING tts_warm=%dms", (time.perf_counter() - t) * 1000)
+    logger.info("TIMING tts_warm=%dms  tts_warm2=%dms", cold, warm)
 
 
 async def _warm_providers() -> None:
