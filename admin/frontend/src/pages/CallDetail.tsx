@@ -381,10 +381,13 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
  * checking what it was set to today, and hoping nobody had changed it since.
  */
 function ProvidersCard({ c }: { c: CallDetailType }) {
-  const rows: [string, string | null][] = [
-    ['Speech to text', c.stt_provider_used],
-    ['Language model', c.llm_provider_used],
-    ['Voice', c.tts_provider_used],
+  // The model beside the provider. "openrouter" on its own does not say what
+  // ran - that one fronts hundreds of models, and two calls a week apart on
+  // different ones look identical without it.
+  const rows: [string, string | null, string | null][] = [
+    ['Speech to text', c.stt_provider_used, c.stt_model_used],
+    ['Language model', c.llm_provider_used, c.llm_model_used],
+    ['Voice', c.tts_provider_used, c.tts_model_used],
   ]
 
   return (
@@ -396,22 +399,31 @@ function ProvidersCard({ c }: { c: CallDetailType }) {
         </CardTitle>
       </CardHeader>
       <CardBody className="space-y-1.5 text-sm">
-        {rows.map(([label, v]) => {
+        {rows.map(([label, v, model]) => {
           // A comma means the primary failed partway and the fallback took over.
           const chain = v ? v.split(',').filter(Boolean) : []
           return (
             <div key={label} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5">
-              <span className="text-muted-foreground">{label}</span>
+              <span className="shrink-0 text-muted-foreground">{label}</span>
               {chain.length === 0 ? (
                 <span className="text-muted-foreground">—</span>
               ) : (
-                <span className="flex items-center gap-1 font-medium">
-                  {chain.map((p, i) => (
-                    <span key={`${p}-${i}`} className="flex items-center gap-1">
-                      {i > 0 && <span className="text-warning">→</span>}
-                      <span className={cn(i > 0 && 'text-warning')}>{p}</span>
+                <span className="min-w-0 text-right">
+                  <span className="flex items-center justify-end gap-1 font-medium">
+                    {chain.map((p, i) => (
+                      <span key={`${p}-${i}`} className="flex items-center gap-1">
+                        {i > 0 && <span className="text-warning">→</span>}
+                        <span className={cn(i > 0 && 'text-warning')}>{p}</span>
+                      </span>
+                    ))}
+                  </span>
+                  {model && (
+                    // Monospace and small: it is an identifier, read when
+                    // something is being compared rather than at a glance.
+                    <span className="block truncate font-mono text-2xs text-muted-foreground">
+                      {model}
                     </span>
-                  ))}
+                  )}
                 </span>
               )}
             </div>

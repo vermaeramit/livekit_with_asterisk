@@ -154,6 +154,11 @@ export interface CallDetail extends CallListItem {
   stt_provider_used: string | null
   llm_provider_used: string | null
   tts_provider_used: string | null
+  // Which model, not only whose. A gateway fronts hundreds, so the
+  // provider alone does not say what ran.
+  stt_model_used: string | null
+  llm_model_used: string | null
+  tts_model_used: string | null
   recording_path: string | null
   recording_available: boolean
   recording_bytes: number | null

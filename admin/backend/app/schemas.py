@@ -1482,6 +1482,17 @@ class CallDetail(CallListItem):
     stt_provider_used: str | None = None
     llm_provider_used: str | None = None
     tts_provider_used: str | None = None
+    # Selected by the query since costing needed them, and dropped here ever
+    # since because the model never declared them. "openrouter" alone does not
+    # answer which call this was - that provider fronts hundreds of models, and
+    # a campaign moved between two of them looks identical without this.
+    #
+    # The model the campaign was CONFIGURED with, so if a fallback fired this
+    # still names the primary - same honest approximation as the provider
+    # column beside it.
+    stt_model_used: str | None = None
+    llm_model_used: str | None = None
+    tts_model_used: str | None = None
     recording_path: str | None
     # Resolved from the filesystem on every read. Retention deletes files
     # without touching the database, so a stored flag would go stale.
