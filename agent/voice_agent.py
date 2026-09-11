@@ -83,6 +83,25 @@ STT_FINAL_CEILING = float(os.getenv("STT_FINAL_CEILING_MS", "2000")) / 1000
 # TTS is Soniox characters at full rate, on the layer we are NOT saving on. So
 # this is a flag: one day on, then read tts_ttfb and the Soniox bill together.
 PREEMPTIVE_TTS = os.getenv("PREEMPTIVE_TTS", "0") == "1"
+
+# How long Silero waits, after the caller stops making sound, before saying the
+# speech has ended. Nothing downstream can start until it does.
+#
+# The plugin's default is 0.55 and silero.VAD.load() was called with no
+# arguments at all, so it has never been chosen. It shows up in the data as a
+# floor rather than a measurement: on call 583 eou was 577 ms on nine separate
+# turns while stt underneath it ranged from 297 to 652. 550 + ~27 ms of
+# detector, every turn, whatever was said.
+#
+# Left at 0.55 so this change moves nothing. Lowering it is the experiment: the
+# semantic turn detector is what makes that reasonable - Silero saying "stopped"
+# only starts the question, and an unfinished sentence should still score as
+# incomplete and wait, bounded by MIN/MAX_ENDPOINTING.
+#
+# The risk worth watching is not people being cut off - it is the STT being
+# flushed sooner on a half-finished sentence, so the detector scores a
+# transcript that was never going to be complete.
+VAD_MIN_SILENCE = float(os.getenv("VAD_MIN_SILENCE", "0.55"))
 # A knowledge-base hit below this is recorded as a gap even though it was used.
 # Above kb_min_score, so it catches the band where an answer is technically
 # grounded and practically a guess.
@@ -110,7 +129,7 @@ def prewarm(proc: JobProcess):
     works, it just pays the cost later - which is exactly where it was before.
     """
     t = time.perf_counter()
-    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["vad"] = silero.VAD.load(min_silence_duration=VAD_MIN_SILENCE)
     vad_ms = (time.perf_counter() - t) * 1000
 
     t = time.perf_counter()
@@ -123,8 +142,8 @@ def prewarm(proc: JobProcess):
                          "process will pay for them instead")
     imports_ms = (time.perf_counter() - t) * 1000
 
-    logger.info("prewarm complete: VAD %.0f ms, imports %.0f ms",
-                vad_ms, imports_ms)
+    logger.info("prewarm complete: VAD %.0f ms (min_silence=%.2fs), imports %.0f ms",
+                vad_ms, VAD_MIN_SILENCE, imports_ms)
 
 
 def _stt_kwargs(cfg):

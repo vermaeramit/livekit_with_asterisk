@@ -323,6 +323,7 @@ Set in `/opt/aivoice/.env` to persist, or exported per-run to experiment.
 | `SARVAM_HIGH_VAD` | `1` | **Biggest lever.** Cuts Sarvam's end-of-speech lag ~1000 ms → ~250 ms |
 | `MIN_ENDPOINTING_DELAY` | `0.25` | Silence before deciding the caller stopped. Lower = snappier, but cuts people off mid-thought |
 | `MAX_ENDPOINTING_DELAY` | `1.5` | Cap when the turn detector is unsure. The 4.0 default froze calls for 4 s on short closings |
+| `VAD_MIN_SILENCE` | `0.55` | How long Silero waits after sound stops before declaring the turn over. Nothing downstream starts until it does, so it is a floor under every turn: call 583 measured `eou` at 577 ms on nine turns while `stt` underneath ranged 297–652. The plugin's default, never chosen — `silero.VAD.load()` took no arguments at all. Lowering it is safe-ish because the semantic turn detector still has to agree the sentence is finished; what to watch is the STT being flushed on a half-sentence |
 | `PREEMPTIVE_TTS` | `0` | Run TTS before the turn is confirmed. The LLM already does — the library defaults `preemptive_generation.enabled` to True — and this is the other half. Aimed at TTS being the worst layer: 732 ms p50 against 241 documented. Off by default because a discarded generation costs synthesised characters at full rate |
 | `NUM_IDLE_PROCESSES` | `3` | Pre-warmed job processes (`start` mode only) |
 | `AGENT_CONFIG` | `default` | Which `agent_config` row to load |
