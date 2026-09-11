@@ -177,13 +177,19 @@ async def widget_chat(public_key: str, body: WidgetTurnIn, request: Request):
         return refuse("Sorry, I am not available right now. Please try again later.")
 
     keys = await pk.resolve(tenant_id=w["tenant_id"], campaign_id=w["campaign_id"])
-    if not keys.get("openai"):
-        return refuse("Sorry, chat is not available right now.")
 
     store = kblib.agent_module("store")
     chat = kblib.agent_module("chat")
+    providers = kblib.agent_module("providers")
     cfg = await store.load_config(w["config_name"])
     tool_specs = await store.load_tools(w["campaign_id"])
+
+    # After the config, because which key matters depends on the campaign - the
+    # widget runs the campaign's own language model, whatever that now is.
+    llm_provider = getattr(cfg, "llm_provider", None) or "openai"
+    if not keys.get(llm_provider):
+        log.warning("widget %s: campaign has no %s key", public_key, llm_provider)
+        return refuse("Sorry, chat is not available right now.")
 
     conv, history = await _conversation(w, body.session_id, origin)
     if len(history) >= MAX_TURNS * 2:
@@ -201,7 +207,8 @@ async def widget_chat(public_key: str, body: WidgetTurnIn, request: Request):
                 await queue.put(event)
 
         task = asyncio.create_task(
-            chat.reply(cfg, history, keys["openai"], tool_specs, on_event))
+            chat.reply(cfg, history, keys[llm_provider], tool_specs, on_event,
+                       base_url=providers.llm_base_url(llm_provider)))
 
         try:
             while not task.done() or not queue.empty():

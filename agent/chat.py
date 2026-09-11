@@ -121,7 +121,8 @@ class Reply:
 
 
 async def reply(cfg, history: list[dict], api_key: str,
-                tool_specs: list[dict] | None = None, emit=None) -> Reply:
+                tool_specs: list[dict] | None = None, emit=None,
+                base_url: str | None = None) -> Reply:
     """One assistant turn, streamed.
 
     `history` is [{"role": "user"|"assistant", "content": str}, ...] and is
@@ -139,7 +140,11 @@ async def reply(cfg, history: list[dict], api_key: str,
     instructions, _, _ = await prompt_mod.build_instructions(cfg)
     instructions += CHAT_RULES
 
-    client = AsyncOpenAI(api_key=api_key)
+    # The campaign's own language model. The tester and the widget both ran
+    # this on keys["openai"] whatever the campaign was set to, which made them
+    # a test of something other than the thing being tested.
+    client = AsyncOpenAI(api_key=api_key,
+                         **({"base_url": base_url} if base_url else {}))
     steps: list[Step] = []
     first_token_ms = 0
 

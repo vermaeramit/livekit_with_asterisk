@@ -137,7 +137,8 @@ def tool_text(tool_calls: list[dict], limit: int = 6000) -> str:
 
 async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
                   tool_calls: list[dict] | None = None,
-                  model: str = "gpt-4.1-mini") -> dict:
+                  model: str = "gpt-4.1-mini",
+                  base_url: str | None = None) -> dict:
     """-> {field: value}, or {} when there is nothing to extract.
 
     Failure is not raised. A call whose extraction fails should still deliver
@@ -164,7 +165,11 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
     try:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key)
+        # base_url, because this runs on the CAMPAIGN'S language model, not
+        # on OpenAI by definition. A campaign on a gateway has a gateway key
+        # and a model name only that gateway knows.
+        client = AsyncOpenAI(api_key=api_key,
+                             **({"base_url": base_url} if base_url else {}))
         resp = await client.chat.completions.create(
             model=model,
             # Deterministic: the same conversation must produce the same record

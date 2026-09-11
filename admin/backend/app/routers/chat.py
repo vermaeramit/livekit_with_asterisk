@@ -228,11 +228,6 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
     tenant_id = await assert_campaign_visible(actor, campaign_id)
 
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
-    if not keys.get("openai"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "this campaign has no OpenAI key - a test turn is a real request, "
-            "billed to it exactly as a call is")
 
     # The agent's own loader, so the config object is the one the call gets -
     # including the JSONB columns it decodes and the fields a dataclass would
@@ -250,6 +245,19 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
     cfg = await store.load_config(cfg_row["name"])
     tool_specs = await store.load_tools(campaign_id)
 
+    # The key is checked AFTER the config loads, because which key is the right
+    # one depends on the campaign. This asked for an OpenAI key unconditionally
+    # and then ran the turn on it, so a campaign using a gateway was tested
+    # against a model it does not use - or refused for want of a key it does
+    # not need.
+    providers = kblib.agent_module("providers")
+    llm_provider = getattr(cfg, "llm_provider", None) or "openai"
+    if not keys.get(llm_provider):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"this campaign has no {llm_provider} key - a test turn is a real "
+            "request, billed to it exactly as a call is")
+
     history = [{"role": m.role, "content": m.content} for m in body.history]
     history.append({"role": "user", "content": body.message})
 
@@ -260,7 +268,8 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
             await queue.put(event)
 
         task = asyncio.create_task(
-            chat.reply(cfg, history, keys["openai"], tool_specs, on_event))
+            chat.reply(cfg, history, keys[llm_provider], tool_specs, on_event,
+                       base_url=providers.llm_base_url(llm_provider)))
 
         try:
             # The queue drains as the model produces, so words appear while it

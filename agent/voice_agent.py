@@ -43,6 +43,7 @@ import greeting_cache
 import hours
 import prompt as prompt_mod
 import tools as tools_mod
+import providers as providers_mod
 import tts_defaults
 
 # NOTE: livekit.agents.inference.TurnDetector is the newer API, but its signature
@@ -1068,11 +1069,6 @@ def _tts_stack(cfg, keys: dict):
         sample_rate=_TTS_NATIVE_RATE.get(cfg.tts_provider, 24000))
 
 
-# Gateways that speak OpenAI's wire format, which is most of them. One entry
-# here is one more provider a campaign can choose, with no new plugin.
-_LLM_BASE_URL = {"openrouter": "https://openrouter.ai/api/v1"}
-
-
 def _build_llm(provider: str, cfg, key: str, model: str):
     """One language model leg. The model is passed in, not read from cfg.
 
@@ -1081,8 +1077,8 @@ def _build_llm(provider: str, cfg, key: str, model: str):
     OpenRouter wants "openai/gpt-4.1-mini" there, which is not the same string.
     """
     kw = {"model": model, "temperature": cfg.llm_temperature, "api_key": key}
-    if provider in _LLM_BASE_URL:
-        kw["base_url"] = _LLM_BASE_URL[provider]
+    if provider in providers_mod.LLM_BASE_URL:
+        kw["base_url"] = providers_mod.LLM_BASE_URL[provider]
     else:
         # prompt_cache_key is OpenAI's own parameter and means nothing to a
         # gateway. Sent anyway it is at best ignored and at worst a 400.
@@ -1367,8 +1363,19 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             except Exception:
                 fields = []
 
+        # The campaign's OWN language model, not openai by assumption.
+        #
+        # This read keys["openai"] and sent cfg.llm_model to it. On a campaign
+        # using a gateway both halves are wrong at once: there may be no OpenAI
+        # key at all, and "google/gemma-4-26b-a4b-it" is a name OpenAI has never
+        # heard of. It failed inside the except below, so no postback row was
+        # written and the console showed nothing missing - the call simply never
+        # reached the customer's system.
+        llm_provider = getattr(cfg, "llm_provider", None) or "openai"
         extracted = await pb.extract(
-            turns=turns, fields=fields, api_key=keys.get("openai", ""),
+            turns=turns, fields=fields,
+            api_key=keys.get(llm_provider, ""),
+            base_url=providers_mod.llm_base_url(llm_provider),
             tool_calls=tool_calls, model=cfg.llm_model)
 
         payload = pb.envelope(
@@ -1833,6 +1840,17 @@ async def entrypoint(ctx: JobContext):
         # provider is exactly the case worth seeing.
         parts = label.split(".")
         name = parts[2] if len(parts) > 3 and parts[1] == "plugins" else label[:40]
+        # A gateway rides the openai plugin, so the label says "openai" whatever
+        # the campaign actually chose - and llm_provider_used is what costing
+        # looks a rate up by, so an OpenRouter call was being priced at OpenAI's
+        # rates and shown as OpenAI on the call page.
+        #
+        # What this still cannot tell you is WHICH LEG answered when a fallback
+        # is configured and both legs are openai-compatible: the label is
+        # identical for both. Recording the configured primary is the honest
+        # approximation, and this comment is the rest of the truth.
+        if layer == "llm" and name == "openai":
+            name = getattr(cfg, "llm_provider", None) or "openai"
         providers_used[layer].add(name)
 
     @session.on("metrics_collected")
