@@ -121,8 +121,13 @@ async def _run(call_ids: list[int], dry_run: bool) -> int:
                 done += 1
     finally:
         await store.close()
+    if dry_run:
+        # Not "0 of 1 queued", which is what this used to say and reads as a
+        # failure when nothing failed.
+        log.info("dry run - %d call(s) checked, nothing written", len(call_ids))
+        return 0
     log.info("%d of %d queued", done, len(call_ids))
-    return 0 if done == len(call_ids) or dry_run else 1
+    return 0 if done == len(call_ids) else 1
 
 
 def main() -> int:

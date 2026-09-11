@@ -1393,6 +1393,12 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
     """
     if not getattr(cfg, "postback_enabled", False):
         return
+    # Everything this function does happens inside the shutdown budget, and
+    # until call 590 nobody knew how much of it was being used. Logged so the
+    # question "is 45 seconds enough" has an answer in the journal rather than
+    # in somebody's judgement. It covers the DB reads as well as the
+    # extraction - the extraction logs its own share separately.
+    t0 = time.monotonic()
     try:
         import postback as pb
 
@@ -1442,10 +1448,11 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             full=getattr(cfg, "postback_full_payload", True))
 
         await store.save_postback(call_id, cfg.campaign_id, payload)
-        logger.info("postback queued for call %s (%d extracted fields)",
-                    call_id, len(extracted))
+        logger.info("postback queued for call %s (%d extracted fields) in %dms",
+                    call_id, len(extracted), (time.monotonic() - t0) * 1000)
     except Exception:
-        logger.exception("postback could not be prepared for call %s", call_id)
+        logger.exception("postback could not be prepared for call %s "
+                         "after %dms", call_id, (time.monotonic() - t0) * 1000)
 
 
 async def entrypoint(ctx: JobContext):

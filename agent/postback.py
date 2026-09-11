@@ -20,6 +20,7 @@ import datetime
 import json
 import logging
 import os
+import time
 from datetime import timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -181,6 +182,13 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
     if tools_md:
         text = text + "\n\n=== TOOL RESULTS ===\n" + tools_md
 
+    # EXTRACT_TIMEOUT and SHUTDOWN_PROCESS_TIMEOUT were chosen against five
+    # measurements taken by hand from the journal - 2.9 to 4.8 s - and one call
+    # that ran past 10 s and was killed before it could say how far past. That
+    # is not enough to size a deadline with, and without this line the next
+    # answer would be another guess. Logged on every path, so "how close are we
+    # to the limit" is a grep rather than an afternoon.
+    t0 = time.monotonic()
     try:
         from openai import AsyncOpenAI
 
@@ -214,7 +222,9 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
         # and can be read without guarding.
         out = {k: (None if data.get(k) == "" else data.get(k)) for k in keys}
         found = sum(1 for v in out.values() if v is not None)
-        log.info("postback: extracted %d of %d fields", found, len(keys))
+        log.info("postback: extracted %d of %d fields in %dms (%d turns, "
+                 "budget %ds)", found, len(keys),
+                 (time.monotonic() - t0) * 1000, len(turns), EXTRACT_TIMEOUT)
         return out
     # BEFORE the clause below, and not folded into it. On Python 3.11+
     # asyncio.TimeoutError IS the builtin TimeoutError, which is an Exception -
@@ -230,7 +240,8 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
     except Exception:
         # Still the full shape. A failed extraction must not look to the client
         # like a different message from a call where nothing was established.
-        log.exception("postback extraction failed - sending the facts anyway")
+        log.exception("postback extraction failed after %dms - sending the "
+                      "facts anyway", (time.monotonic() - t0) * 1000)
         return {k: None for k in keys}
 
 

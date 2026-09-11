@@ -1304,6 +1304,26 @@ It refuses a call that already has a row, so it cannot send the same call twice.
 `POSTBACK_EXTRACT_TIMEOUT=120` in front for a long call on a slow gateway — there is no
 shutdown deadline here.
 
+### Are the two deadlines still right?
+
+45 s and 20 s were set from five timings read by hand out of the journal (2.9–4.8 s) and
+one call that was killed before it could say how long it needed. That is a starting point,
+not a measurement. Both halves now log their own time:
+
+```bash
+# the LLM round trip alone
+journalctl -u "aivoice-agent@*" --since today --no-pager | grep "postback: extracted"
+
+# the whole thing, DB reads included - this is what spends the shutdown budget
+journalctl -u "aivoice-agent@*" --since today --no-pager | grep "postback queued"
+```
+
+Watch the slowest few, not the average. If they start approaching 20000 ms, raise
+`POSTBACK_EXTRACT_TIMEOUT` **and** `SHUTDOWN_PROCESS_TIMEOUT` together — the gap between
+them is what pays for writing the row, and raising either alone only moves the cliff.
+`gave up after 20s` in the journal means it is already happening: those calls are being
+delivered without their extracted fields.
+
 ---
 
 ## 7. Measuring latency
