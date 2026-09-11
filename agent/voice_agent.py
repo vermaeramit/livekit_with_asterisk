@@ -69,6 +69,20 @@ MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
 # max_endpoint_delay_ms cannot help: that bounds the wait AFTER cessation is
 # detected, so it never applies to the case that hurts.
 STT_FINAL_CEILING = float(os.getenv("STT_FINAL_CEILING_MS", "2000")) / 1000
+
+# Run TTS before the turn is confirmed, not just the LLM.
+#
+# Preemptive generation is already ON - the library defaults it to True and we
+# never turned it off - but only for the LLM. preemptive_tts is False by
+# default, so the voice does not start until the turn is settled, and TTS is
+# this system's worst layer: 732 ms p50 and 1741 ms p95 measured over a week,
+# against 241 ms documented on the provider we no longer use.
+#
+# The cost is not symmetric with the LLM's. A discarded preemptive LLM call is
+# cheap now - the gateway model is a twentieth of the old price - but discarded
+# TTS is Soniox characters at full rate, on the layer we are NOT saving on. So
+# this is a flag: one day on, then read tts_ttfb and the Soniox bill together.
+PREEMPTIVE_TTS = os.getenv("PREEMPTIVE_TTS", "0") == "1"
 # A knowledge-base hit below this is recorded as a gap even though it was used.
 # Above kb_min_score, so it catches the band where an answer is technically
 # grounded and practically a guess.
@@ -1517,7 +1531,8 @@ async def entrypoint(ctx: JobContext):
     logger.info("config=%s lang=%s llm=%s kb=%s(%s, %d tok) transfer=%s->%s",
                 cfg.name, cfg.language, cfg.llm_model, cfg.kb_enabled, kb_mode,
                 kb_tokens, cfg.transfer_enabled, _transfer_target(cfg))
-    logger.info("TIMING config+keys+prompt=%dms", since())
+    logger.info("TIMING config+keys+prompt=%dms  preemptive_tts=%s",
+                since(), PREEMPTIVE_TTS)
 
     call_id = await store.start_call(ctx.room.name, caller, callee, cfg.name,
                                      cfg.language, cfg.campaign_id, sip_call_id)
@@ -1595,8 +1610,21 @@ async def entrypoint(ctx: JobContext):
         vad=vad,
         turn_detection=MultilingualModel(),
         allow_interruptions=cfg.allow_interrupt,
-        min_endpointing_delay=MIN_ENDPOINTING,
-        max_endpointing_delay=MAX_ENDPOINTING,
+        # turn_handling rather than min_endpointing_delay/max_endpointing_delay,
+        # which this version marks deprecated. The values are unchanged - 0.25
+        # and 1.5, both earned: 4.0 froze calls for four seconds when a short
+        # closing scored below the detector's threshold.
+        #
+        # Worth moving for its own sake. The new API's own defaults are 0.5 and
+        # 3.0, so the day the deprecated path is removed, an untouched agent
+        # would quietly go back to the behaviour that was fixed.
+        turn_handling={
+            "endpointing": {"min_delay": MIN_ENDPOINTING,
+                            "max_delay": MAX_ENDPOINTING},
+            # enabled is left alone: it defaults to True and already runs the
+            # LLM ahead of the turn. Only the TTS half is being switched here.
+            "preemptive_generation": {"preemptive_tts": PREEMPTIVE_TTS},
+        },
     )
 
     live["session"] = session
