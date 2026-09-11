@@ -240,7 +240,7 @@ livekit_with_asterisk/
 │   ├── DATABASE.md            ← 💾 backup, restore, and what a dump alone cannot restore
 │   └── SERVER.md              ← inventory, ports, credentials map
 ├── migrations/                ← numbered SQL, every one safe to re-run
-│   └── 001…021_*.sql
+│   └── 001…051_*.sql
 ├── agent/
 │   ├── voice_agent.py         ← the agent: pipeline, markers, silence, handoff
 │   ├── store.py               ← Postgres: config, calls, turns, tools, postbacks
@@ -250,6 +250,8 @@ livekit_with_asterisk/
 │   ├── tools.py               ← per-campaign HTTP tools, with fillers + timeouts
 │   ├── toolfmt.py             ← placeholder fill + response path, shared with the console
 │   ├── postback.py            ← extract a finished call into the client's fields
+│   ├── requeue_postback.py    ← CLI: rebuild a call whose result was never queued
+│   ├── providers.py           ← gateway base URLs, so the console can read them too
 │   ├── crypto.py              ← Fernet; the console imports this one, never a copy
 │   └── requirements.txt
 ├── admin/
@@ -399,6 +401,34 @@ would have seen everyone's calls.
 The most useful panel is **"Where the time goes"** — `eou` vs `llm_ttft` vs `tts_ttfb`
 stacked. A rising `eou` is our machine (VAD and turn detection run locally); rising
 `llm`/`tts` is the provider. That one chart separates the two.
+
+### What alerts — and the rule that could not see its own failure
+
+Nine rules evaluate every 60 seconds against Postgres and post to a per-tenant webhook:
+latency, error rate, stuck calls, no calls at all, handoff rate, guardrail stops, provider
+failures, and two about whether the result reached the customer.
+
+Those last two belong together, because the first had a blind spot exactly the shape of
+the thing it was built to catch:
+
+| Rule | Sees |
+|---|---|
+| `postback_failures` | a result that **was** queued and could not be delivered — carries the HTTP code, because 404 is our address to fix and 500 is theirs |
+| `postback_missing` | a result that was **never queued at all** — nothing to deliver, nothing to retry, nothing in the console to look at |
+
+`postback_failures` counts rows in `call_postbacks`. A call whose row was never written has
+nothing to count, so the worst version of "the client stopped receiving their data" was
+invisible to the rule written for it. That is how call 590 was lost — a completed 15-turn
+conversation found by hand, not by an alert, because the job process was killed by a
+10-second shutdown deadline before the row could be inserted.
+
+**A rule that counts attempts cannot see a failure that prevented the attempt.** Worth
+carrying to the next monitor somebody writes here.
+
+The transcript survives either way, so a lost result is rebuildable:
+`agent/requeue_postback.py <call_id>`. The full account is in
+[docs/PROGRESS.md](docs/PROGRESS.md) under *Ten seconds, and the call nobody was told
+about*; the three-case diagnosis is in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ### Measured capacity
 
