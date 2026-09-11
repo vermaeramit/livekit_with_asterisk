@@ -30,7 +30,8 @@ editor = require_perm("campaign.write")
 FIELDS = (
     "language", "greeting", "instructions",
     "stt_provider", "stt_model", "stt_fallback_provider",
-    "llm_model", "llm_temperature",
+    "llm_provider", "llm_model", "llm_temperature",
+    "llm_fallback_provider", "llm_fallback_model",
     "tts_provider", "tts_model", "tts_voice", "tts_fallback_provider",
     "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
@@ -113,6 +114,17 @@ def _warnings(cfg: dict) -> list[str]:
         out.append(
             f"{label} is {marker}, but the prompt never writes it, so it will "
             f"never fire.{suggestion}")
+
+    # A fallback with no model is not a fallback. The agent logs this and runs
+    # on one leg, which is the right behaviour and the wrong moment to find out
+    # - by then there is a caller on the line and the primary has already
+    # failed. Unlike STT and TTS there is no provider default to fall back to:
+    # on a gateway the model name is the routing.
+    if (cfg.get("llm_fallback_provider")
+            and not (cfg.get("llm_fallback_model") or "").strip()):
+        out.append(
+            f"The {cfg['llm_fallback_provider']} fallback has no model set, so "
+            f"it will not be used — the campaign runs on one language model.")
 
     # A voice that is not stored anywhere is not "the provider's default" -
     # it is a name written in the agent's code, and Soniox has withdrawn seven

@@ -23,7 +23,7 @@ Role = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$",
                                         min_length=2, max_length=40)]
 # Kept in step with provider_keys.PROVIDERS and the CHECK constraints in
 # migration 011. All three move together or a save fails at the database.
-Provider = Literal["openai", "sarvam", "soniox"]
+Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 
 # 12 characters is the floor everywhere a password is set, so the rule cannot be
 # bypassed by picking a different endpoint.
@@ -155,10 +155,12 @@ class CampaignRoute(BaseModel):
 
 
 # ───────────────────────────── agent config ─────────────────────────────
-# Only the fields the agent actually reads are exposed. stt_provider /
-# llm_provider / tts_provider are columns the worker ignores - it constructs
-# sarvam.STT, openai.LLM and sarvam.TTS unconditionally - so offering them as
-# controls would be a lie. They come back when the fallback chain is wired.
+# Only the fields the agent actually reads are exposed.
+#
+# This used to say that stt_provider, llm_provider and tts_provider were columns
+# the worker ignored, and that they would come back when the fallback chain was
+# wired. STT and TTS came back long ago; the LLM came back in 049. All three are
+# read now, and all three have a fallback of their own.
 #
 # agent_config.enabled is also deliberately absent: load_config() selects
 # "WHERE name = $1 AND enabled" and raises when it misses, which makes calls ring
@@ -311,8 +313,17 @@ class AgentConfigOut(BaseModel):
     instructions: str
 
     stt_model: str | None
+    # Read by the agent since 049. Before that it was a column nobody obeyed:
+    # the worker built openai.LLM unconditionally with a hardcoded Gemini leg
+    # behind it, billed to the platform rather than the client.
+    llm_provider: str
     llm_model: str
     llm_temperature: float
+    llm_fallback_provider: str | None = None
+    # Required when the fallback provider is set. There is no provider default
+    # to reach for the way STT and TTS have one - on a gateway the model name
+    # IS the routing.
+    llm_fallback_model: str | None = None
     tts_model: str | None
     tts_voice: str | None
     allow_interrupt: bool
@@ -453,7 +464,12 @@ class AgentConfigUpdate(BaseModel):
         return v
 
     stt_model: str | None = Field(default=None, max_length=80)
-    llm_model: str | None = Field(default=None, min_length=1, max_length=80)
+    llm_provider: Provider | None = None
+    # 80 was enough when every model was "gpt-4.1-mini". A gateway prefixes the
+    # vendor - "google/gemma-4-26b-a4b-it" - so the names got longer.
+    llm_model: str | None = Field(default=None, min_length=1, max_length=120)
+    llm_fallback_provider: Provider | None = None
+    llm_fallback_model: str | None = Field(default=None, max_length=120)
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     tts_model: str | None = Field(default=None, max_length=80)
     tts_voice: str | None = Field(default=None, max_length=80)

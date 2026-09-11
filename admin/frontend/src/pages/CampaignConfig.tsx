@@ -69,6 +69,13 @@ const LLM_MODELS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
 ]
 
+// Only two, because only two speak a language model. OpenRouter is here for
+// what it fronts rather than for itself: one key, and every model it carries.
+const LLM_PROVIDERS = [
+  { value: 'openai', label: 'OpenAI — direct' },
+  { value: 'openrouter', label: 'OpenRouter — gateway to many models' },
+]
+
 const PROVIDERS = [
   { value: 'sarvam', label: 'Sarvam' },
   { value: 'openai', label: 'OpenAI' },
@@ -786,12 +793,75 @@ export function CampaignConfig() {
 
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField
-                label="Language model"
-                value={value.llm_model}
-                onChange={(v) => set('llm_model', v)}
-                options={LLM_MODELS}
-                hint="gpt-4.1-mini was chosen for variance, not average — it cut spread from 800ms to 85ms."
+                label="Language model provider"
+                value={value.llm_provider}
+                onChange={(v) => set('llm_provider', v)}
+                options={LLM_PROVIDERS}
+                hint="Its key is set on the API keys tab, per campaign or per client."
               />
+              {/* A dropdown where the list is short and known, a box where it is
+                  neither. OpenRouter fronts hundreds of models and the name is
+                  the routing, so enumerating them here would go stale by the
+                  week. */}
+              {value.llm_provider === 'openrouter' ? (
+                <TextField
+                  label="Model"
+                  value={value.llm_model}
+                  onChange={(v) => set('llm_model', v.trim())}
+                  placeholder="google/gemma-4-26b-a4b-it"
+                  className="font-mono"
+                  hint="The exact slug from openrouter.ai/models, vendor prefix and all."
+                />
+              ) : (
+                <SelectField
+                  label="Language model"
+                  value={value.llm_model}
+                  onChange={(v) => set('llm_model', v)}
+                  options={LLM_MODELS}
+                  hint="gpt-4.1-mini was chosen for variance, not average — it cut spread from 800ms to 85ms."
+                />
+              )}
+            </div>
+
+            {value.llm_provider !== 'openai' && (
+              <Note tone="warn">
+                Prompt caching is OpenAI&rsquo;s own and does not travel. Measured on
+                this system over 30 days: <strong>90.8% of prompt tokens are served
+                from cache</strong>, and a cached token is about a tenth of the price
+                and <strong>393&nbsp;ms faster</strong> to first token (1198&nbsp;ms
+                cold against 805&nbsp;ms warm). A lower per-token rate elsewhere has
+                to beat all of that before it is cheaper in practice.
+              </Note>
+            )}
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <SelectField
+                label="Fallback provider"
+                value={value.llm_fallback_provider ?? ''}
+                onChange={(v) => set('llm_fallback_provider', v || null)}
+                options={[
+                  { value: '', label: 'None — run on one model' },
+                  ...LLM_PROVIDERS.filter((p) => p.value !== value.llm_provider),
+                ]}
+                hint="Used when the primary fails, on this campaign's own key. There used to be a hidden Gemini leg here billed to the platform; this replaces it."
+              />
+              {value.llm_fallback_provider && (
+                <TextField
+                  label="Fallback model"
+                  value={value.llm_fallback_model ?? ''}
+                  onChange={(v) => set('llm_fallback_model', v.trim() || null)}
+                  placeholder={
+                    value.llm_fallback_provider === 'openrouter'
+                      ? 'openai/gpt-4.1-mini'
+                      : 'gpt-4.1-mini'
+                  }
+                  className="font-mono"
+                  hint="Required — there is no provider default to fall back to, and the same model has a different name on a gateway."
+                />
+              )}
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
               <NumberField
                 label="Temperature"
                 value={value.llm_temperature}

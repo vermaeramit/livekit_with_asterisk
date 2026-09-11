@@ -229,7 +229,12 @@ export interface AgentConfig {
   instructions: string
 
   stt_model: string | null
+  // Read by the agent since migration 049. Before that the worker built
+  // openai.LLM unconditionally, whatever this said.
+  llm_provider: string
   llm_model: string
+  llm_fallback_provider: string | null
+  llm_fallback_model: string | null
   llm_temperature: number
   tts_model: string | null
   tts_voice: string | null

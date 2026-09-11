@@ -14,6 +14,7 @@ const PROVIDERS: Record<string, { label: string; used: string }> = {
   openai: { label: 'OpenAI', used: 'Language model, and knowledge-base embeddings' },
   sarvam: { label: 'Sarvam', used: 'Speech to text, and the voice' },
   soniox: { label: 'Soniox', used: 'Speech to text, and the voice' },
+  openrouter: { label: 'OpenRouter', used: 'Language model, through a gateway to many' },
 }
 
 function when(iso: string | null) {

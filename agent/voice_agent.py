@@ -34,7 +34,10 @@ from livekit.agents import (
 )
 # aliased: bare stt/tts/llm would shadow the local variables of the same name
 from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
-from livekit.plugins import google, openai, sarvam, silero, soniox
+# google went with the hardcoded Gemini fallback - it was the only thing
+# using it. Left out rather than left imported: the plugin pulls in the
+# Google auth stack, and this module is imported in every job process.
+from livekit.plugins import openai, sarvam, silero, soniox
 
 import greeting_cache
 import hours
@@ -1065,23 +1068,64 @@ def _tts_stack(cfg, keys: dict):
         sample_rate=_TTS_NATIVE_RATE.get(cfg.tts_provider, 24000))
 
 
+# Gateways that speak OpenAI's wire format, which is most of them. One entry
+# here is one more provider a campaign can choose, with no new plugin.
+_LLM_BASE_URL = {"openrouter": "https://openrouter.ai/api/v1"}
+
+
+def _build_llm(provider: str, cfg, key: str, model: str):
+    """One language model leg. The model is passed in, not read from cfg.
+
+    Because the fallback runs a DIFFERENT model from the primary, and on a
+    gateway the name is the routing: a campaign on gpt-4.1-mini falling back to
+    OpenRouter wants "openai/gpt-4.1-mini" there, which is not the same string.
+    """
+    kw = {"model": model, "temperature": cfg.llm_temperature, "api_key": key}
+    if provider in _LLM_BASE_URL:
+        kw["base_url"] = _LLM_BASE_URL[provider]
+    else:
+        # prompt_cache_key is OpenAI's own parameter and means nothing to a
+        # gateway. Sent anyway it is at best ignored and at worst a 400.
+        #
+        # Worth knowing what choosing a gateway costs: 90.8% of this system's
+        # prompt tokens are served from OpenAI's cache, measured over 30 days,
+        # and cached tokens are about a tenth of the price AND 393 ms faster
+        # (1198 ms cold against 805 ms warm). A cheaper per-token rate
+        # elsewhere has to beat all of that before it is actually cheaper.
+        kw["prompt_cache_key"] = cfg.name
+    return openai.LLM(**kw)
+
+
 def _llm_stack(cfg, keys: dict):
-    primary = openai.LLM(model=cfg.llm_model, temperature=cfg.llm_temperature,
-                         prompt_cache_key=cfg.name, api_key=keys["openai"])
+    """The campaign's language model, and its own fallback behind it.
+
+    The Gemini leg that used to sit here was hardcoded and ran on PLATFORM
+    credentials - it authenticates with a service account file, and there is
+    nowhere in the console to put one. So one leg of every campaign's language
+    model was billed to us and could not be changed by anybody. It is gone.
+
+    What replaces it is a choice: a campaign names its own fallback and pays for
+    it on its own key, exactly as STT and TTS already do. A campaign that names
+    none runs on one leg - which is a real reduction in resilience and the
+    reason this is a visible setting rather than a silent default.
+    """
+    provider = cfg.llm_provider or "openai"
+    primary = _build_llm(provider, cfg, keys[provider], cfg.llm_model)
     if not FALLBACK:
         return primary
-    # The only layer with real provider diversity: gemini-flash-lite matches the
-    # primary's latency, so a full OpenAI outage costs speech and hearing but
-    # not thought.
-    #
-    # Gemini stays on the PLATFORM credentials: it authenticates with a service
-    # account JSON file, not a key string, and there is nowhere in the console to
-    # put a file. So the fallback leg is ours, not the client's - worth knowing
-    # when reading an invoice, and the reason this leg is not offered as a
-    # per-client setting.
+
+    fb = _fallback_provider("llm", cfg.llm_fallback_provider, provider, keys)
+    # No model, no fallback. Unlike STT and TTS there is no provider default to
+    # reach for, so a half-configured fallback would fail at the moment it was
+    # needed rather than at the moment it was saved.
+    if not fb or not (cfg.llm_fallback_model or "").strip():
+        if fb:
+            logger.warning("llm fallback '%s' has no model set - "
+                           "running on %s alone", fb, provider)
+        return primary
+
     return lk_llm.FallbackAdapter(
-        [primary, google.LLM(model="gemini-flash-lite-latest",
-                             temperature=cfg.llm_temperature)],
+        [primary, _build_llm(fb, cfg, keys[fb], cfg.llm_fallback_model)],
         attempt_timeout=ATTEMPT_TIMEOUT)
 
 
@@ -1403,10 +1447,20 @@ async def entrypoint(ctx: JobContext):
     keys: dict[str, str] = {}
     if cfg.campaign_id is not None:
         keys = await store.load_provider_keys(cfg.campaign_id)
-        # Whichever providers THIS campaign actually uses - not a fixed pair.
-        # openai is always in the set: the LLM runs on it, and so does knowledge
-        # base retrieval, whatever STT and TTS are set to.
-        needed = {cfg.stt_provider, cfg.tts_provider, "openai"}
+        # Whichever providers THIS campaign actually uses - not a fixed set.
+        #
+        # openai used to be unconditional here because the LLM ran on it. Since
+        # 049 the LLM names its own provider, so that assumption had to go - a
+        # campaign on OpenRouter would otherwise have been declined for want of
+        # a key it does not use.
+        #
+        # But openai comes back the moment the knowledge base is on: retrieval
+        # embeds the query through text-embedding-3-small whatever the language
+        # model is. Getting that wrong would let the call start and then fail
+        # every search, which is the quieter and worse failure.
+        needed = {cfg.stt_provider, cfg.tts_provider, cfg.llm_provider or "openai"}
+        if cfg.kb_enabled:
+            needed.add("openai")
         missing = sorted(p for p in needed if not keys.get(p))
         if missing:
             logger.warning("DECLINED call to %s: campaign %s has no %s key",

@@ -21,8 +21,10 @@ from . import db, secretlib
 
 log = logging.getLogger("admin-api")
 
-PROVIDERS = ("openai", "sarvam", "soniox")
-Provider = Literal["openai", "sarvam", "soniox"]
+# openrouter speaks OpenAI's wire format, so it needs no new plugin - only
+# a key and a base_url. What it buys is every model it fronts.
+PROVIDERS = ("openai", "sarvam", "soniox", "openrouter")
+Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 
 _TIMEOUT = 15
 
@@ -116,6 +118,31 @@ def _openai_can_embed(key: str) -> Validation | None:
     return None
 
 
+def _get_json(req: urllib.request.Request) -> tuple[int, dict | None, str]:
+    """Like _status_of, but keeps the body on SUCCESS as well.
+
+    Separate rather than folded in, because _status_of is used by checks that
+    hit endpoints whose 200 body is large and useless - /v1/models chief among
+    them - and reading those into memory on every key save buys nothing.
+
+    Bounded anyway: a status body that is not small is not a status body.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            raw = r.read(4096).decode("utf-8", "replace")
+        try:
+            return r.status, json.loads(raw), ""
+        except Exception:
+            return r.status, None, ""
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, None, e.read(512).decode("utf-8", "replace")
+        except Exception:
+            return e.code, None, ""
+    except Exception as e:
+        return 0, None, f"{type(e).__name__}: {e}"
+
+
 def _check_openai(key: str) -> Validation:
     # /v1/models is free and authenticated - a wrong key returns 401. Verified
     # against the live API rather than assumed.
@@ -137,6 +164,38 @@ def _check_openai(key: str) -> Validation:
     if code == 0:
         return Validation(False, f"could not reach OpenAI: {body}")
     return Validation(False, f"OpenAI returned {code}")
+
+
+def _check_openrouter(key: str) -> Validation:
+    """GET /v1/key - authenticated, free, and it answers both questions.
+
+    Both, because a key that authenticates and has no credit left fails on the
+    first real call and looks exactly like a broken key. This endpoint returns
+    limit_remaining alongside the auth result, so the console can say which it
+    is - the same distinction _check_sarvam buys with a 402.
+
+    What it cannot check is the MODEL. On a gateway the model name is the
+    routing and it is chosen per campaign, long after the key is saved, so that
+    one is found at call time. Said here rather than implied.
+    """
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/key",
+        headers={"Authorization": f"Bearer {key}"})
+    code, payload, err = _get_json(req)
+    if code in (401, 403):
+        return Validation(False, "OpenRouter rejected this key")
+    if code == 0:
+        return Validation(False, f"could not reach OpenRouter: {err}")
+    if code != 200:
+        return Validation(False, f"OpenRouter returned {code}")
+
+    # A limit of null means unlimited, which is not the same as zero.
+    data = (payload or {}).get("data") or {}
+    left = data.get("limit_remaining")
+    if left is not None and float(left) <= 0:
+        return Validation(True, "key is valid but the OpenRouter account has "
+                                "no credit left", no_credits=True)
+    return Validation(True, "key accepted by OpenRouter")
 
 
 def _check_sarvam(key: str) -> Validation:
@@ -203,7 +262,7 @@ def _check_soniox(key: str) -> Validation:
 
 
 _CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
-           "soniox": _check_soniox}
+           "soniox": _check_soniox, "openrouter": _check_openrouter}
 
 
 async def validate(provider: str, key: str) -> Validation:
