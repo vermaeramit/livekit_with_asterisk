@@ -194,8 +194,16 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     # Popped either way, so the fields never leak through **d, and returned only
     # to those allowed to see them.
     usage = CallUsage(**counts) if user.can("usage.read") else None
-    for k in ("llm_model_used", "stt_model_used", "tts_model_used"):
-        d.pop(k, None)
+
+    # The model columns used to be popped here. They are selected for costing -
+    # price_call above reads them off this same dict - and CallDetail did not
+    # declare them, so passing them through **d would have raised. Dropping them
+    # was the fix at the time.
+    #
+    # They are declared now, and the page shows them: "openrouter" on its own
+    # does not say which of that gateway's hundreds of models ran. The pop is
+    # what made those fields arrive as null in the response while the database
+    # held the right values all along.
 
     # Checked here rather than trusted from a column: retention deletes files
     # without touching the database, so a stored flag would go stale.
