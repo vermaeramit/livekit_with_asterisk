@@ -21,7 +21,8 @@ from .. import ttspreview
 from .. import audit, db, provider_keys as pk, secretlib
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
                     require_perm, tenant_scope)
-from ..schemas import (ProviderKeyOut, ProviderKeySet, ProviderKeyWritten,
+from ..schemas import (LlmCatalog, LlmModel,
+                       ProviderKeyOut, ProviderKeySet, ProviderKeyWritten,
                        TtsPreviewIn,
                        TtsCatalog, TtsModel, TtsVoice)
 
@@ -259,6 +260,127 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
 
     return Response(content=audio, media_type="audio/mpeg",
                     headers={"Cache-Control": "no-store"})
+
+
+_LLM_CATALOG_URLS = {
+    "openai": "https://api.openai.com/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+}
+
+_llm_cache: dict[str, tuple[float, LlmCatalog]] = {}
+
+# OpenAI's /v1/models lists everything the key can reach - transcription,
+# speech, images, embeddings, moderation - with nothing saying which of them
+# holds a conversation. There is no capability field to read, so this is a
+# filter on the SHAPE OF THE NAME and nothing more. Said plainly because a
+# heuristic presented as a capability check is how a console ends up offering
+# whisper-1 as a language model.
+_NOT_CHAT = ("tts", "transcribe", "whisper", "audio", "realtime", "image",
+             "embedding", "moderation", "dall-e", "search", "codex")
+
+
+def _fetch_models(url: str, key: str) -> list[dict]:
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {key}",
+                 # urllib's default is a WAF magnet - see agent/tools.py, and
+                 # _fetch_soniox_models above.
+                 "User-Agent": os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")})
+    # 15, the same as the voice catalogue beside it. OpenRouter's list is a few
+    # hundred models and around a megabyte, so this is not instant.
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode("utf-8", "replace")).get("data") or []
+
+
+def _openai_models(raw: list[dict]) -> list[LlmModel]:
+    out = []
+    for m in raw:
+        mid = m.get("id") or ""
+        if not mid.startswith(("gpt-", "o1", "o3", "o4")):
+            continue
+        if any(bad in mid for bad in _NOT_CHAT):
+            continue
+        out.append(LlmModel(id=mid, name=mid))
+    return sorted(out, key=lambda m: m.id)
+
+
+def _openrouter_models(raw: list[dict]) -> list[LlmModel]:
+    """Only the models that can actually run this agent.
+
+    Filtered on tool calling, because every campaign here has tools and a model
+    without them fails silently: the agent asks for a dealer lookup, the model
+    answers from its own head, and the caller is told something invented. A
+    dropdown that offers models which cannot do the job is a trap.
+
+    Sorted by input price, cheapest first - which is the reason this provider is
+    here at all - and each entry carries its price and context window so the
+    choice can be made in the list rather than in another tab.
+    """
+    out = []
+    for m in raw:
+        mid = m.get("id") or ""
+        if "tools" not in (m.get("supported_parameters") or []):
+            continue
+        pricing = m.get("pricing") or {}
+        try:
+            # OpenRouter quotes per TOKEN as a string. Per million is what
+            # every price page uses and what anybody comparing will expect.
+            pin = float(pricing.get("prompt") or 0) * 1e6
+            pout = float(pricing.get("completion") or 0) * 1e6
+        except (TypeError, ValueError):
+            pin = pout = 0.0
+        ctx = m.get("context_length") or 0
+        bits = [f"${pin:.2f}/M in", f"${pout:.2f}/M out"]
+        if ctx:
+            bits.append(f"{ctx // 1000}k ctx")
+        out.append(LlmModel(id=mid, name=m.get("name") or mid,
+                            detail=" · ".join(bits), input_price=pin))
+    return sorted(out, key=lambda m: (m.input_price, m.id))
+
+
+@router.get("/campaigns/{campaign_id}/llm-catalog/{provider}",
+            response_model=LlmCatalog)
+async def llm_catalog(campaign_id: int, provider: str,
+                      user: CurrentUser = Depends(active_user)):
+    """Language models the campaign's own key can actually use.
+
+    Read from the provider rather than held as a list here, for the reason the
+    voice catalogue is: a literal goes stale and nobody notices until a call
+    fails. tts-rt-v1 was the hardcoded default on the day it was withdrawn.
+    """
+    _check_provider(provider)
+    if provider not in _LLM_CATALOG_URLS:
+        return LlmCatalog(provider=provider, models=[])
+
+    tenant_id = await assert_campaign_visible(user, campaign_id)
+    _require_crypto()
+
+    cache_key = f"llm:{provider}:{tenant_id}:{campaign_id}"
+    hit = _llm_cache.get(cache_key)
+    if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+        return hit[1]
+
+    keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    if not keys.get(provider):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"no {provider} key on this campaign or client - add one first, "
+            "the model list comes from the provider")
+
+    try:
+        raw = await asyncio.to_thread(_fetch_models,
+                                      _LLM_CATALOG_URLS[provider], keys[provider])
+    except Exception as e:
+        # The provider, not the key. Never let a failure here carry the secret.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"could not read the {provider} catalogue: "
+                            f"{type(e).__name__}")
+
+    models = (_openrouter_models(raw) if provider == "openrouter"
+              else _openai_models(raw))
+    out = LlmCatalog(provider=provider, models=models)
+    _llm_cache[cache_key] = (time.monotonic(), out)
+    return out
 
 
 @router.get("/campaigns/{campaign_id}/tts-catalog/{provider}",

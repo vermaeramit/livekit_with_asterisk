@@ -200,6 +200,20 @@ export interface ToolActivityResponse {
 }
 
 /** Read from the provider with the campaign's key — never a list held here. */
+export interface LlmModel {
+  id: string
+  name: string | null
+  // Price and context, pre-formatted. Empty for OpenAI, whose model list
+  // carries neither.
+  detail: string | null
+  input_price: number
+}
+
+export interface LlmCatalog {
+  provider: string
+  models: LlmModel[]
+}
+
 export interface TtsCatalog {
   provider: string
   models: {

@@ -1320,6 +1320,22 @@ class TtsVoice(BaseModel):
     description: str | None = None
 
 
+class LlmModel(BaseModel):
+    id: str
+    name: str | None = None
+    # Price and context, already formatted, so the choice can be made in the
+    # dropdown instead of in another tab. Empty for OpenAI, whose /v1/models
+    # carries neither.
+    detail: str | None = None
+    # Sorted on, not shown. Cheapest first is the reason a gateway is here.
+    input_price: float = 0.0
+
+
+class LlmCatalog(BaseModel):
+    provider: str
+    models: list[LlmModel] = Field(default_factory=list)
+
+
 class TtsModel(BaseModel):
     id: str
     name: str | None = None

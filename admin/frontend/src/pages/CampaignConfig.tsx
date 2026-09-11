@@ -44,7 +44,7 @@ import { useToast } from '@/components/ui/toast'
 import { api, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn, formatDateTime, formatRelative } from '@/lib/utils'
-import type { AgentConfig, Dialler, AuditEntry, Campaign, TtsCatalog } from '@/types'
+import type { AgentConfig, Dialler, AuditEntry, Campaign, LlmCatalog, TtsCatalog } from '@/types'
 
 // Sarvam's saarika/bulbul language codes. Anything outside this set is accepted
 // by the API but will fail at call time, so the editor does not offer it.
@@ -411,6 +411,38 @@ export function CampaignConfig() {
     staleTime: 10 * 60 * 1000,
     retry: false,
   })
+
+  // The same idea as the voice catalogue below it, and for the same reason: a
+  // hardcoded list goes stale silently. tts-rt-v1 was the default here on the
+  // day the provider withdrew it.
+  const llmCatalog = useQuery({
+    queryKey: ['llm-catalog', campaignId, value.llm_provider],
+    queryFn: () =>
+      api<LlmCatalog>(`/campaigns/${campaignId}/llm-catalog/${value.llm_provider}`),
+    enabled: Boolean(value.llm_provider),
+    staleTime: 10 * 60 * 1000,
+    // A missing key answers 409 and that is not worth retrying - the console
+    // falls back to its static list and says why.
+    retry: false,
+  })
+
+  const fbCatalog = useQuery({
+    queryKey: ['llm-catalog', campaignId, value.llm_fallback_provider],
+    queryFn: () =>
+      api<LlmCatalog>(
+        `/campaigns/${campaignId}/llm-catalog/${value.llm_fallback_provider}`),
+    enabled: Boolean(value.llm_fallback_provider),
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  })
+
+  const asOptions = (c: LlmCatalog | undefined) =>
+    (c?.models ?? []).map((m) => ({
+      value: m.id,
+      label: m.detail ? `${m.id} — ${m.detail}` : (m.name ?? m.id),
+    }))
+  const llmOptions = asOptions(llmCatalog.data)
+  const fbOptions = asOptions(fbCatalog.data)
 
   const liveModels = ttsCatalog.data?.models ?? []
   const liveVoices =
@@ -799,18 +831,38 @@ export function CampaignConfig() {
                 options={LLM_PROVIDERS}
                 hint="Its key is set on the API keys tab, per campaign or per client."
               />
-              {/* A dropdown where the list is short and known, a box where it is
-                  neither. OpenRouter fronts hundreds of models and the name is
-                  the routing, so enumerating them here would go stale by the
-                  week. */}
-              {value.llm_provider === 'openrouter' ? (
+              {/* Read from the provider, not held here. When it cannot be -
+                  no key yet, or the provider is unreachable - OpenAI falls back
+                  to the static list and OpenRouter to a box, because guessing a
+                  gateway's catalogue is worse than asking somebody to type. */}
+              {llmOptions.length > 0 ? (
+                <SelectField
+                  label="Language model"
+                  value={value.llm_model}
+                  onChange={(v) => set('llm_model', v)}
+                  options={
+                    llmOptions.some((o) => o.value === value.llm_model)
+                      ? llmOptions
+                      // Keep whatever is saved even if the provider no longer
+                      // lists it. Silently dropping it would rewrite the
+                      // campaign's model on the next save.
+                      : [{ value: value.llm_model, label: `${value.llm_model} (not in the list)` },
+                         ...llmOptions]
+                  }
+                  hint={
+                    value.llm_provider === 'openrouter'
+                      ? 'Live from OpenRouter, cheapest first. Only models that support tool calling are listed — the others cannot run this campaign’s tools.'
+                      : 'Live from OpenAI. gpt-4.1-mini was chosen for variance, not average — it cut spread from 800ms to 85ms.'
+                  }
+                />
+              ) : value.llm_provider === 'openrouter' ? (
                 <TextField
                   label="Model"
                   value={value.llm_model}
                   onChange={(v) => set('llm_model', v.trim())}
                   placeholder="google/gemma-4-26b-a4b-it"
                   className="font-mono"
-                  hint="The exact slug from openrouter.ai/models, vendor prefix and all."
+                  hint="Add an OpenRouter key and the list fills itself. Until then, the exact slug from openrouter.ai/models — vendor prefix and all."
                 />
               ) : (
                 <SelectField
@@ -818,7 +870,7 @@ export function CampaignConfig() {
                   value={value.llm_model}
                   onChange={(v) => set('llm_model', v)}
                   options={LLM_MODELS}
-                  hint="gpt-4.1-mini was chosen for variance, not average — it cut spread from 800ms to 85ms."
+                  hint="Add an OpenAI key to read the live list. gpt-4.1-mini was chosen for variance, not average."
                 />
               )}
             </div>
@@ -845,20 +897,29 @@ export function CampaignConfig() {
                 ]}
                 hint="Used when the primary fails, on this campaign's own key. There used to be a hidden Gemini leg here billed to the platform; this replaces it."
               />
-              {value.llm_fallback_provider && (
-                <TextField
-                  label="Fallback model"
-                  value={value.llm_fallback_model ?? ''}
-                  onChange={(v) => set('llm_fallback_model', v.trim() || null)}
-                  placeholder={
-                    value.llm_fallback_provider === 'openrouter'
-                      ? 'openai/gpt-4.1-mini'
-                      : 'gpt-4.1-mini'
-                  }
-                  className="font-mono"
-                  hint="Required — there is no provider default to fall back to, and the same model has a different name on a gateway."
-                />
-              )}
+              {value.llm_fallback_provider &&
+                (fbOptions.length > 0 ? (
+                  <SelectField
+                    label="Fallback model"
+                    value={value.llm_fallback_model ?? ''}
+                    onChange={(v) => set('llm_fallback_model', v || null)}
+                    options={[{ value: '', label: 'Choose one' }, ...fbOptions]}
+                    hint="Required — there is no provider default to fall back to, and the same model has a different name on a gateway."
+                  />
+                ) : (
+                  <TextField
+                    label="Fallback model"
+                    value={value.llm_fallback_model ?? ''}
+                    onChange={(v) => set('llm_fallback_model', v.trim() || null)}
+                    placeholder={
+                      value.llm_fallback_provider === 'openrouter'
+                        ? 'openai/gpt-4.1-mini'
+                        : 'gpt-4.1-mini'
+                    }
+                    className="font-mono"
+                    hint="Add a key for that provider and this becomes a list. Required either way — there is no default to fall back to."
+                  />
+                ))}
             </div>
 
             <div className="grid gap-5 sm:grid-cols-2">
