@@ -28,6 +28,7 @@ const KIND_LABEL: Record<string, string> = {
   stale_calls: 'Stuck calls',
   provider_errors: 'Provider failures',
   postback_failures: 'Results not delivered',
+  postback_missing: 'Results never queued',
 }
 
 const KIND_HELP: Record<string, string> = {
@@ -41,6 +42,8 @@ const KIND_HELP: Record<string, string> = {
     'Errors returned by OpenAI, Soniox, Sarvam and the rest, counted as they happen rather than as a share of finished calls — a rate limit shows up while it is still going on, and the alert names the provider and the code.',
   postback_failures:
     'Finished calls whose result never reached your system. Counted as calls, not as a share — one campaign failing every delivery reads as a small percentage of everything and is not small at all. The alert carries the status code, because 404 is a wrong address and 500 is theirs.',
+  postback_missing:
+    'Finished calls that never even got as far as being queued, which the rule above cannot see — it counts delivery attempts, and these have none. There is nothing to retry in the console; the result is rebuilt from the transcript instead. Expect this to fire once and harmlessly if you have just switched Send to API on, because it reads the setting as it is now.',
 }
 
 const UNIT: Record<string, string> = {
@@ -52,6 +55,7 @@ const UNIT: Record<string, string> = {
   stale_calls: 'calls',
   provider_errors: 'errors',
   postback_failures: 'calls',
+  postback_missing: 'calls',
 }
 
 function DeliveryBadge({ alert }: { alert: Alert }) {

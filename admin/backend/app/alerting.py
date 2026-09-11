@@ -171,6 +171,55 @@ async def _evaluate(rule: dict) -> tuple[float | None, bool, str]:
                 f"{total} call result(s) never reached the customer's system in "
                 f"{rule['window_minutes']} minutes - {detail}")
 
+    if kind == "postback_missing":
+        # The blind spot in the rule above. postback_failures counts rows in
+        # call_postbacks, so a call whose row was NEVER WRITTEN has nothing to
+        # count and stays invisible - which is exactly what happened to call
+        # 590: completed, 15 turns, Send to API on, no row, no error line, and
+        # found only because somebody went looking for its delivery log.
+        #
+        # That cause is fixed (a 10 s shutdown deadline - see PROGRESS, 11 Sep
+        # 2026). This is here for the NEXT cause, whatever it turns out to be.
+        # A rule that only watches the failure you already understand is a rule
+        # that finds nothing.
+        #
+        # ended_at, not started_at: the row is written when the call ends, so a
+        # call still in progress has not failed to do anything. The five-minute
+        # grace is the same thought - the write lands a few seconds after the
+        # call ends, and a window with no grace would fire on healthy calls.
+        #
+        # turn_count > 0 excludes the job that died before it ever spoke. Those
+        # leave a call row closed by the safety net with no postback and never
+        # had a conversation to report; counting them would mean an alert every
+        # time a worker restarted.
+        rows = await db.pool().fetch(f"""
+            SELECT c.config_name AS name, count(*) AS n
+              FROM calls c
+              JOIN agent_config ac ON ac.name = c.config_name
+              LEFT JOIN call_postbacks p ON p.call_id = c.id
+             WHERE c.tenant_id = $1{campaign_clause}
+               AND ac.postback_enabled
+               AND c.turn_count > 0
+               AND c.ended_at > now() - interval '{window}'
+               AND c.ended_at < now() - interval '5 minutes'
+               AND p.call_id IS NULL
+             GROUP BY 1 ORDER BY n DESC""", *args)
+
+        total = sum(r["n"] for r in rows)
+        if not total:
+            return 0, False, ""
+        detail = ", ".join(f"{r['n']} on {r['name']}" for r in rows[:3])
+        # Says where to look, because this failure leaves nothing in the console
+        # to look at. And names the innocent explanation: postback_enabled is
+        # read as it is NOW, so switching Send to API on for a busy campaign
+        # makes the calls from before it look like losses.
+        return (total, total >= rule["threshold"],
+                f"{total} finished call(s) never queued a result at all - "
+                f"{detail}. Nothing to retry: the row is written by the agent "
+                f"as the call ends. Check the worker journal for 'did not exit "
+                f"in time', or ignore this if Send to API was just switched on. "
+                f"requeue_postback.py rebuilds them.")
+
     column = {
         "error_rate": "c.end_reason = 'error'",
         "transfer_rate": "c.transferred_to IS NOT NULL",
