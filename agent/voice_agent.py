@@ -2245,4 +2245,37 @@ if __name__ == "__main__":
         _kw["load_threshold"] = float(os.getenv("LOAD_THRESHOLD", "1.0"))
     if "drain_timeout" in _p:
         _kw["drain_timeout"] = int(os.getenv("DRAIN_TIMEOUT", "150"))
+    if "shutdown_process_timeout" in _p:
+        # THE DEADLINE THAT SILENTLY LOST A CALL'S POSTBACK.
+        #
+        # The default is 10.0 seconds, and it is not a timeout in the Python
+        # sense - nothing raises, nothing is caught, nothing is logged by us.
+        # livekit waits this long for the job process to finish its shutdown
+        # callbacks and then kills it outright: SIGUSR1, exit code -10, no
+        # traceback. Call 590, a 15-turn conversation on a gateway model:
+        #
+        #   09:44:36.055  process exiting
+        #   09:44:36.054  usage: ... turns=15          <- our shutdown started
+        #   09:44:46.056  process did not exit in time, killing process
+        #   09:44:46.094  process exited with non-zero exit code -10
+        #
+        # Ten seconds to the millisecond. The last thing _shutdown does is
+        # _queue_postback, whose extraction is an LLM round trip; it ran past
+        # the deadline, the process was killed mid-request, and the row was
+        # never written. The console showed a completed call with no delivery
+        # log and no error - the customer's system simply never heard about it.
+        # Days of it would have looked like a bug in the postback code.
+        #
+        # 45 seconds, paired with POSTBACK_EXTRACT_TIMEOUT=20 in postback.py.
+        # The pair is the point: the extraction must give up with enough room
+        # left to build the envelope and INSERT the row, because a postback
+        # without the extracted fields is still worth having and one that was
+        # never written is not. Raising this alone would only move the cliff.
+        #
+        # Costs nothing when things are healthy - a normal shutdown takes about
+        # four seconds and this is only reached when something is stuck. Kept
+        # below systemd's 90 s TimeoutStopSec so a restart still ends in a stop
+        # rather than a kill.
+        _kw["shutdown_process_timeout"] = float(
+            os.getenv("SHUTDOWN_PROCESS_TIMEOUT", "45"))
     cli.run_app(WorkerOptions(**_kw))

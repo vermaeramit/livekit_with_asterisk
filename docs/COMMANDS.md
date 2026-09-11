@@ -145,6 +145,30 @@ one.
 
 ---
 
+## A call's result never reached the customer
+
+First, which of the three it is — they look the same in the console:
+
+```bash
+docker exec -i postgres psql -U aivoice -d aivoice -c "SELECT c.id, c.config_name, c.end_reason, ac.postback_enabled, p.status, p.attempts, p.last_status_code FROM calls c JOIN agent_config ac ON ac.name=c.config_name LEFT JOIN call_postbacks p ON p.call_id=c.id WHERE c.id=590;"
+```
+
+`postback_enabled=f` → nothing to send. A row with a `status` → delivery problem,
+use **Retry** in the console. **`t` and no row** → the row was never written.
+
+For the third, rebuild it from the transcript, which is still in the database:
+
+```bash
+cd /srv/aivoice/agent
+/opt/aivoice/agent/.venv/bin/python requeue_postback.py 590 --dry-run
+/opt/aivoice/agent/.venv/bin/python requeue_postback.py 590
+```
+
+Refuses a call that already has a row, so it cannot double-send. Prefix
+`POSTBACK_EXTRACT_TIMEOUT=120` for a long call on a slow gateway.
+
+---
+
 ## Ask a provider what it offers
 
 Without the key ever reaching the terminal:

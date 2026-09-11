@@ -4449,6 +4449,104 @@ weeks unseen, and it is worth adding before the next one.
 
 ---
 
+## Ten seconds, and the call nobody was told about (11 Sep 2026)
+
+Call 590: `completed`, 15 turns, ended in a booked demo. **Send to API** on. No
+delivery log, no `call_postbacks` row, and — the part that made it hard — no
+error anywhere.
+
+`_queue_postback` logs on every failure path, and `_shutdown` wraps the lot in
+`except Exception: logger.exception("shutdown failed")`. Neither fired. A bug
+that leaves no trace is usually not where you are looking.
+
+The unfiltered journal for that job ended like this:
+
+```
+09:44:36.054  usage: ... turns=15          <- our shutdown had started
+09:44:36.055  process exiting
+09:44:46.056  process did not exit in time, killing process
+09:44:46.057  sending SIGUSR1 signal to process
+09:44:46.094  process exited with non-zero exit code -10
+```
+
+**Ten seconds to the millisecond.** `WorkerOptions.shutdown_process_timeout`
+defaults to `10.0`, and it is not a timeout in the Python sense — livekit waits,
+then kills the process. Nothing raises, so nothing is caught and nothing is
+logged. The call's result was lost between two instructions.
+
+### The order was backwards, and the code said so
+
+The last thing `_shutdown` does is `_queue_postback`, and the first thing *that*
+does is an LLM round trip with no timeout on it. So the slowest, least
+predictable operation in the process sat at the end of a ten-second budget, with
+the row that must not be lost written only after it returned.
+
+`save_postback`'s own docstring had already named the principle:
+
+> *"Writing the row is the part that must not be lost; sending it is the part
+> that can wait."*
+
+Right principle, wrong order. The thing that must not be lost was queued behind
+the thing that can be slow.
+
+### Why it had never happened before
+
+585 through 589 all queued within about four seconds of `process exiting`, well
+inside ten. 590 was the longest call any campaign had had — 15 turns, 6146 prompt
+tokens, the whole transcript going to extraction — on an OpenRouter model with a
+known long tail. It was not a new bug. It was the first call long enough to
+reach a deadline that had been there since the beginning.
+
+Mid-investigation this was called marker-specific, because 590 was the only call
+that ended on `[EOC]` rather than a hangup. That was a coincidence and it was
+wrong: the deadline applies to every call, and what decides the outcome is
+whether extraction finishes inside it. Worth recording because the wrong version
+would have produced a fix to the marker path and left the real cliff in place.
+
+### The fix is a pair of numbers, not one
+
+- `SHUTDOWN_PROCESS_TIMEOUT` — **45 s** (was an unstated 10). Under systemd's
+  90 s `TimeoutStopSec`, so a restart still ends in a stop rather than a kill.
+- `POSTBACK_EXTRACT_TIMEOUT` — **20 s**, in `postback.py`.
+
+Raising the first alone would only have moved the cliff. The gap between them is
+the point: extraction now gives up with 25 seconds to spare, and the envelope is
+still built and the row still written — without the extracted fields, but with
+the call id, the outcome, the duration and the transcript. `extract` already
+returned `{k: None for k in keys}` on failure precisely so the payload shape
+never changes; the timeout path returns the same thing.
+
+`asyncio.TimeoutError` gets its own `except` clause **above** the generic one. On
+Python 3.11+ it *is* the builtin `TimeoutError`, which is an `Exception`, so
+without it a timeout would have been logged as "extraction failed" — sending
+whoever read it to look at the key and the schema instead of at model latency.
+
+### Getting the lost calls back
+
+The console's **Retry** re-sends an existing row; it cannot create one. So a call
+whose row was never written had no way back at all.
+
+`agent/requeue_postback.py` rebuilds it from the transcript, which was in the
+database the whole time. It **imports** `_queue_postback` rather than
+reimplementing it — a second copy of the envelope logic would drift, and the
+first anyone would know is a client parsing two shapes from one endpoint. It
+refuses a call that already has a row, so it cannot double-send, and it reads the
+row back afterwards rather than trusting that a function which never raises
+succeeded. That missing check is exactly what let 590 pass unnoticed.
+
+This is also what `postback.py` has promised since it was written — *"the schema
+can change and old calls can be re-processed"* — and never had a way to do.
+
+### The gap that is still open
+
+The `postback_failures` alert added yesterday counts rows in `call_postbacks`.
+A call whose row was never written has nothing to count, so **this class of
+failure is still invisible to it**. The cause is fixed; the detector for the next
+cause is not. What is needed is a rule on calls that finished with
+`postback_enabled` and no row after a few minutes.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

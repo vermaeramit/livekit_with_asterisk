@@ -15,6 +15,7 @@ it is the one that is still running a minute later.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -24,6 +25,24 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger("voice-agent")
+
+# How long the extraction may take before we give up on it and send the facts.
+#
+# This is not a nicety. Extraction runs inside the agent's shutdown callback,
+# and livekit gives that callback a fixed budget - after which it does not
+# raise, it kills the process (SIGUSR1, exit code -10). Call 590 was a 15-turn
+# conversation on a gateway model; the round trip did not finish inside that
+# budget, the process died mid-request, and Python never ran the `except`. No
+# postback row, no error line, nothing in the console: the customer simply
+# never received the call. It looked like a bug in the code and was in fact a
+# deadline nobody had written down.
+#
+# So the deadline is written down here, and it is deliberately well under the
+# shutdown budget (see SHUTDOWN_PROCESS_TIMEOUT in voice_agent.py). What the
+# gap buys is the few milliseconds needed to build the envelope and INSERT the
+# row - because a postback WITHOUT the extracted fields is still worth having,
+# and one that was never written is not.
+EXTRACT_TIMEOUT = float(os.getenv("POSTBACK_EXTRACT_TIMEOUT", "20"))
 
 # Only what a client API can sensibly receive. Anything richer belongs in a
 # tool that runs during the call, where the model can be corrected.
@@ -170,7 +189,7 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
         # and a model name only that gateway knows.
         client = AsyncOpenAI(api_key=api_key,
                              **({"base_url": base_url} if base_url else {}))
-        resp = await client.chat.completions.create(
+        resp = await asyncio.wait_for(client.chat.completions.create(
             model=model,
             # Deterministic: the same conversation must produce the same record
             # twice, or re-running an extraction becomes a coin toss.
@@ -182,7 +201,7 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
                 "json_schema": {"name": "call_record", "strict": True,
                                 "schema": schema},
             },
-        )
+        ), EXTRACT_TIMEOUT)
         data = json.loads(resp.choices[0].message.content or "{}")
         # Every configured key, every time, null where the conversation did not
         # establish one.
@@ -197,6 +216,17 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
         found = sum(1 for v in out.values() if v is not None)
         log.info("postback: extracted %d of %d fields", found, len(keys))
         return out
+    # BEFORE the clause below, and not folded into it. On Python 3.11+
+    # asyncio.TimeoutError IS the builtin TimeoutError, which is an Exception -
+    # so without its own clause first this lands in the generic handler and
+    # reports "extraction failed" for something that did not fail. The
+    # difference matters to whoever reads the log: a failure means look at the
+    # key or the schema, a timeout means look at how slow the model got.
+    except asyncio.TimeoutError:
+        log.error("postback extraction gave up after %.0fs (%d turns, model=%s)"
+                  " - sending the facts without the extracted fields",
+                  EXTRACT_TIMEOUT, len(turns), model)
+        return {k: None for k in keys}
     except Exception:
         # Still the full shape. A failed extraction must not look to the client
         # like a different message from a call where nothing was established.

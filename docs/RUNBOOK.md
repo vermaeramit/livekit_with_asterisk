@@ -1254,6 +1254,56 @@ hangup. Watch during a call:
 watch -n 1 lk room list
 ```
 
+### A call's result never reached the customer
+
+The call shows `completed` in the console, the campaign has **Send to API** on, and the
+delivery log is empty. Find out which of three things happened — they look identical in
+the console and have nothing in common:
+
+```bash
+docker exec -i postgres psql -U aivoice -d aivoice -c "
+SELECT c.id, c.config_name, c.end_reason, ac.postback_enabled,
+       p.status, p.attempts, p.last_status_code
+  FROM calls c
+  JOIN agent_config ac ON ac.name = c.config_name
+  LEFT JOIN call_postbacks p ON p.call_id = c.id
+ WHERE c.id = 590;"
+```
+
+* **`postback_enabled = f`** — nothing is wrong. The campaign was never asked to send.
+* **A row with a `status`** — it was queued and delivery is the problem. `last_status_code`
+  says what the customer's endpoint answered; the console's **Retry** re-sends it.
+* **`postback_enabled = t` and no row at all** — the row was never written. This is the
+  one that used to be invisible: the `postback_failures` alert counts rows in
+  `call_postbacks`, so a call with no row is a call nothing notices.
+
+For the third case, check whether the job process was killed before it could write:
+
+```bash
+journalctl -u "aivoice-agent@*" --since "2 hours ago" --no-pager \
+  | grep -E "call 590|did not exit in time" | tail
+```
+
+`process did not exit in time, killing process` exactly 45 s after `process exiting` means
+the shutdown ran past `SHUTDOWN_PROCESS_TIMEOUT` and was SIGKILLed — no Python code ran,
+which is why there is no error to find. That deadline was 10 s until Sep 2026 and lost
+call 590 this way; extraction now gives up at `POSTBACK_EXTRACT_TIMEOUT` (20 s) and writes
+the row without the extracted fields rather than losing it. If you see this again, the
+extraction is not the cause — something else in `_shutdown` is stuck.
+
+Either way the call is recoverable. The transcript is still in the database:
+
+```bash
+cd /srv/aivoice/agent
+/opt/aivoice/agent/.venv/bin/python requeue_postback.py 590 --dry-run   # look first
+/opt/aivoice/agent/.venv/bin/python requeue_postback.py 590
+```
+
+It rebuilds the payload exactly as a live call would and queues it; admin-api delivers it.
+It refuses a call that already has a row, so it cannot send the same call twice. Add
+`POSTBACK_EXTRACT_TIMEOUT=120` in front for a long call on a slow gateway — there is no
+shutdown deadline here.
+
 ---
 
 ## 7. Measuring latency
