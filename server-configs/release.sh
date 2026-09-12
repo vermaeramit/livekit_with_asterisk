@@ -16,8 +16,13 @@
 # Development cannot show a clean version even by accident, and production
 # cannot show a dirty one without the login page calling it "(untagged)".
 #
-# Run this on the DEVELOPMENT box, on main, with nothing uncommitted. It does not
-# deploy anything - it makes the release exist. deploy.sh puts it on production.
+# Run it from any clone that can PUSH, on main, with nothing uncommitted - which
+# in practice means the machine the code is written on, not a server. The servers
+# pull and cannot push, and a tag is a property of the commit rather than of the
+# machine that named it, so where it is cut makes no difference to what it means.
+#
+# It does not deploy anything. It makes the release exist; deploy.sh puts it on
+# production.
 set -eu
 
 NEW="${1:-}"
@@ -113,7 +118,23 @@ echo
 
 MSG=$(printf 'Release v%s\n\n%s\n' "$NEW" "$(git --no-pager log --no-merges --pretty='* %s' "$RANGE")")
 git tag -a "v$NEW" -m "$MSG"
-git push --quiet origin "v$NEW"
+
+# If the push fails, take the tag back.
+#
+# A tag that exists locally and not on origin is worse than no tag at all:
+# production cannot fetch it, and the next attempt at the same version stops with
+# "v0.7.0 already exists" - pointing at a tag nobody else can see. That is
+# exactly what happened the first time this ran on a box with pull access and no
+# push access, which is most of them.
+if ! git push --quiet origin "v$NEW" 2>/dev/null; then
+    git tag -d "v$NEW" >/dev/null
+    die "could not push v$NEW to origin, so the local tag has been removed -
+         nothing is half-created.
+
+         Usually this box can pull but cannot push. Cut the release from a clone
+         that has push access; the tag is a property of the commit, not of the
+         machine, so it makes no difference where it is created."
+fi
 
 echo "Tagged and pushed v$NEW"
 echo

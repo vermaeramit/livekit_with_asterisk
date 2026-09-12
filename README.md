@@ -302,9 +302,12 @@ production in grey, anything else in amber. The two boxes are otherwise identica
 on screen, and an afternoon has gone to not knowing which was which.
 
 ```bash
-server-configs/release.sh 0.7.0     # on development: tag it and push
-server-configs/deploy.sh v0.7.0     # on production:  check it out and deploy
+server-configs/release.sh 0.7.0     # from a clone that can push: tag it
+server-configs/deploy.sh v0.7.0     # on production: check it out and deploy
 ```
+
+The release is cut wherever push access lives — the machine the code is written
+on. The servers only pull.
 
 | Tag | Milestone |
 |---|---|

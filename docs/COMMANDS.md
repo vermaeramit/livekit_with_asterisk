@@ -51,8 +51,11 @@ re-run.
 
 ## Release a version
 
-The version **only changes when code goes to production**. On development, once
-the changes are proven:
+The version **only changes when code goes to production**. Once the changes are
+proven on development, cut the release **from a clone that can push** — the
+machine the code is written on, not a server. The servers pull and have no push
+credentials, and a tag belongs to the commit rather than to the machine that
+named it.
 
 ```bash
 server-configs/release.sh 0.7.0         # note: no v, it is added
