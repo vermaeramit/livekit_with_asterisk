@@ -81,6 +81,28 @@ HANDOFF:
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_]+)\s*(?:\|([^}]*))?\}\}")
 
 
+# THE ONLY dialler fields that may be spoken or shown to the model.
+#
+# Unprefixed, because a placeholder is written `{{cus_name}}` and the `dialer.`
+# prefix is ours - it exists so LiveKit's own `sip.` namespace cannot collide
+# with it. voice_agent adds it back when reading the attribute dict, and imports
+# this rather than keeping a second copy.
+#
+# The dialler sends more than this and all of it is stored; see _dialler_attrs.
+# What is NOT here is not a list of forbidden fields - it is everything else,
+# including whatever they add next without telling anyone. Opt-in, so a new field
+# is recorded and withheld until somebody decides otherwise, rather than reaching
+# a caller the day it first arrives.
+#
+# The labels are what the model is shown. They are here so there is one place to
+# change what a field is called.
+PROMPT_SAFE = {
+    "cus_name": "Caller name",
+    "modalname": "Product they own",
+    "calltype": "Call type",
+}
+
+
 def render_spoken(template: str | None, dialler: dict[str, str]) -> str | None:
     """Substitute dialler context into a spoken string.
 
@@ -88,12 +110,28 @@ def render_spoken(template: str | None, dialler: dict[str, str]) -> str | None:
     limit messages. Never to `instructions`: those are the cacheable prompt
     prefix, and a caller's name inside them would make every call's prefix
     unique and silently kill the prompt cache.
+
+    Only PROMPT_SAFE keys resolve. This used to substitute anything the dialler
+    had sent, which meant `{{lead_id}}` in a greeting made the agent read a CRM
+    identifier out to the caller - walking straight around the curation that
+    _caller_context exists to enforce. The comment there warns that a model
+    handed a lead id will eventually say it aloud; through this path no model was
+    even needed.
     """
     if not template or "{{" not in template:
         return template
 
     def one(m: re.Match) -> str:
         key, default = m.group(1), (m.group(2) or "")
+        if key not in PROMPT_SAFE:
+            # The default, or nothing - never the value. Logged because a
+            # placeholder that silently vanishes from a greeting is the kind of
+            # thing somebody spends an afternoon on. The console also refuses to
+            # let one be saved without saying so.
+            log.warning("{{%s}} is not a dialler field that may be spoken - "
+                        "using the default. Allowed: %s",
+                        key, ", ".join(sorted(PROMPT_SAFE)))
+            return default.strip()
         return (dialler.get(f"dialer.{key}") or default).strip()
 
     return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(one, template)).strip()

@@ -86,6 +86,32 @@ def _tts_defaults():
     return _Unknown()
 
 
+# The key out of {{cus_name}} or {{modalname|आपकी गाड़ी}}; the default after the
+# pipe is not needed here. Deliberately a second copy of prompt.py's pattern
+# rather than an import of it: this one only has to find the keys to check, and
+# the agent's has to render them.
+_PLACEHOLDER_KEY = re.compile(r"\{\{\s*([a-zA-Z_]+)")
+
+
+def _speakable_dialler_fields() -> set[str] | None:
+    """Which dialler fields may appear in something said to the caller.
+
+    Read from the agent's own prompt.py, so there is one list rather than a copy
+    here that drifts.
+
+    None, not an empty set, when it cannot be read. An empty set would make the
+    check below accuse every placeholder of being forbidden, and a console that
+    confidently reports a fault it cannot actually see is worse than one that
+    says nothing.
+    """
+    try:
+        if kblib.available():
+            return set(kblib.agent_module("prompt").PROMPT_SAFE)
+    except Exception:
+        log.exception("could not read the agent's speakable dialler fields")
+    return None
+
+
 def _warnings(cfg: dict) -> list[str]:
     """Things that are wrong but not invalid, so a save is never blocked.
 
@@ -152,6 +178,31 @@ def _warnings(cfg: dict) -> list[str]:
             "The voice is not used on OpenAI — the agent does not send one, so "
             "the plugin's own default speaks. The field applies to Soniox and "
             "Sarvam.")
+
+    # A placeholder naming a dialler field that may not be spoken. It saves, it
+    # renders as its default or as nothing, and the campaign never says the name
+    # it was meant to - the same silent shape as a marker the prompt never
+    # writes. Worth catching HERE, where somebody is looking at the field, rather
+    # than in a worker journal after a caller has heard the gap.
+    #
+    # The stronger reason: before this, these rendered. {{lead_id}} in a greeting
+    # read a CRM identifier out to the caller, walking around the curation that
+    # exists precisely to stop that.
+    speakable = _speakable_dialler_fields()
+    if speakable is not None:
+        for field, label in (("greeting", "The greeting"),
+                             ("transfer_message", "The transfer message"),
+                             ("transfer_closed_message", "The closed-hours message"),
+                             ("limit_message", "The limit message"),
+                             ("queue_message", "The hold message")):
+            for key in dict.fromkeys(_PLACEHOLDER_KEY.findall(cfg.get(field) or "")):
+                if key in speakable:
+                    continue
+                out.append(
+                    f"{label} uses {{{{{key}}}}}, which is not a dialler field "
+                    f"that may be spoken — it renders as its default, or as "
+                    f"nothing. Available: "
+                    f"{', '.join('{{' + k + '}}' for k in sorted(speakable))}.")
 
     # A concurrency limit with nothing to play. The caller who hits it hears
     # silence and is then handed off, which reads as a dropped call - and the

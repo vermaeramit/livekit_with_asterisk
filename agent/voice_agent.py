@@ -198,13 +198,21 @@ def _tts_kwargs(cfg):
 # handed a lead id will, sooner or later, read it out to the caller. The
 # identifiers exist for correlation with the dialler's CRM and go to the
 # database only.
-_PROMPT_ATTRS = {
-    "dialer.cus_name": "Caller name",
-    "dialer.modalname": "Product they own",
-    "dialer.calltype": "Call type",
-}
-_RECORD_ONLY_ATTRS = ("dialer.lead_id", "dialer.sr_id", "dialer.call_unique",
-                      "dialer.language")
+# One definition, in prompt.py, because the same set governs BOTH ways a dialler
+# field can reach a caller: this context message, and {{placeholder}} substitution
+# into spoken strings. They were curated separately, and the second one was not
+# curated at all - anything the dialler sent would render, so {{lead_id}} in a
+# greeting read a CRM identifier out loud.
+#
+# prompt.py rather than here because it imports nothing, so the console can read
+# the same list and warn before a placeholder like that is ever saved.
+_PROMPT_ATTRS = {f"dialer.{k}": label
+                 for k, label in prompt_mod.PROMPT_SAFE.items()}
+
+# There is no list of record-only fields, deliberately. It is EVERYTHING ELSE -
+# lead_id, sr_id, call_unique, and whatever the dialler adds next. A tuple naming
+# four of them stood here and was read by nothing; it would have gone stale the
+# first time they added a field, while looking authoritative.
 
 
 def _dialler_attrs(participant) -> dict[str, str]:

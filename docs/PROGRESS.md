@@ -4752,6 +4752,38 @@ A side effect worth having: a campaign whose fields are *all* from the dialler
 builds no schema, so `extract()` returns before the LLM call. No round trip, no
 tokens, nothing to time out.
 
+### The hole the curation had all along
+
+Raised while looking at the call detail page, whose own text says only the three
+marked fields reach the model — *"a model given a lead ID will eventually read it
+out to the caller, so new fields are recorded and withheld"*.
+
+That was true of one path and not the other. `_caller_context` is curated;
+`render_spoken`, which substitutes `{{placeholder}}` into the greeting, transfer
+and limit messages, was not curated at all:
+
+```python
+return (dialler.get(f"dialer.{key}") or default).strip()
+```
+
+`{{lead_id}}` in a greeting made the agent **read a CRM identifier out to the
+caller**. No model needed — the comment worries about one eventually saying it
+aloud, and this path just said it.
+
+Settled by data rather than by judgement: no campaign uses any placeholder at
+all (`regexp_matches` over greeting, transfer and limit messages returned zero
+rows), so the guard breaks nothing.
+
+The allowlist now lives once, in `prompt.py` — which imports nothing, so the
+console reads the same list and warns before such a placeholder can be saved.
+`voice_agent` derives its own map from it rather than keeping a second copy,
+which is how the two drifted apart in the first place.
+
+Also deleted: `_RECORD_ONLY_ATTRS`, a tuple naming four record-only fields that
+**nothing read**. The real record-only set is everything not on the allowlist,
+including whatever the dialler adds next — a list of four looked authoritative
+and would have been wrong the first time they added a fifth.
+
 ### Two smaller things
 
 Types are coerced, and **never discarded on failure**. The dialler sends
