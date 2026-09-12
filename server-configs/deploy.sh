@@ -207,7 +207,19 @@ for i in 1 2 3 4 5 6; do
     systemctl is-active --quiet "aivoice-agent@$i" || DOWN="$DOWN${DOWN:+ }$i"
 done
 
-SERVED=$(curl -fsS --max-time 5 http://127.0.0.1:8090/api/version 2>/dev/null || echo '')
+# Polled, not asked once. admin-api's own healthcheck allows a start_period of
+# 10s - it connects to Postgres and starts the alert evaluator and the postback
+# sweeper before it serves anything - so a single check eight seconds in reported
+# "no answer from 127.0.0.1:8090" on a deploy that had worked perfectly. A
+# verification step that cries wolf on every run is one people stop reading.
+SERVED=""
+_try=0
+while [ "$_try" -lt 15 ]; do
+    SERVED=$(curl -fsS --max-time 3 http://127.0.0.1:8090/api/version 2>/dev/null || echo '')
+    [ -n "$SERVED" ] && break
+    _try=$((_try + 1))
+    sleep 3
+done
 
 echo
 echo "Deployed  : $VERSION on $APP_ENV"
@@ -222,8 +234,9 @@ fi
 case "$SERVED" in
     *"\"$VERSION\""*) ;;
     '') echo
-        echo "The API did not answer. It may still be starting; check again in a"
-        echo "few seconds with: curl -s localhost:8090/api/version" ;;
+        echo "The API did not answer in 45 seconds, which is past its own start"
+        echo "allowance - this is a failure to start, not a slow one:"
+        echo "         docker logs admin-api --tail 40" ;;
     *)  echo
         echo "WARNING: the API reports a different version than was just deployed."
         echo "         That is a half-finished deploy - the container did not get"
