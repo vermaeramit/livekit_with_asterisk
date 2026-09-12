@@ -41,31 +41,36 @@ export const ENV_LABEL: Record<AppEnv, string> = {
  * `git describe` appends `-<n>-g<sha>` once there are commits after the tag,
  * and that suffix is the whole signal: this code has not been released.
  */
-const UNRELEASED = /-\d+-g([0-9a-f]+)(-dirty)?$/.exec(APP_VERSION)
+// v0.10.0-3-gff6b7a2[-dirty] -> ["v0.10.0", "3", "ff6b7a2", "-dirty"]
+const AHEAD = /^(.+)-(\d+)-g([0-9a-f]+)(-dirty)?$/.exec(APP_VERSION)
 
-export const IS_UNRELEASED = UNRELEASED !== null
+export const IS_UNRELEASED = AHEAD !== null
 
 /**
- * What to actually show. On a release it is the release; off one it is the
- * COMMIT, and deliberately not the version.
+ * `v0.10.0` on a release, `v0.10.0+3` when three commits past one.
  *
- * The first version of this showed the whole `git describe` string, and it was
- * misleading in a way that took a user to spot. Development showed
- * `v0.9.0-1-g8165da5` while production showed `v0.10.0` - the same commit, both
- * correct, and reading as though production were two versions ahead of
- * development.
+ * Two goes at this, and the reasoning matters more than the format.
  *
- * Two things caused that. Development's label names the LAST RELEASE BEFORE it,
- * so its number is always behind by construction; and it is baked at build time,
- * so tagging that same commit afterwards changes what it would say without
- * changing what it says. Neither is a bug on its own. Putting the two strings
- * side by side, where they invite a comparison they cannot support, was.
+ * `git describe` writes `v0.9.0-1-g8165da5`, naming the release BEFORE the
+ * commit. Next to production's `v0.10.0` that read as though production were a
+ * version ahead of development, when both were the same commit - development's
+ * label had simply been built before the tag existed, and names the older
+ * release by construction either way.
  *
- * So off a release there is no version number at all - just the commit, which is
- * the only thing that identifies a development build unambiguously. `git show
- * 8165da5` answers everything the version number was being asked for. The full
- * describe string is still on the element's title for anyone who wants it.
+ * The first attempt dropped the number on development and showed the commit
+ * alone. That removed the false comparison by removing the thing being
+ * compared, which is not the same as fixing it - and the version was what
+ * somebody wanted to see.
+ *
+ * `+3` fixes it properly: the same release name as production, plus how far
+ * past it this build is. It cannot read as older, because it is the same number
+ * with something added. `+0` never appears - that is a release, and shows as one.
+ *
+ * One honest limit: this names the newest release that existed WHEN THE BUILD
+ * RAN. Tag a release afterwards and a development box keeps naming the previous
+ * one until it is redeployed. The `+N` marks it as a development build, which is
+ * what stops that being misleading, and the next deploy corrects it.
  */
-export const DISPLAY_VERSION = UNRELEASED
-  ? UNRELEASED[1] + (UNRELEASED[2] ?? '')
+export const DISPLAY_VERSION = AHEAD
+  ? `${AHEAD[1]}+${AHEAD[2]}${AHEAD[4] ?? ''}`
   : APP_VERSION

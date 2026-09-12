@@ -143,5 +143,17 @@ echo
 echo "    ssh root@<production>"
 echo "    cd /srv/aivoice && server-configs/deploy.sh v$NEW"
 echo
-echo "Until that runs, production keeps serving whatever it already had - this"
+echo "Then redeploy DEVELOPMENT, even though its code has not changed:"
+echo
+echo "    cd /srv/aivoice && server-configs/deploy.sh"
+echo
+# Not optional tidying. A console's version is `git describe` baked in at build
+# time, naming the newest release that existed THEN. Development was built before
+# this tag, so it keeps reporting the previous one - and beside production's
+# fresh number that reads as production being ahead of development, which is the
+# confusion this whole scheme exists to remove. One rebuild and they agree.
+echo "Its label still names the release BEFORE this one, so until it is rebuilt"
+echo "it reads as older than production while running the same code."
+echo
+echo "Until production runs, it keeps serving whatever it already had - this"
 echo "only made the release exist."
