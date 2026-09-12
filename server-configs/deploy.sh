@@ -207,14 +207,21 @@ for i in 1 2 3 4 5 6; do
     systemctl is-active --quiet "aivoice-agent@$i" || DOWN="$DOWN${DOWN:+ }$i"
 done
 
-# Polled, not asked once. admin-api's own healthcheck allows a start_period of
-# 10s - it connects to Postgres and starts the alert evaluator and the postback
-# sweeper before it serves anything - so a single check eight seconds in reported
-# "no answer from 127.0.0.1:8090" on a deploy that had worked perfectly. A
-# verification step that cries wolf on every run is one people stop reading.
+# Polled, and the ceiling comes from a measurement rather than a guess.
+#
+# Twice wrong before this. A single check 8s in reported "no answer" on a deploy
+# that had worked; raised to 45s, it did it again. The container log settled it:
+#
+#   09:57:22  container start
+#   09:58:23  Application startup complete     <- 61 seconds
+#
+# It imports the agent's modules through the kblib mount, onnxruntime among them,
+# before it serves anything. 150s leaves real headroom over that; the point of
+# this check is to catch a container that did not come up at all, and a ceiling
+# that trips on healthy deploys catches nothing because people stop reading it.
 SERVED=""
 _try=0
-while [ "$_try" -lt 15 ]; do
+while [ "$_try" -lt 50 ]; do
     SERVED=$(curl -fsS --max-time 3 http://127.0.0.1:8090/api/version 2>/dev/null || echo '')
     [ -n "$SERVED" ] && break
     _try=$((_try + 1))
@@ -234,8 +241,11 @@ fi
 case "$SERVED" in
     *"\"$VERSION\""*) ;;
     '') echo
-        echo "The API did not answer in 45 seconds, which is past its own start"
-        echo "allowance - this is a failure to start, not a slow one:"
+        # States what was observed and not what it means. The previous wording
+        # asserted "this is a failure to start, not a slow one" - and said it
+        # about a container that was starting perfectly well and took 61s.
+        echo "The API has not answered in 150 seconds. It normally takes about"
+        echo "60; check whether it is still starting or has failed:"
         echo "         docker logs admin-api --tail 40" ;;
     *)  echo
         echo "WARNING: the API reports a different version than was just deployed."

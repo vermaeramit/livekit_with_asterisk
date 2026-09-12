@@ -592,10 +592,10 @@ export function CampaignConfig() {
               are the only dialer fields that may be spoken; the identifiers are
               recorded and never said aloud.
               <br />
-              <strong>
-                It sends a name on about 5% of calls, so write the other 95% too
-              </strong>{' '}
-              — the box below. A pipe fallback like{' '}
+              <strong>It does not send every field on every call</strong>, and
+              which ones arrive differs by campaign — the call detail page shows
+              exactly what came through on each one. So write the version for
+              when they are missing too, in the box below. A pipe fallback like{' '}
               <code>{'{{cus_name|आप}}'}</code> can only swap a word, and “क्या
               मेरी बात आप से हो रही है?” is not a sentence anybody says. Asking for
               the name is, and that is a different sentence.
@@ -606,12 +606,17 @@ export function CampaignConfig() {
                 be chosen and the box would be a question with no answer. */}
             {(value.greeting ?? '').includes('{{') && (
               <>
+                {/* Named for the CONDITION, not for one field. It fires on
+                    whichever placeholders the greeting above happens to use -
+                    calling it "when the dialer sends no name" would be wrong
+                    for a greeting built on {{modalname}} or {{calltype}}, and
+                    the label is the part people read. */}
                 <TextField
-                  label="Greeting when the dialer sends no name"
+                  label="Greeting when those details are missing"
                   value={value.greeting_fallback ?? ''}
                   onChange={(v) => set('greeting_fallback', v || null)}
                   placeholder="Namaste! Main kya aapka naam jaan sakti hoon?"
-                  hint="Used whenever a placeholder above has no value on that call. Leave empty to speak the greeting above regardless."
+                  hint="Used on any call where a placeholder you used above has no value — whichever ones those are. Leave empty to speak the greeting above regardless, gap and all."
                 />
                 <Note>
                   This one is also what a <strong>website visitor</strong> hears:
@@ -621,10 +626,10 @@ export function CampaignConfig() {
                   And it is <strong>faster</strong>. A greeting containing{' '}
                   <code>{'{{'}</code> is different for every caller, so it cannot
                   be pre-rendered and is spoken live on every call — the caller
-                  waits for it. This one has no placeholder, so it is rendered
-                  once and played from disk. On the 95% of calls with no name,
-                  that is the difference between hearing the greeting immediately
-                  and waiting about a second and a half for it to begin.
+                  waits for it. Keep this one free of placeholders and it is
+                  rendered once and played from disk, which is the difference
+                  between hearing the greeting immediately and waiting about a
+                  second and a half for it to begin.
                 </Note>
               </>
             )}

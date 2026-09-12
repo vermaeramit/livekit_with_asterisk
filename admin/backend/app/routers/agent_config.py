@@ -196,13 +196,21 @@ def _warnings(cfg: dict) -> list[str]:
     #
     # Also names the second cost, which is invisible from this page: a greeting
     # containing {{ cannot be pre-rendered, so it is spoken live on every call.
-    if ("{{" in (cfg.get("greeting") or "")
-            and not (cfg.get("greeting_fallback") or "").strip()):
+    # Names the placeholders actually used rather than asserting a share of
+    # calls. This said "~95% of calls where the dialer sends no name", which is
+    # true of cus_name on one deployment and the opposite of true for calltype -
+    # that one arrives on every call. A number nobody can check is worse than
+    # naming the field and letting the reader look.
+    used = list(dict.fromkeys(_PLACEHOLDER_KEY.findall(cfg.get("greeting") or "")))
+    if used and not (cfg.get("greeting_fallback") or "").strip():
+        which = ", ".join("{{" + k + "}}" for k in used)
         out.append(
-            "The greeting uses a placeholder but has no alternative, so on the "
-            "~95% of calls where the dialer sends no name the caller hears the "
-            "sentence with a gap in it. An alternative would also let those "
-            "calls use the pre-rendered greeting instead of waiting for it.")
+            f"The greeting uses {which} and has no alternative, so on any call "
+            f"where the dialer does not send "
+            f"{'one of those' if len(used) > 1 else 'it'} the caller hears the "
+            f"sentence with a gap in it. The call detail page shows what each "
+            f"call actually carried. An alternative would also let those calls "
+            f"use the pre-rendered greeting instead of waiting for it.")
 
     # The alternative is meant to be the one that CAN be pre-rendered. A
     # placeholder in it means neither greeting is cached and every call waits for
