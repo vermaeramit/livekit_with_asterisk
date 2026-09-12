@@ -6,7 +6,7 @@ import { Input, Label } from '@/components/ui/primitives'
 import { useAuth } from '@/lib/auth'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { APP_ENV, APP_VERSION, ENV_LABEL, IS_UNRELEASED } from '@/lib/version'
+import { APP_ENV, APP_VERSION, DISPLAY_VERSION, ENV_LABEL, IS_UNRELEASED } from '@/lib/version'
 
 /** Bar heights for the idle waveform, in percent. Irregular on purpose - an
  *  even curve reads as a loading spinner rather than speech. */
@@ -291,14 +291,18 @@ export function Login() {
                   ? 'text-muted-foreground'
                   : 'font-medium text-amber-600 dark:text-amber-400',
               )}
+              // The full `git describe` string, for anyone who wants the
+              // release this was built after. Not on the face of it: see
+              // DISPLAY_VERSION for why two of those side by side mislead.
+              title={APP_VERSION}
             >
-              {APP_VERSION}
+              {DISPLAY_VERSION}
               <span className="mx-1.5 opacity-40">·</span>
               {ENV_LABEL[APP_ENV]}
               {IS_UNRELEASED && APP_ENV === 'production' && (
                 // Production is meant to sit exactly on a release tag. A commit
-                // suffix here means it was deployed off main instead, so the
-                // version it reports is not a release anybody can go back to.
+                // here instead of a version means it was deployed off main, so
+                // what it is running is not a release anybody can go back to.
                 <span className="ml-1.5 font-medium text-amber-600 dark:text-amber-400">
                   (untagged)
                 </span>

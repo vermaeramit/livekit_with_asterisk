@@ -4,7 +4,7 @@ import { PAGE, PageHeader } from '@/components/Layout'
 import { Badge, Card, CardBody, CardHeader, CardTitle, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatNumber, formatRelative } from '@/lib/utils'
-import { APP_ENV, APP_VERSION, ENV_LABEL } from '@/lib/version'
+import { APP_ENV, APP_VERSION, DISPLAY_VERSION, ENV_LABEL } from '@/lib/version'
 import type { SystemHealth } from '@/types'
 
 /**
@@ -91,7 +91,10 @@ export function System() {
           is no way to see it at all. */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-2xs">
         <span className="text-muted-foreground">
-          Console <span className="tnum font-medium text-foreground">{APP_VERSION}</span>
+          Console{' '}
+          <span className="tnum font-medium text-foreground" title={APP_VERSION}>
+            {DISPLAY_VERSION}
+          </span>
         </span>
         <span className="text-muted-foreground">
           API{' '}

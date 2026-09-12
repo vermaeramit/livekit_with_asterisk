@@ -39,7 +39,33 @@ export const ENV_LABEL: Record<AppEnv, string> = {
  * True when this build is not sitting on a release tag.
  *
  * `git describe` appends `-<n>-g<sha>` once there are commits after the tag,
- * and that suffix is the whole signal: this code has not been released. Used to
- * colour the label rather than to hide anything.
+ * and that suffix is the whole signal: this code has not been released.
  */
-export const IS_UNRELEASED = /-\d+-g[0-9a-f]+$/.test(APP_VERSION)
+const UNRELEASED = /-\d+-g([0-9a-f]+)(-dirty)?$/.exec(APP_VERSION)
+
+export const IS_UNRELEASED = UNRELEASED !== null
+
+/**
+ * What to actually show. On a release it is the release; off one it is the
+ * COMMIT, and deliberately not the version.
+ *
+ * The first version of this showed the whole `git describe` string, and it was
+ * misleading in a way that took a user to spot. Development showed
+ * `v0.9.0-1-g8165da5` while production showed `v0.10.0` - the same commit, both
+ * correct, and reading as though production were two versions ahead of
+ * development.
+ *
+ * Two things caused that. Development's label names the LAST RELEASE BEFORE it,
+ * so its number is always behind by construction; and it is baked at build time,
+ * so tagging that same commit afterwards changes what it would say without
+ * changing what it says. Neither is a bug on its own. Putting the two strings
+ * side by side, where they invite a comparison they cannot support, was.
+ *
+ * So off a release there is no version number at all - just the commit, which is
+ * the only thing that identifies a development build unambiguously. `git show
+ * 8165da5` answers everything the version number was being asked for. The full
+ * describe string is still on the element's title for anyone who wants it.
+ */
+export const DISPLAY_VERSION = UNRELEASED
+  ? UNRELEASED[1] + (UNRELEASED[2] ?? '')
+  : APP_VERSION
