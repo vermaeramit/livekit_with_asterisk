@@ -20,7 +20,32 @@
 # lands on a live call. That has happened here.
 set -eu
 
-cd "$(dirname "$0")/.."
+# ── Run from a copy of itself ───────────────────────────────────────────────
+# This script pulls code that INCLUDES THIS SCRIPT, and sh reads a script in
+# chunks as it executes. Rewriting the file underneath a running shell leaves it
+# reading the new bytes from the old offset: a syntax error in the middle of a
+# deploy, on whichever box happened to be unlucky.
+#
+# So the first thing it does is copy itself somewhere nothing will touch and hand
+# over. The consequence is worth stating plainly: a deploy runs the version of
+# this script you invoked, not the one it just pulled. That is the predictable
+# choice - the alternative is changing procedure half way through following it.
+if [ -z "${DEPLOY_FROM_COPY:-}" ]; then
+    # Resolved HERE, while $0 is still the real path. In the copy it is a name
+    # under /tmp and says nothing about which checkout to deploy.
+    DEPLOY_REPO=$(cd "$(dirname "$0")/.." && pwd)
+    export DEPLOY_REPO
+    export DEPLOY_FROM_COPY=1
+
+    _copy=$(mktemp) || { echo "could not create a temp file" >&2; exit 1; }
+    cat "$0" > "$_copy"
+    chmod +x "$_copy"
+    "$_copy" "$@" && _rc=0 || _rc=$?
+    rm -f "$_copy"
+    exit "$_rc"
+fi
+
+cd "$DEPLOY_REPO"
 
 TARGET=""
 FORCE=0
