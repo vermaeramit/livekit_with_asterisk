@@ -4711,6 +4711,65 @@ there were two servers there was no reason to.
 
 ---
 
+## Values that were right all along and never sent (12 Sep 2026)
+
+The dialler tells us who it is calling — lead id, customer name, call type, seven
+fields it added one day without mentioning it. All of it is stored in
+`calls.dialer_context` and all of it reaches `envelope()`.
+
+And on a campaign with **Send the call details** off, none of it was sent. That
+mode returns `dict(extracted)` and nothing else, because a client's endpoint
+usually wants exactly the keys it asked for and not a nested structure. So the
+`dialer` block was simply absent, and values we had held correctly since the call
+began never reached the system they came from.
+
+### A field now says where its value comes from
+
+`postback_fields` entries take a `source`:
+
+| `source` | Value from |
+|---|---|
+| `conversation` (default, and what every existing field means) | read out of the transcript by the model |
+| `dialler` | copied from what the dialler sent, under whatever name the client asked for |
+
+Both land in `extracted`, which is what makes them arrive in **either** payload
+mode. `lead_id` on their side can be `crmReference` in the payload with neither
+side renaming anything.
+
+### The part that matters more than the plumbing
+
+A dialler-sourced field is **left out of the extraction schema entirely** — the
+model is never asked for it.
+
+That is not an optimisation. Configure `lead_id` as an ordinary field today and
+the model is handed a transcript that never mentions a lead id and asked to
+produce one. Every field in that schema is nullable precisely so it can answer
+"not established" — but this is exactly the prompt shape that gets a plausible
+answer instead of no answer. The value is already a fact. It does not belong in
+a question.
+
+A side effect worth having: a campaign whose fields are *all* from the dialler
+builds no schema, so `extract()` returns before the LLM call. No round trip, no
+tokens, nothing to time out.
+
+### Two smaller things
+
+Types are coerced, and **never discarded on failure**. The dialler sends
+everything as a string — IAX2 variables into SIP headers, no type on the wire at
+all — so a field declared `number` arrives as `"4471"`. If it will not convert,
+the raw value goes rather than a null: this runs after the call has ended, and
+there is nothing left to ask again.
+
+The console offers the keys **the dialler has actually been sending**, read from
+the campaign's last 200 calls rather than from a list in our code — the code's own
+comment says they add fields without telling anyone. It suggests rather than
+restricts, because a call that has not happened cannot have taught us its key.
+And it warns when a field points at a key none of those 200 calls carried: that
+saves fine, sends null forever, and is otherwise as quiet as a transfer marker
+the prompt never writes.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

@@ -16,7 +16,23 @@ const TYPES = [
   { value: 'boolean', label: 'yes / no' },
 ]
 
-type Field = { key: string; type: string; description: string }
+type Field = {
+  key: string
+  type: string
+  description: string
+  /** Absent means 'conversation', which is what every field saved before this
+   *  existed meant. Nothing needs migrating. */
+  source?: 'conversation' | 'dialler'
+  /** Which of the dialler's own keys to copy. Only read when source is
+   *  'dialler'; empty falls back to `key`, for the common case where the two
+   *  names are the same. */
+  from?: string
+}
+
+const SOURCES = [
+  { value: 'conversation', label: 'the conversation' },
+  { value: 'dialler', label: 'the dialer' },
+] as const
 
 /**
  * The fields to pull out of the conversation.
@@ -31,34 +47,69 @@ type Field = { key: string; type: string; description: string }
  * value where "payment" produces whatever the model feels like.
  */
 function FieldList({
+  campaignId,
   fields,
   onChange,
 }: {
+  campaignId: number
   fields: Field[]
   onChange: (f: Field[]) => void
 }) {
   const edit = (i: number, patch: Partial<Field>) =>
     onChange(fields.map((f, j) => (j === i ? { ...f, ...patch } : f)))
 
+  // What the dialer has actually been sending on this campaign, read from its
+  // last 200 calls. Suggestions rather than a fixed list: the dialer owns this
+  // set and has added to it without telling anyone, and a call that has not
+  // happened yet cannot have taught us its key.
+  const ctxKeys = useQuery({
+    queryKey: ['dialler-context-keys', campaignId],
+    queryFn: () => api<string[]>(`/campaigns/${campaignId}/dialler-context-keys`),
+    staleTime: 5 * 60 * 1000,
+  })
+  const listId = `dialler-keys-${campaignId}`
+
   return (
     <div className="space-y-1.5">
-      <Label>Fields to extract</Label>
+      <Label>Fields to send</Label>
+
+      <datalist id={listId}>
+        {(ctxKeys.data ?? []).map((k) => (
+          <option key={k} value={k} />
+        ))}
+      </datalist>
 
       {fields.length === 0 ? (
         <p className="text-2xs leading-relaxed text-muted-foreground">
-          Nothing set — only the facts are sent (identifiers, duration, outcome, what the dialer
-          gave us). Nothing is read out of the conversation.
+          Nothing set — nothing is read out of the conversation, and nothing from the dialer is
+          passed through. With &ldquo;Send the call details too&rdquo; on, the identifiers, duration
+          and outcome still go; with it off, the payload is empty.
         </p>
       ) : (
         <div className="space-y-2">
           {fields.map((f, i) => (
-            <div key={i} className="flex items-start gap-2">
+            <div key={i} className="space-y-1">
+            <div className="flex items-start gap-2">
               <Input
                 value={f.key}
                 onChange={(e) => edit(i, { key: e.target.value.trim() })}
                 placeholder="payment_mode"
                 className="w-44 shrink-0 font-mono"
               />
+              <select
+                value={f.source ?? 'conversation'}
+                onChange={(e) =>
+                  edit(i, { source: e.target.value as Field['source'] })
+                }
+                className="h-9 w-36 shrink-0 rounded-md border border-input bg-card px-2 text-sm"
+                aria-label="Where this value comes from"
+              >
+                {SOURCES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    from {s.label}
+                  </option>
+                ))}
+              </select>
               <select
                 value={f.type}
                 onChange={(e) => edit(i, { type: e.target.value })}
@@ -70,11 +121,26 @@ function FieldList({
                   </option>
                 ))}
               </select>
-              <Input
-                value={f.description}
-                onChange={(e) => edit(i, { description: e.target.value })}
-                placeholder="cash or finance, whichever the caller chose"
-              />
+              {/* The third box means two different things, so it is not one box
+                  with two placeholders. For the conversation it is the ONLY
+                  thing the model is told; for the dialer it is a lookup key and
+                  a description would do nothing at all. */}
+              {(f.source ?? 'conversation') === 'dialler' ? (
+                <Input
+                  value={f.from ?? ''}
+                  onChange={(e) => edit(i, { from: e.target.value.trim() })}
+                  placeholder={f.key || 'lead_id'}
+                  list={listId}
+                  className="font-mono"
+                  aria-label="Which of the dialer's keys to copy"
+                />
+              ) : (
+                <Input
+                  value={f.description}
+                  onChange={(e) => edit(i, { description: e.target.value })}
+                  placeholder="cash or finance, whichever the caller chose"
+                />
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -85,6 +151,23 @@ function FieldList({
                 <X className="size-3.5" />
               </Button>
             </div>
+            {/* A dialer field pointing at a key the dialer has never sent. It
+                saves fine, the payload carries null forever, and nothing else
+                says so - the same shape as a transfer marker the prompt never
+                writes. Only shown once some context HAS been seen: an empty list
+                means this campaign has taken no calls yet, and warning then
+                would be asserting something we cannot know. */}
+            {(f.source ?? 'conversation') === 'dialler' &&
+              (ctxKeys.data?.length ?? 0) > 0 &&
+              (f.from || f.key) &&
+              !ctxKeys.data!.includes((f.from || f.key).replace(/^dialer\./, '')) && (
+                <p className="pl-1 text-2xs text-amber-600 dark:text-amber-400">
+                  The dialer has not sent{' '}
+                  <code className="font-mono">{f.from || f.key}</code> on the last 200 calls — this
+                  field would be empty. Seen: {ctxKeys.data!.join(', ')}
+                </p>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -94,15 +177,23 @@ function FieldList({
           variant="outline"
           size="sm"
           disabled={fields.length >= 25}
-          onClick={() => onChange([...fields, { key: '', type: 'string', description: '' }])}
+          onClick={() =>
+            onChange([
+              ...fields,
+              { key: '', type: 'string', description: '', source: 'conversation' },
+            ])
+          }
         >
           <Plus className="size-3.5" />
           Add a field
         </Button>
         <p className="text-2xs leading-relaxed text-muted-foreground">
-          The description is all the model gets. A field the conversation never established comes
-          back empty rather than guessed — that is deliberate, an invented pincode is worse than a
-          missing one.
+          <strong className="font-medium text-foreground">From the conversation:</strong> the
+          description is all the model gets, and a field the conversation never established comes
+          back empty rather than guessed — an invented pincode is worse than a missing one.{' '}
+          <strong className="font-medium text-foreground">From the dialer:</strong> the value is
+          copied from what they sent us, under whatever name you give it here. It is never shown to
+          the model at all — it is already a fact, and asking is how a model ends up inventing one.
         </p>
       </div>
     </div>
@@ -204,7 +295,11 @@ export function CampaignPostback({
             />
           </div>
 
-          <FieldList fields={fields} onChange={(f) => set('postback_fields', f as never)} />
+          <FieldList
+            campaignId={campaignId}
+            fields={fields}
+            onChange={(f) => set('postback_fields', f as never)}
+          />
 
           <Toggle
             label="Send the call details too"

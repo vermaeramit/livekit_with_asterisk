@@ -50,17 +50,32 @@ EXTRACT_TIMEOUT = float(os.getenv("POSTBACK_EXTRACT_TIMEOUT", "20"))
 _TYPES = {"string": "string", "number": "number", "boolean": "boolean"}
 
 
+def is_dialler_field(f: dict) -> bool:
+    """True when this field's value comes from the dialler, not the conversation.
+
+    Absent `source` means "conversation", which is what every field configured
+    before this existed meant. Nothing needs migrating.
+    """
+    return (f.get("source") or "conversation") == "dialler"
+
+
 def build_schema(fields: list[dict]) -> dict | None:
     """The campaign's field list -> a JSON Schema for structured output.
 
     Every field is optional and nullable. A required field would make the model
     invent a value rather than admit the conversation never covered it, and an
     invented pincode is worse than a missing one.
+
+    Dialler-sourced fields are LEFT OUT, and that is the point of them. Asking a
+    model to read a lead id out of a transcript that never mentions it is exactly
+    the situation the nullable types above exist to survive - and the one where a
+    model is most likely to produce something plausible instead of nothing. The
+    value is already a fact; it does not belong in a question.
     """
     props: dict[str, Any] = {}
     for f in fields or []:
         key = (f.get("key") or "").strip()
-        if not key:
+        if not key or is_dialler_field(f):
             continue
         kind = _TYPES.get((f.get("type") or "string").lower(), "string")
         props[key] = {
@@ -71,6 +86,81 @@ def build_schema(fields: list[dict]) -> dict | None:
         return None
     return {"type": "object", "properties": props,
             "required": list(props), "additionalProperties": False}
+
+
+def _coerce(value: Any, kind: str) -> Any:
+    """Best effort, and it never throws away the value.
+
+    The dialler sends everything as a string over IAX2 variables and SIP headers -
+    there is no type on the wire at all. A field declared `number` therefore
+    arrives as "4471" and a client that asked for a number should get one.
+
+    On failure the RAW value is kept rather than nulled. A client that asked for a
+    number and receives "4471-B" has something to look at; one that receives null
+    has lost the only copy of it, and this runs after the call has ended so there
+    is nothing to ask again.
+    """
+    if value is None:
+        return None
+    if kind == "number":
+        try:
+            s = str(value).strip()
+            return int(s) if s.lstrip("-").isdigit() else float(s)
+        except (TypeError, ValueError):
+            log.info("postback: %r is not a number, sending it as given", value)
+            return value
+    if kind == "boolean":
+        s = str(value).strip().lower()
+        if s in ("1", "true", "yes", "y", "t"):
+            return True
+        if s in ("0", "false", "no", "n", "f", ""):
+            return False
+        log.info("postback: %r is not a boolean, sending it as given", value)
+        return value
+    return str(value)
+
+
+def from_dialler(fields: list[dict], dialler: dict) -> dict:
+    """-> {field key: value} for every field sourced from the dialler.
+
+    The dialler's own context, republished under whatever names the client's
+    endpoint asks for. `lead_id` in their system can be `crmReference` in the
+    payload without either side renaming anything.
+
+    Why this exists at all: with the full payload off - which is how most client
+    endpoints want it, a flat object with exactly the configured keys - the
+    `dialer` block is not sent, so values the dialler had told us all along never
+    reached the client's system. They were in the database the whole time.
+
+    Keys are matched with and without the `dialer.` prefix. The prefix is ours,
+    added so LiveKit's own `sip.` namespace cannot collide with it, and nobody
+    configuring a field should have to know that.
+
+    A field whose key the dialler did not send is None, not absent. Same reason
+    extract() fills every key: a payload that changes shape depending on what
+    arrived cannot be parsed without guarding every key separately.
+    """
+    ctx = dialler or {}
+    # Both spellings, so a `from` of either "lead_id" or "dialer.lead_id" works.
+    flat = {k.split(".", 1)[-1]: v for k, v in ctx.items()}
+
+    out: dict[str, Any] = {}
+    for f in fields or []:
+        if not is_dialler_field(f):
+            continue
+        key = (f.get("key") or "").strip()
+        if not key:
+            continue
+        # `from` names the dialler's key; falling back to `key` covers the common
+        # case where they are the same and nobody filled the second box in.
+        src = (f.get("from") or key).strip()
+        raw = ctx.get(src, flat.get(src.split(".", 1)[-1]))
+        out[key] = _coerce(raw, (f.get("type") or "string").lower())
+
+    if out:
+        log.info("postback: %d field(s) taken from the dialler (%s)",
+                 len(out), ", ".join(sorted(out)))
+    return out
 
 
 _SYSTEM = (

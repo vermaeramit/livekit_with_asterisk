@@ -918,3 +918,35 @@ async def remove_dialler_id(campaign_id: int, row_id: int,
     await audit.record(actor, entity="campaign", entity_id=campaign_id,
                        action="dialler_id_remove", tenant_id=tenant_id,
                        changes={"dialler_campaign_id": row["dialler_campaign_id"]})
+
+
+@router.get("/dialler-context-keys", response_model=list[str])
+async def dialler_context_keys(campaign_id: int,
+                               user: CurrentUser = Depends(active_user)):
+    """What the dialler has ACTUALLY been sending on this campaign.
+
+    Read from the last 200 calls rather than from a list in our code, because
+    the dialler owns this set and has added fields to it without telling anyone -
+    store.set_dialler_context says so in as many words. A hardcoded list would be
+    correct on the day it was written and quietly short afterwards.
+
+    The `dialer.` prefix is stripped: it exists so LiveKit's own `sip.` namespace
+    cannot collide with ours, and nobody choosing a field should have to know it.
+
+    Empty is a real answer, not an error - a campaign that has taken no calls yet,
+    or one whose dialler sends no context at all. The console says so rather than
+    offering an empty dropdown with no explanation.
+    """
+    await assert_campaign_visible(user, campaign_id)
+    rows = await db.pool().fetch(
+        """SELECT DISTINCT k
+             FROM (SELECT dialer_context
+                     FROM calls
+                    WHERE campaign_id = $1 AND dialer_context IS NOT NULL
+                    ORDER BY id DESC
+                    LIMIT 200) recent,
+                  jsonb_object_keys(recent.dialer_context) AS k""",
+        campaign_id)
+    # Deduped AFTER stripping: `dialer.lead_id` and a bare `lead_id` are one key
+    # to anyone reading this list, and DISTINCT ran before the prefix came off.
+    return sorted({r["k"].split(".", 1)[-1] for r in rows})

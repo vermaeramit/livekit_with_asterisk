@@ -1439,6 +1439,16 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             base_url=providers_mod.llm_base_url(llm_provider),
             tool_calls=tool_calls, model=cfg.llm_model)
 
+        # Fields the dialler already told us, republished under the names the
+        # client's endpoint asks for. AFTER extract and merged over the top: if a
+        # key were somehow configured as both, the dialler's value is a fact and
+        # the model's reading of it is an opinion.
+        #
+        # This is what makes them reach a client running the flat payload, where
+        # only `extracted` is sent and the `dialer` block is not. Those values sat
+        # in the database, correct and unsent, for every such campaign.
+        extracted.update(pb.from_dialler(fields, dialler))
+
         payload = pb.envelope(
             call_row=dict(row) if row else {"id": call_id},
             dialler=dialler,
@@ -1448,7 +1458,7 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             full=getattr(cfg, "postback_full_payload", True))
 
         await store.save_postback(call_id, cfg.campaign_id, payload)
-        logger.info("postback queued for call %s (%d extracted fields) in %dms",
+        logger.info("postback queued for call %s (%d fields) in %dms",
                     call_id, len(extracted), (time.monotonic() - t0) * 1000)
     except Exception:
         logger.exception("postback could not be prepared for call %s "
