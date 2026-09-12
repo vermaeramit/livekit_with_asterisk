@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import alerting, db, postback
 from .config import settings
 from .routers import (activity, agent_config, alerts, analytics, auth, calls,
-                      diallers, gaps,
+                      diallers, dialler_api, gaps,
                       rates, roles,
                       campaigns, chat, kb, kb_sources, live,
                       provider_keys, system, tenants,
@@ -112,6 +112,10 @@ app.include_router(provider_keys.router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 app.include_router(activity.router, prefix="/api")
+# The dialler's own endpoint. The ONLY router here with no login on it - it
+# authenticates on a per-client X-API-Key instead, and answers exactly one
+# question. See routers/dialler_api.py.
+app.include_router(dialler_api.router, prefix="/api")
 
 
 @app.get("/api/health")

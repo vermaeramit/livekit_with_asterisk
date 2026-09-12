@@ -89,6 +89,25 @@ export interface Tenant {
   campaign_count: number
   user_count: number
   call_count: number
+  /** Last four characters of the dialler API key, or null when none is set.
+   *  The key itself is sha256'd in the database and returned exactly once, at
+   *  generation — there is no endpoint that can show it again. */
+  api_key_hint: string | null
+  api_key_set_at: string | null
+}
+
+/** The only response that ever carries the key. See TenantApiKeyCreated. */
+export interface TenantApiKey {
+  api_key: string
+  api_key_hint: string
+  api_key_set_at: string
+}
+
+/** One of the dialler's own campaign ids, mapped to a campaign here. */
+export interface DiallerId {
+  id: number
+  dialler_campaign_id: string
+  created_at: string
 }
 
 export interface CallListItem {

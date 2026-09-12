@@ -239,6 +239,7 @@ livekit_with_asterisk/
 │   ├── PROGRESS.md            ← full build log, including what did NOT work
 │   ├── DATABASE.md            ← 💾 backup, restore, and what a dump alone cannot restore
 │   ├── REPLICA.md             ← 📋 cloning a server: the values that must NOT be copied
+│   ├── DIALLER-API.md         ← 🔌 the capacity endpoint, written to be handed to them
 │   └── SERVER.md              ← inventory, ports, credentials map
 ├── migrations/                ← numbered SQL, every one safe to re-run
 │   └── 001…051_*.sql

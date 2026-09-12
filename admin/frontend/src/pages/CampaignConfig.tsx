@@ -24,6 +24,7 @@ import {
   FileText,
   Layers,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
+import { DiallerIds } from '@/components/DiallerIds'
 import { KnowledgeSearch } from '@/components/KnowledgeSearch'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
@@ -1221,6 +1222,23 @@ export function CampaignConfig() {
                   )}
                 </>
               )}
+
+              {/* Shown whether or not a limit is set, because the useful thing
+                  to learn when it is not set is that these two belong together.
+                  The API refuses an id without a limit and refuses to clear the
+                  limit while ids exist - what the dialler is told IS this
+                  number, and one without the other is a campaign that answers
+                  its own dialler with an error. */}
+              <div className="border-t border-border/60 pt-5">
+                <DiallerIds campaignId={campaignId} />
+                {value.max_parallel_calls === null && (
+                  <p className="mt-2 text-2xs font-medium text-amber-600 dark:text-amber-400">
+                    Turn the limit on above first — the capacity the dialler is
+                    told is that number, so there is nothing to answer with
+                    until it is set.
+                  </p>
+                )}
+              </div>
             </CardBody>
           </Card>
 

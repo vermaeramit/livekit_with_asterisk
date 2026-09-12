@@ -106,6 +106,46 @@ class TenantOut(BaseModel):
     campaign_count: int = 0
     user_count: int = 0
     call_count: int = 0
+    # The dialler API key: whether one exists, its last four characters, and
+    # when it was set. Never the key - it is sha256'd in the database and shown
+    # once at generation. The hint is here so the console can say WHICH key a
+    # client is holding when the dialler team reports one not working.
+    api_key_hint: str | None = None
+    api_key_set_at: datetime | None = None
+
+
+class TenantApiKeyCreated(BaseModel):
+    """The one and only time the key is returned.
+
+    Generating a new one replaces the old, so the dialler stops working the
+    moment this is called - which is the point of a rotation, and worth saying
+    out loud in the console before the button is pressed.
+    """
+    api_key: str
+    api_key_hint: str
+    api_key_set_at: datetime
+
+
+# ──────────────────────── the dialler's campaign ids ────────────────────────
+
+class DiallerIdCreate(BaseModel):
+    # Theirs, as they will send it. Trimmed rather than rejected for
+    # whitespace: this arrives by copy-paste from another team's console.
+    dialler_campaign_id: str = Field(min_length=1, max_length=128)
+
+    @field_validator("dialler_campaign_id")
+    @classmethod
+    def _trim(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("must not be blank")
+        return v
+
+
+class DiallerIdOut(BaseModel):
+    id: int
+    dialler_campaign_id: str
+    created_at: datetime
 
 
 # ───────────────────────────── campaigns ─────────────────────────────

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, KeyRound, Pause, Play, Plus } from 'lucide-react'
 import { PAGE, PageHeader } from '@/components/Layout'
 import { ProviderKeys } from '@/components/ProviderKeys'
+import { DiallerKey } from '@/components/DiallerKey'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -253,7 +254,18 @@ export function Tenants() {
         size="lg"
         footer={<Button variant="ghost" onClick={() => setKeysFor(null)}>Done</Button>}
       >
-        {keysFor && <ProviderKeys scope="client" id={keysFor.id} />}
+        {keysFor && (
+          <div className="space-y-4">
+            <ProviderKeys scope="client" id={keysFor.id} />
+            {/* Read back out of the list rather than from `keysFor`, which is a
+                snapshot taken when the dialog opened. Generating a key
+                invalidates the list; without this the hint next to the button
+                would still say whatever it said before the click. */}
+            <DiallerKey
+              tenant={tenants.data?.find((t) => t.id === keysFor.id) ?? keysFor}
+            />
+          </div>
+        )}
       </Dialog>
 
       <Dialog

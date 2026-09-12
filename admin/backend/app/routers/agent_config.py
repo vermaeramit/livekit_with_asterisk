@@ -18,6 +18,7 @@ from .. import provider_keys as pk
 from ..deps import CurrentUser, active_user, assert_campaign_visible, require_perm
 from ..schemas import (AgentConfigOut, AgentConfigUpdate, AuditEntry,
                        CampaignRoute, CampaignRouteCreate, CopyHours,
+                       DiallerIdCreate, DiallerIdOut,
                        PostbackOut, PromptTokens, PromptVersion,
                        FinalPrompt, PromptSection, PromptTool)
 
@@ -449,6 +450,28 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     if not fields:
         return AgentConfigOut(**before)
 
+    # The direction of this guard that gets forgotten.
+    #
+    # A campaign the dialler asks about MUST have a limit, because the answer is
+    # that number - see migration 052. Refusing to ADD a dialler id without one
+    # is the obvious half; this is the other, and it is the one that would
+    # otherwise leave the dialler's endpoint reporting a 409 forever with
+    # nothing on this page to say why.
+    #
+    # Enforced here rather than as a CHECK because the invariant spans two
+    # tables - this column and campaign_dialler_ids - and a CHECK cannot see
+    # across a row boundary.
+    if "max_parallel_calls" in fields and fields["max_parallel_calls"] is None:
+        ids = await db.pool().fetchval(
+            "SELECT count(*) FROM campaign_dialler_ids WHERE campaign_id = $1",
+            campaign_id)
+        if ids:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"This campaign has {ids} dialler campaign id(s) registered, and "
+                f"the dialler asks how many calls it can take. Remove the ids "
+                f"first, or set a limit instead of clearing it.")
+
     unknown = set(fields) - set(FIELDS) - {"postback_auth_value_enc"}
     assert not unknown, f"schema and FIELDS disagree: {unknown}"
 
@@ -811,3 +834,87 @@ async def prompt_tokens(campaign_id: int, body: PromptTokens,
     """
     await assert_campaign_visible(user, campaign_id)
     return {"tokens": _tokens(body.text), "exact": _ENC is not False}
+
+
+# ──────────────────── the dialler's own campaign ids ────────────────────
+# What the dialler sends when it asks how many more calls this campaign can
+# take. Several per campaign, because the dialler splits one campaign of ours
+# across several of theirs and that split is theirs to make.
+#
+# See routers/dialler_api.py for the endpoint they call, and migration 052.
+
+@router.get("/dialler-ids", response_model=list[DiallerIdOut])
+async def list_dialler_ids(campaign_id: int,
+                           user: CurrentUser = Depends(active_user)):
+    await assert_campaign_visible(user, campaign_id)
+    rows = await db.pool().fetch(
+        """SELECT id, dialler_campaign_id, created_at
+             FROM campaign_dialler_ids
+            WHERE campaign_id = $1
+            ORDER BY created_at, id""", campaign_id)
+    return [DiallerIdOut(**dict(r)) for r in rows]
+
+
+@router.post("/dialler-ids", response_model=DiallerIdOut,
+             status_code=status.HTTP_201_CREATED)
+async def add_dialler_id(campaign_id: int, body: DiallerIdCreate,
+                         actor: CurrentUser = Depends(editor)):
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+
+    # No limit, no answer. The capacity endpoint's whole reply is that number,
+    # and a campaign the dialler polls with nothing to report is worse than one
+    # it cannot poll at all - it gets an error on every call attempt instead of
+    # a clear "this is not set up".
+    limit = await db.pool().fetchval(
+        "SELECT max_parallel_calls FROM agent_config WHERE campaign_id = $1",
+        campaign_id)
+    if limit is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Set a concurrent call limit on this campaign first — the dialler "
+            "asks how many calls it can take, and without a limit there is no "
+            "number to give it. It is on the Limits tab.")
+
+    try:
+        row = await db.pool().fetchrow(
+            """INSERT INTO campaign_dialler_ids
+                   (campaign_id, dialler_campaign_id, created_by)
+               VALUES ($1, $2, $3)
+            RETURNING id, dialler_campaign_id, created_at""",
+            campaign_id, body.dialler_campaign_id, actor.id)
+    except asyncpg.UniqueViolationError:
+        # Unique across every tenant, not just this one - the capacity request
+        # carries this id and nothing else, so two campaigns claiming it would
+        # make the answer depend on which row came back first.
+        #
+        # Deliberately does NOT say which campaign has it. That would tell one
+        # client about another's configuration, and a tenant_admin can reach
+        # this endpoint.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"'{body.dialler_campaign_id}' is already registered. Each of the "
+            f"dialler's campaign ids can point at only one campaign.")
+
+    await audit.record(actor, entity="campaign", entity_id=campaign_id,
+                       action="dialler_id_add", tenant_id=tenant_id,
+                       changes={"dialler_campaign_id": body.dialler_campaign_id})
+    return DiallerIdOut(**dict(row))
+
+
+@router.delete("/dialler-ids/{row_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_dialler_id(campaign_id: int, row_id: int,
+                            actor: CurrentUser = Depends(editor)):
+    tenant_id = await assert_campaign_visible(actor, campaign_id)
+    # campaign_id in the WHERE as well as the row id: without it, one campaign's
+    # id could be deleted through another campaign's URL.
+    row = await db.pool().fetchrow(
+        """DELETE FROM campaign_dialler_ids
+            WHERE id = $1 AND campaign_id = $2
+        RETURNING dialler_campaign_id""", row_id, campaign_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "that dialler id is not on this campaign")
+
+    await audit.record(actor, entity="campaign", entity_id=campaign_id,
+                       action="dialler_id_remove", tenant_id=tenant_id,
+                       changes={"dialler_campaign_id": row["dialler_campaign_id"]})
