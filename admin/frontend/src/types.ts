@@ -343,6 +343,12 @@ export interface AgentConfig {
   transfer_hours_enabled: boolean
   transfer_hours: WeekHours | null
   transfer_holidays: Holiday[]
+  /** When the DIALLER may call. Same shape as the transfer window, its own
+   *  holiday list, and read by the capacity endpoint - which answers zeros
+   *  outside it. It does not refuse a call that arrives anyway. */
+  calling_hours_enabled: boolean
+  calling_hours: WeekHours | null
+  calling_holidays: Holiday[]
   transfer_closed_message: string | null
   // null = use transfer_to as written. Set = the target is built from the
   // campaign and Asterisk looks the dialler up when the transfer happens.

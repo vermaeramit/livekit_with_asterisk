@@ -25,6 +25,7 @@ import {
   Layers,} from 'lucide-react'
 import { CampaignRoutes } from '@/components/CampaignRoutes'
 import { DiallerIds } from '@/components/DiallerIds'
+import { CallingHours } from '@/components/CallingHours'
 import { KnowledgeSearch } from '@/components/KnowledgeSearch'
 import { KnowledgeDocs } from '@/components/KnowledgeDocs'
 import { CampaignPostback } from '@/components/CampaignPostback'
@@ -1271,11 +1272,20 @@ export function CampaignConfig() {
                 <DiallerIds campaignId={campaignId} />
                 {value.max_parallel_calls === null && (
                   <p className="mt-2 text-2xs font-medium text-amber-600 dark:text-amber-400">
-                    Turn the limit on above first — the capacity the dialler is
+                    Turn the limit on above first — the capacity the dialer is
                     told is that number, so there is nothing to answer with
                     until it is set.
                   </p>
                 )}
+              </div>
+
+              {/* In the same card as the ids and the limit, because the three
+                  are one answer: how many, to whom, and when. Split across
+                  cards they read as unrelated settings, and "when" is the one
+                  nobody thinks of until a customer is phoned at three in the
+                  morning. */}
+              <div className="border-t border-border/60 pt-5">
+                <CallingHours value={value} onChange={set} disabled={!canEdit} />
               </div>
             </CardBody>
           </Card>

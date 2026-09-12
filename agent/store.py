@@ -89,6 +89,13 @@ class AgentConfig:
     transfer_hours: Optional[dict]
     transfer_holidays: Optional[list]
     transfer_closed_message: Optional[str]
+    # When the DIALLER may call this campaign at all. Same shape as the
+    # transfer window above and evaluated by the same code - see
+    # hours.calling_open. Read by the capacity endpoint, which reports zero
+    # slots outside it; it does not refuse a call that arrives anyway.
+    calling_hours_enabled: bool
+    calling_hours: Optional[dict]
+    calling_holidays: Optional[list]
     # Spoken while the knowledge base is being searched. NULL = say nothing,
     # and so does kb_filler_enabled = False - the difference is that the second
     # one keeps the wording for when somebody turns it back on.
@@ -151,6 +158,7 @@ class CampaignUnavailable(Exception):
 # discovered only by a caller asking for a person. Named explicitly, because
 # the failure of forgetting one is not an exception.
 _JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
+              "calling_hours", "calling_holidays",
               "stt_context_terms")
 
 

@@ -49,6 +49,7 @@ FIELDS = (
     "silence_timeout_sec", "silence_prompts", "end_call_marker",
     "transfer_marker",
     "transfer_hours_enabled", "transfer_hours", "transfer_holidays",
+    "calling_hours_enabled", "calling_hours", "calling_holidays",
     "transfer_closed_message",
     "stt_endpoint_level", "stt_endpoint_sensitivity",
     "prompt_datetime", "prompt_timezone",
@@ -300,6 +301,7 @@ async def _get(campaign_id: int) -> dict:
     # forgetting one does not fail - the value arrives as a string and whatever
     # reads it quietly does the wrong thing.
     for col in ("postback_fields", "transfer_hours", "transfer_holidays",
+                "calling_hours", "calling_holidays",
                 "stt_context_terms"):
         if isinstance(d.get(col), str):
             d[col] = json.loads(d[col])
@@ -568,6 +570,7 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     # 500 for every campaign until both this tuple and the decode above knew
     # about the new columns. Add a JSONB column, add it in BOTH places.
     JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
+                 "calling_hours", "calling_holidays",
                  "stt_context_terms")
     values = [json.dumps(v) if k in JSON_COLS and v is not None else v
               for k, v in fields.items()]

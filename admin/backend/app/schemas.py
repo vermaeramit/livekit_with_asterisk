@@ -421,6 +421,13 @@ class AgentConfigOut(BaseModel):
     transfer_holidays: list = Field(default_factory=list)
     transfer_closed_message: str | None = None
 
+    # When the DIALLER may call. Same shape as the transfer window above,
+    # evaluated by the same code, and with its OWN holiday list - not
+    # transferring on Diwali and not calling on it are two decisions.
+    calling_hours_enabled: bool = False
+    calling_hours: dict | None = None
+    calling_holidays: list = Field(default_factory=list)
+
     # Soniox only today. NULL = the provider's defaults.
     stt_endpoint_level: int | None
     stt_endpoint_sensitivity: float | None
@@ -574,7 +581,12 @@ class AgentConfigUpdate(BaseModel):
     transfer_holidays: list | None = None
     transfer_closed_message: str | None = Field(default=None, max_length=500)
 
-    @field_validator("transfer_hours")
+    # ---- when the dialler may call at all ----
+    calling_hours_enabled: bool | None = None
+    calling_hours: dict | None = None
+    calling_holidays: list | None = None
+
+    @field_validator("transfer_hours", "calling_hours")
     @classmethod
     def _hours_are_a_week(cls, v):
         """Seven known days, "HH:MM" to "HH:MM", open before close.
@@ -605,7 +617,7 @@ class AgentConfigUpdate(BaseModel):
             clean[day] = [window[0], window[1]]
         return clean
 
-    @field_validator("transfer_holidays")
+    @field_validator("transfer_holidays", "calling_holidays")
     @classmethod
     def _holidays_are_dates(cls, v):
         if v is None:

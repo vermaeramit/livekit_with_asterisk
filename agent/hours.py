@@ -115,28 +115,30 @@ def _window(hours: dict, day: date) -> tuple[time, time] | None:
     return start, end
 
 
-def is_open(cfg, now: datetime | None = None) -> tuple[bool, str | None]:
-    """Can this campaign transfer right now?
+def open_now(*, hours, holidays, timezone, now: datetime | None = None,
+             label: str = "hours") -> tuple[bool, str | None]:
+    """Is a day/time window open? -> (open, reason).
 
-    Returns (open, reason). The reason is only set when closed, and is what
-    gets written to calls.transfer_refused - 'holiday' and 'closed' are worth
-    telling apart when somebody later asks why the callback list is long.
+    Takes VALUES rather than a config object, for two reasons. The agent holds an
+    AgentConfig dataclass and admin-api holds a dict, so nothing that reaches for
+    attributes can serve both - and there are now two windows on a campaign,
+    transfer and calling, which would otherwise mean two copies of the logic
+    diverging at whichever midnight nobody was watching.
+
+    `reason` is only set when closed. 'holiday' and 'closed' are worth telling
+    apart: one is a date somebody entered and the other is the time of day.
     """
-    if not getattr(cfg, "transfer_hours_enabled", False):
-        return True, None
-
-    hours = getattr(cfg, "transfer_hours", None) or {}
     if not hours:
         # Enabled with nothing configured would otherwise mean "never", which
         # is a config mistake silently becoming a policy. Open is the safer
         # reading, and the console warns about it.
-        logger.warning("transfer hours are on but no days are set - allowing")
+        logger.warning("%s are on but no days are set - allowing", label)
         return True, None
 
-    local = (now or datetime.now(_zone(cfg.prompt_timezone))).astimezone(
-        _zone(cfg.prompt_timezone))
+    zone = _zone(timezone)
+    local = (now or datetime.now(zone)).astimezone(zone)
 
-    if local.date() in _holidays(getattr(cfg, "transfer_holidays", None)):
+    if local.date() in _holidays(holidays):
         return False, "holiday"
 
     window = _window(hours, local.date())
@@ -145,6 +147,39 @@ def is_open(cfg, now: datetime | None = None) -> tuple[bool, str | None]:
     if window[0] <= local.time() < window[1]:
         return True, None
     return False, "closed"
+
+
+def is_open(cfg, now: datetime | None = None) -> tuple[bool, str | None]:
+    """Can this campaign transfer right now?
+
+    The reason is what gets written to calls.transfer_refused.
+    """
+    if not getattr(cfg, "transfer_hours_enabled", False):
+        return True, None
+    return open_now(hours=getattr(cfg, "transfer_hours", None) or {},
+                    holidays=getattr(cfg, "transfer_holidays", None),
+                    timezone=getattr(cfg, "prompt_timezone", None),
+                    now=now, label="transfer hours")
+
+
+def calling_open(cfg, now: datetime | None = None) -> tuple[bool, str | None]:
+    """May this campaign be DIALLED right now?
+
+    A separate window from transfers, and a separate holiday list: not
+    transferring on Diwali and not calling people on Diwali are two decisions,
+    and one column governing both would surprise whoever edited it.
+
+    Read by the dialler capacity endpoint, which reports zero slots when this is
+    closed. It does NOT refuse calls - a call that arrives anyway is answered,
+    because refusing one puts a caller on the line who has to hear something,
+    and choosing what they hear is a different decision.
+    """
+    if not getattr(cfg, "calling_hours_enabled", False):
+        return True, None
+    return open_now(hours=getattr(cfg, "calling_hours", None) or {},
+                    holidays=getattr(cfg, "calling_holidays", None),
+                    timezone=getattr(cfg, "prompt_timezone", None),
+                    now=now, label="calling hours")
 
 
 def next_open(cfg, now: datetime | None = None) -> datetime | None:

@@ -43,6 +43,24 @@ of your ids; each one answers about that campaign.
 than `capacity` — that happens when the limit is lowered while calls are up, and
 it still means "send no more".
 
+### Outside calling hours
+
+A campaign can be configured with the days and times it may be called at all.
+Outside that window — including on a configured holiday — the reply is:
+
+```json
+{ "activeCalls": 0, "capacity": 0, "availableSlots": 0, "timestamp": "…" }
+```
+
+**All three zero has two meanings**: outside the calling window, or at capacity
+with every slot taken. Nothing in the payload distinguishes them, and that is
+deliberate — the action is the same either way, which is to send nothing. If you
+need to tell them apart for a report, ask us and we will add a field rather than
+have you infer it from the clock.
+
+Times are the campaign's own timezone, not UTC. A campaign with no window
+configured is never restricted.
+
 ---
 
 ## Errors

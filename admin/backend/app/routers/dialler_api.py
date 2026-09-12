@@ -21,17 +21,64 @@ be able to answer one question and do nothing at all.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel
 
-from .. import db
+from .. import db, kblib
 
 log = logging.getLogger("admin-api")
 
 router = APIRouter(prefix="/dialler", tags=["dialler"])
+
+
+def _json(value):
+    """JSONB as text -> Python. See the note in _calling_open."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _calling_open(row) -> bool:
+    """Is this campaign inside its calling window right now?
+
+    Evaluated by the agent's own hours module, through the kblib mount, so the
+    dialler window and the transfer window are decided by ONE implementation.
+    The alternative was writing day-of-week and timezone logic a second time in
+    SQL, which is a worse kind of duplication - two languages, drifting at
+    whichever midnight nobody was watching.
+
+    FAILS OPEN, loudly. If the module cannot be read there is no way to know
+    whether the window is open, and "cannot tell" must not silently become
+    "never call again" - that stops a client's whole operation for an
+    infrastructure fault. It is the same reading hours.py takes when a window is
+    enabled with no days set, and the same one _speakable_dialler_fields takes
+    when it cannot load: do not act on a judgement you could not make.
+    """
+    if not row["calling_hours_enabled"]:
+        return True
+    try:
+        if not kblib.available():
+            raise RuntimeError(kblib.why_unavailable())
+        hours = kblib.agent_module("hours")
+    except Exception:
+        log.exception("could not read the agent's hours module - treating "
+                      "campaign %s as inside its calling window",
+                      row["campaign_id"])
+        return True
+
+    # asyncpg hands JSONB back as TEXT with no codec registered, and open_now
+    # would then see a string, find no days in it, and report the window open -
+    # which reads as "the feature does nothing" rather than as a fault. Decoded
+    # here because this router queries the database directly instead of going
+    # through the paths in store.py and agent_config.py that already do it.
+    open_, _reason = hours.open_now(
+        hours=_json(row["calling_hours"]),
+        holidays=_json(row["calling_holidays"]),
+        timezone=row["prompt_timezone"],
+        label="calling hours")
+    return open_
 
 
 class Capacity(BaseModel):
@@ -77,7 +124,9 @@ async def capacity(
                   t.status        AS tenant_status,
                   cam.id          AS campaign_id,
                   cam.enabled     AS campaign_enabled,
-                  ac.max_parallel_calls AS capacity
+                  ac.max_parallel_calls AS capacity,
+                  ac.calling_hours_enabled, ac.calling_hours,
+                  ac.calling_holidays, ac.prompt_timezone
              FROM tenants t
              LEFT JOIN campaign_dialler_ids d
                     ON d.dialler_campaign_id = $2
@@ -139,6 +188,20 @@ async def capacity(
             status.HTTP_409_CONFLICT,
             "this campaign has no concurrent call limit configured, so its "
             "capacity cannot be reported")
+
+    # Outside the calling window: zeros, and no database read for a count
+    # nobody is going to act on.
+    #
+    # activeCalls is 0 here too, which is what was asked for. Worth being
+    # explicit that this is a CHOICE: a call that began before the window
+    # closed is still up, so this number is not a measurement in that
+    # moment. It stops a dialler that gates on activeCalls as well as on
+    # availableSlots, and the cost is that all-zeros has two meanings -
+    # "outside hours" and "full" - which DIALLER-API.md says out loud
+    # because nothing in the payload distinguishes them.
+    if not _calling_open(row):
+        return Capacity(activeCalls=0, capacity=0, availableSlots=0,
+                        timestamp=_now())
 
     active = await db.pool().fetchval(
         "SELECT count(*) FROM calls WHERE campaign_id = $1 AND ended_at IS NULL",
