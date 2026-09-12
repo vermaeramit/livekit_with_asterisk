@@ -588,13 +588,46 @@ export function CampaignConfig() {
               The dialer sends who is calling and what they own. Use{' '}
               <code>{'{{cus_name}}'}</code>, <code>{'{{modalname}}'}</code> or{' '}
               <code>{'{{calltype}}'}</code> instead of typing one caller's details
-              in — a hardcoded name is correct for exactly one person.
+              in — a hardcoded name is correct for exactly one person. Those three
+              are the only dialer fields that may be spoken; the identifiers are
+              recorded and never said aloud.
               <br />
-              <strong>Give each one a fallback</strong> after a pipe:{' '}
-              <code>{'{{cus_name|आप}}'}</code>. The dialer does not always send
-              every field, and without a fallback the sentence is spoken with a
-              gap in it — “क्या मेरी बात जी से हो रही है?”
+              <strong>
+                It sends a name on about 5% of calls, so write the other 95% too
+              </strong>{' '}
+              — the box below. A pipe fallback like{' '}
+              <code>{'{{cus_name|आप}}'}</code> can only swap a word, and “क्या
+              मेरी बात आप से हो रही है?” is not a sentence anybody says. Asking for
+              the name is, and that is a different sentence.
             </Note>
+
+            {/* Only when it can do something. A greeting with no placeholder
+                renders identically for everyone, so an alternative would never
+                be chosen and the box would be a question with no answer. */}
+            {(value.greeting ?? '').includes('{{') && (
+              <>
+                <TextField
+                  label="Greeting when the dialer sends no name"
+                  value={value.greeting_fallback ?? ''}
+                  onChange={(v) => set('greeting_fallback', v || null)}
+                  placeholder="Namaste! Main kya aapka naam jaan sakti hoon?"
+                  hint="Used whenever a placeholder above has no value on that call. Leave empty to speak the greeting above regardless."
+                />
+                <Note>
+                  This one is also what a <strong>website visitor</strong> hears:
+                  the chat widget has no dialer behind it, so there is never a
+                  name to insert.
+                  <br />
+                  And it is <strong>faster</strong>. A greeting containing{' '}
+                  <code>{'{{'}</code> is different for every caller, so it cannot
+                  be pre-rendered and is spoken live on every call — the caller
+                  waits for it. This one has no placeholder, so it is rendered
+                  once and played from disk. On the 95% of calls with no name,
+                  that is the difference between hearing the greeting immediately
+                  and waiting about a second and a half for it to begin.
+                </Note>
+              </>
+            )}
 
             <TextField
               label="Recording notice"

@@ -16,6 +16,16 @@ class AgentConfig:
     name: str
     language: str
     greeting: Optional[str]
+    # Spoken instead of `greeting` when a placeholder in it has no value for
+    # this call - the dialler sends a name on about 5% of them. NULL = use the
+    # greeting regardless.
+    #
+    # In this dataclass and NOT optional to remember: _as_config builds from
+    # `fields(AgentConfig)` and reads every one of them off the row, so a column
+    # added to the database and not added here is invisible, while a field added
+    # here and not to the database is a KeyError on the next call. The second
+    # kind ended every call at 0 seconds on 11 Sep.
+    greeting_fallback: Optional[str]
     instructions: str
     stt_provider: str
     stt_model: Optional[str]

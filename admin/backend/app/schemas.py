@@ -350,6 +350,10 @@ class AgentConfigOut(BaseModel):
     name: str
     language: str
     greeting: str | None
+    # Spoken instead of `greeting` when a placeholder in it has no value -
+    # the dialler sends a name on about 5% of calls. NULL = always use
+    # `greeting`.
+    greeting_fallback: str | None
     instructions: str
 
     stt_model: str | None
@@ -473,6 +477,7 @@ class AgentConfigUpdate(BaseModel):
 
     language: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
     greeting: str | None = Field(default=None, max_length=600)
+    greeting_fallback: str | None = Field(default=None, max_length=600)
     # Roughly 30,000 tokens. Not a quality judgement and not a model limit -
     # gpt-4.1-mini would take far more. It is a guard against pasting a whole
     # document in by accident, which is the mistake this catches.

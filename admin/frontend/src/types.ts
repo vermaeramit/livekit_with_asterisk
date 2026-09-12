@@ -272,6 +272,10 @@ export interface AgentConfig {
   name: string
   language: string
   greeting: string | null
+  /** Spoken instead of `greeting` when a placeholder in it has no value on that
+   *  call. The dialer sends a name on about 5% of them, and this is also what a
+   *  chat-widget visitor hears — there is no dialer behind a website. */
+  greeting_fallback: string | null
   instructions: string
 
   stt_model: string | null

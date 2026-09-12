@@ -137,6 +137,38 @@ def render_spoken(template: str | None, dialler: dict[str, str]) -> str | None:
     return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(one, template)).strip()
 
 
+def unfilled(template: str | None, dialler: dict[str, str]) -> list[str]:
+    """-> the placeholder keys in `template` that have no value on this call.
+
+    What it is for: choosing between two greetings. A pipe default can only swap
+    a word, and swapping one into "क्या मेरी बात {{cus_name|आप}} से हो रही है?"
+    produces a sentence nobody would say. The fix is a different SENTENCE, and
+    that needs to know whether the value arrived rather than what to put in its
+    place.
+
+    A DEFAULT DOES NOT COUNT AS FILLED. `{{cus_name|आप}}` with no name reports
+    cus_name as unfilled even though it would render. Somebody who has written a
+    whole alternative sentence meant it, and it beats a one-word substitution;
+    with no alternative set, nothing changes and the default still renders.
+
+    A key that is not PROMPT_SAFE is always unfilled, because it can never be
+    filled - `{{lead_id}}` is refused by render_spoken above. So a typo also
+    selects the alternative, which is the safe direction: the console warns about
+    the typo separately, and the caller hears a whole sentence rather than one
+    with a hole in it.
+    """
+    if not template or "{{" not in template:
+        return []
+    out: list[str] = []
+    for m in _PLACEHOLDER.finditer(template):
+        key = m.group(1)
+        if key in PROMPT_SAFE and (dialler.get(f"dialer.{key}") or "").strip():
+            continue
+        if key not in out:
+            out.append(key)
+    return out
+
+
 def now_line(tz_name: str | None) -> str:
     """The one line that tells the agent what day it is.
 

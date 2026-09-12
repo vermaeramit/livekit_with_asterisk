@@ -29,7 +29,7 @@ router = APIRouter(prefix="/campaigns/{campaign_id}", tags=["agent config"])
 editor = require_perm("campaign.write")
 
 FIELDS = (
-    "language", "greeting", "instructions",
+    "language", "greeting", "greeting_fallback", "instructions",
     "stt_provider", "stt_model", "stt_fallback_provider",
     "llm_provider", "llm_model", "llm_temperature",
     "llm_fallback_provider", "llm_fallback_model",
@@ -188,9 +188,36 @@ def _warnings(cfg: dict) -> list[str]:
     # The stronger reason: before this, these rendered. {{lead_id}} in a greeting
     # read a CRM identifier out to the caller, walking around the curation that
     # exists precisely to stop that.
+    # A personalised greeting with nothing to fall back to. The dialler sends a
+    # name on about 5% of calls, so on the other 95% the placeholder renders as
+    # nothing and the caller hears a sentence with a hole in it - "क्या मेरी बात
+    # से हो रही है?". It sounds like a fault, and it is the DEFAULT outcome of
+    # writing a personalised greeting rather than an unusual one.
+    #
+    # Also names the second cost, which is invisible from this page: a greeting
+    # containing {{ cannot be pre-rendered, so it is spoken live on every call.
+    if ("{{" in (cfg.get("greeting") or "")
+            and not (cfg.get("greeting_fallback") or "").strip()):
+        out.append(
+            "The greeting uses a placeholder but has no alternative, so on the "
+            "~95% of calls where the dialer sends no name the caller hears the "
+            "sentence with a gap in it. An alternative would also let those "
+            "calls use the pre-rendered greeting instead of waiting for it.")
+
+    # The alternative is meant to be the one that CAN be pre-rendered. A
+    # placeholder in it means neither greeting is cached and every call waits for
+    # speech to be generated - which is the opposite of what this page promises
+    # when it offers the field.
+    if "{{" in (cfg.get("greeting_fallback") or ""):
+        out.append(
+            "The alternative greeting also uses a placeholder, so it cannot be "
+            "pre-rendered either — every call will wait for it to be spoken. It "
+            "is meant to be the version that needs nothing from the dialer.")
+
     speakable = _speakable_dialler_fields()
     if speakable is not None:
         for field, label in (("greeting", "The greeting"),
+                             ("greeting_fallback", "The alternative greeting"),
                              ("transfer_message", "The transfer message"),
                              ("transfer_closed_message", "The closed-hours message"),
                              ("limit_message", "The limit message"),

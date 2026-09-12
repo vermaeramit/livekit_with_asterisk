@@ -268,12 +268,19 @@ def opening(cfg) -> str:
     from every call - the model has not introduced itself, and the caller's
     first line is a reply to nothing.
 
-    Rendered through the same substitution a call uses, with NO dialler
-    context, so placeholders fall back to the defaults after the pipe. That is
-    honest rather than convenient: it is what a caller hears when the dialler
-    sends nothing, which happens.
+    Rendered through the same substitution a call uses, with NO dialler context.
+    A widget visitor arrived through a website; there is no dialler and there
+    never will be, so this is permanently the "nothing was sent" case.
+
+    Which means the campaign's alternative greeting is the RIGHT one here, not a
+    degraded version of the real one - a web visitor asked "क्या मेरी बात {{cus_name}}
+    से हो रही है?" is being asked about a name nobody could have supplied.
     """
-    return prompt_mod.render_spoken(cfg.greeting, {}) or ""
+    tpl = cfg.greeting
+    fallback = (getattr(cfg, "greeting_fallback", None) or "").strip()
+    if fallback and prompt_mod.unfilled(cfg.greeting, {}):
+        tpl = fallback
+    return prompt_mod.render_spoken(tpl, {}) or ""
 
 
 async def _noop(**_):

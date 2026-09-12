@@ -2183,15 +2183,37 @@ async def entrypoint(ctx: JobContext):
     # One utterance, not two. Said separately, a caller who speaks over the
     # greeting cancels what follows - and what follows is the recording notice.
     # Joined here it is either both or neither.
-    opening = " ".join(x for x in (_render(cfg.greeting, dialler),
+    # Which of the two greetings this call gets.
+    #
+    # The dialler sends a name on about 5% of calls - measured, see migration
+    # 053 - so the greeting that does not use one is the common case rather than
+    # the exception. A pipe default cannot cover it: swapping a word into "क्या
+    # मेरी बात {{cus_name|आप}} से हो रही है?" makes a sentence nobody would say,
+    # where what is wanted is to ask for the name instead of using it.
+    greeting_tpl = cfg.greeting
+    fallback = (getattr(cfg, "greeting_fallback", None) or "").strip()
+    missing = prompt_mod.unfilled(cfg.greeting, dialler) if fallback else []
+    if missing:
+        greeting_tpl = fallback
+        logger.info("greeting: using the alternative (no %s on this call)",
+                    ", ".join(missing))
+
+    opening = " ".join(x for x in (_render(greeting_tpl, dialler),
                                    cfg.recording_disclosure) if x)
     if opening:
         # Cacheable only when the greeting does not depend on who is calling. A
         # placeholder gives every caller a different opening, and a cache with
         # one entry per caller is not a cache - it is a disk leak.
+        #
+        # Decided on the greeting CHOSEN, not on cfg.greeting - which is what it
+        # used to read, and why a campaign with a personalised greeting rendered
+        # 7.2 seconds of speech live on every single call, including the 95%
+        # that never had a name to insert. Those now come from the cache, and
+        # the TTS connection warms up behind the greeting instead of landing on
+        # the caller's first question.
         cache_path = None
         cached = None
-        if "{{" not in (cfg.greeting or ""):
+        if "{{" not in (greeting_tpl or ""):
             cache_path = greeting_cache.path_for(
                 opening, cfg.tts_provider, cfg.tts_model, cfg.tts_voice)
             cached = greeting_cache.frames(cache_path)
