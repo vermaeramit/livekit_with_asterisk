@@ -38,16 +38,28 @@ cd "$(dirname "$0")/.."
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 [ "$BRANCH" = "main" ] || die "on branch '$BRANCH'. Releases are cut from main."
 
+git diff --quiet && git diff --cached --quiet \
+    || die "the working tree has uncommitted changes. Commit or stash first."
+
+# BEFORE the two checks below, both of which compare against origin/main. A
+# stale remote ref makes them agree with each other and with nothing real.
+git fetch --tags --quiet origin 2>/dev/null || true
+
 # A tag pointing at a commit that only exists on this machine is worse than no
 # tag: production fetches it, cannot find the commit, and the error names the
 # sha rather than the cause.
-git diff --quiet && git diff --cached --quiet \
-    || die "the working tree has uncommitted changes. Commit or stash first."
 [ -z "$(git log origin/main..HEAD --oneline 2>/dev/null)" ] \
     || die "there are commits here that are not pushed. 'git push' first, or
          production will fetch a tag whose commit does not exist."
 
-git fetch --tags --quiet origin 2>/dev/null || true
+# And the other direction, which is the quiet one. A tag is cut at HEAD, so if
+# HEAD is behind the remote then everything pushed since gets left out of the
+# release - with nothing to say so, because the tag is perfectly valid and the
+# omission only shows up as a bug fix that "did not go out".
+BEHIND=$(git log HEAD..origin/main --oneline 2>/dev/null | wc -l | tr -d ' ')
+[ "$BEHIND" = "0" ] \
+    || die "origin/main is $BEHIND commit(s) ahead of this checkout. A tag cut
+         here would silently leave them out of the release. 'git pull' first."
 
 git rev-parse -q --verify "refs/tags/v$NEW" >/dev/null \
     && die "v$NEW already exists. Versions are never re-pointed - somebody may
