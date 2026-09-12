@@ -4609,6 +4609,108 @@ callers. **`systemctl is-active` is not one of the proofs.**
 
 ---
 
+## A version that cannot lie about itself (12 Sep 2026)
+
+There were three version numbers before this and all three were wrong:
+`package.json` said 0.1.0, FastAPI's `version=` said 0.1.0, and five tags
+existed while the README declared "the only tag ever cut". The login page showed
+nothing at all.
+
+The requirement that shaped everything: **the version changes only when code
+reaches production.** That rules out anything tied to a commit, and it makes the
+version a property of a release rather than of a build.
+
+### The tag is the only source
+
+`git describe --tags` at deploy time, and nothing else - no `VERSION` file to
+fall out of step with the tag. Which means the *shape* of the string carries the
+information:
+
+| Shows | Means |
+|---|---|
+| `v0.7.0` | checked out exactly on a release — production |
+| `v0.7.0-20-gabc1234` | 20 commits past it — development |
+| `unknown` | brought up by hand, not through `deploy.sh` |
+
+Production is **checked out at the tag**, so its version *is* the tag. That is
+what makes the rule true rather than remembered: development cannot show a clean
+number even by accident, and production showing a dirty one is labelled
+`(untagged)` on the login page.
+
+### And which server you are on
+
+The login page now reads `v0.7.0 · Production`, in grey — and anything that is
+not production in amber. `APP_ENV` is one line in `admin/.env`, per host, set
+once.
+
+This is not decoration. Two boxes with identical login pages and an identical
+`[root@localhost ~]#` prompt had already cost an afternoon the day before. Unset,
+it reads "Unnamed server" rather than guessing, because guessing *production* on
+a development box is the mistake that matters.
+
+Baked into the bundle at build time rather than fetched, because the login page
+renders before anyone is authenticated: a version it had to ask the API for would
+go blank exactly when the API is the broken part. The System page shows the
+console's copy beside the API's - those disagreeing is the signature of a
+half-finished deploy, and nothing else looks like it.
+
+### Deploying became a script, for one concrete reason
+
+`docker compose` cannot run `git describe`. Typed by hand it stamps the build
+`unknown`, silently. So `deploy.sh` exists - and once it existed it was the right
+home for the rest: it reads `APP_ENV` to know which box it is on (**never an IP** -
+that is what sent production's calls to development for two days), pulls or checks
+out a tag accordingly, applies pending migrations, rebuilds, restarts, and then
+checks that what is running is what it just deployed.
+
+Migrations are tracked in a `schema_migrations` table now. "Which has this box
+had" was previously inferred from whichever commit it was checked out at, and
+that inference was wrong once already.
+
+### Six bugs, five of them found before they ran
+
+Reviewing rather than running caught: `${FORCE:+--force}` always expanded, because
+`FORCE` is the string `"0"` — set, therefore non-empty — so the script offered
+interrupting live calls as the normal way to finish a deploy. `${DOWN%% *}` gave
+nothing, because the list was built with a leading space. The migration check made
+51 `docker exec` round trips per deploy to answer one question. And `deploy.sh`
+pulls code that includes **itself**: `sh` reads a script in chunks, so a pull
+rewriting the file underneath a running shell leaves it reading new bytes from the
+old offset. It now runs from a copy of itself.
+
+Two were found only by running it:
+
+**The first release died at a pager.** 324 commit subjects went to `less`, the
+script stopped at `(END)` waiting for a keypress, and quitting ended it in
+silence — git takes a SIGPIPE, exits non-zero, `set -e` stops everything. No tag,
+no error, no output. Its absence was the only evidence. `--no-pager` everywhere,
+and the on-screen list capped at 20.
+
+**The second attempt tagged and could not push.** The development box pulls and
+has no push credentials — which is true of every server here. That left a tag on
+one machine and nowhere else: production cannot fetch it, and the next attempt
+stops with "already exists" pointing at something nobody can see. The push is
+checked now and the tag taken back on failure, so a release exists everywhere or
+not at all. The instruction was also simply wrong: a release is cut from a clone
+that can push — the machine the code is written on. A tag belongs to the commit,
+not to the machine that named it.
+
+Also worth recording because I got it wrong in a comment and then corrected it:
+`[ … ] && echo` is **safe** under `set -e`. POSIX exempts every command in an
+AND-OR list except the last. A wrong explanation in a comment is worse than none.
+
+### Where it landed
+
+```
+.243   v0.6.0-325-g0a8bd60 · Development     (amber)
+.244   v0.7.0 · Production                   (grey)
+```
+
+v0.7.0 carries 325 commits — six weeks that were never tagged, because until
+there were two servers there was no reason to.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
