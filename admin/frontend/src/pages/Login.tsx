@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/primitives'
 import { useAuth } from '@/lib/auth'
 import { ApiError } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { APP_ENV, APP_VERSION, ENV_LABEL, IS_UNRELEASED } from '@/lib/version'
 
 /** Bar heights for the idle waveform, in percent. Irregular on purpose - an
  *  even curve reads as a loading spinner rather than speech. */
@@ -270,6 +272,38 @@ export function Login() {
                 e.currentTarget.style.display = 'none'
               }}
             />
+
+            {/* Which build, and which server.
+
+                The server half is the point. Development and production are the
+                same product on two machines that look identical everywhere else
+                - same prompt, same login screen - and an afternoon has already
+                been lost to not knowing which one was in front of us. This is
+                the last thing on screen before somebody signs in and starts
+                changing things.
+
+                Production reads quiet; anything else reads loud. A muted label
+                on a development box would defeat the whole purpose. */}
+            <p
+              className={cn(
+                'mt-4 text-center text-2xs tnum',
+                APP_ENV === 'production'
+                  ? 'text-muted-foreground'
+                  : 'font-medium text-amber-600 dark:text-amber-400',
+              )}
+            >
+              {APP_VERSION}
+              <span className="mx-1.5 opacity-40">·</span>
+              {ENV_LABEL[APP_ENV]}
+              {IS_UNRELEASED && APP_ENV === 'production' && (
+                // Production is meant to sit exactly on a release tag. A commit
+                // suffix here means it was deployed off main instead, so the
+                // version it reports is not a release anybody can go back to.
+                <span className="ml-1.5 font-medium text-amber-600 dark:text-amber-400">
+                  (untagged)
+                </span>
+              )}
+            </p>
           </div>
         </div>
       </div>

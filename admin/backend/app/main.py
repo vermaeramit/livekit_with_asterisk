@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
@@ -48,9 +49,21 @@ async def lifespan(app: FastAPI):
         await db.disconnect()
 
 
+# What this build is, and which box it is on. Both are set by deploy.sh - see
+# admin/docker-compose.yml.
+#
+# Read once at import rather than per request: they cannot change while the
+# process runs, and a version that could change under you is not a version.
+#
+# "unknown" is left as "unknown" on purpose. It means the stack was brought up
+# by hand instead of through deploy.sh, and inventing a number here would hide
+# that until somebody reported a bug against a release that never existed.
+APP_VERSION = os.getenv("APP_VERSION", "unknown")
+APP_ENV = os.getenv("APP_ENV", "unknown")
+
 app = FastAPI(
     title="AI Voice Admin API",
-    version="0.1.0",
+    version=APP_VERSION,
     lifespan=lifespan,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -106,3 +119,21 @@ async def health():
     """Liveness + a real database round trip, so a dead pool fails the check."""
     await db.pool().fetchval("SELECT 1")
     return {"status": "ok"}
+
+
+@app.get("/api/version")
+async def version():
+    """What is deployed here, answerable without signing in.
+
+    Unauthenticated on purpose, and it touches nothing: a version string and the
+    name of the environment. Neither is a secret - the login page already shows
+    both, to anybody who can reach the page at all.
+
+    The frontend does NOT read this. It has its own copy, inlined at build time,
+    so the login screen still names the build when the API is the broken part.
+    This exists for two other readers: deploy.sh, which checks afterwards that
+    what is running is what it just deployed, and the System page, which shows
+    this next to the frontend's copy. Those two disagreeing is the signature of
+    a half-finished deploy, and nothing else looks like it.
+    """
+    return {"version": APP_VERSION, "environment": APP_ENV}

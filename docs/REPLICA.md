@@ -18,6 +18,7 @@ Three values were wrong, and **each one failed differently and silently**:
 | 3 | `node_ip` | `livekit.yaml` | Call is answered, then **no audio**, then media-timeout. Everything looks connected. |
 | 4 | `TRANSFER_SIP_HOST` | `.env` | Only shows up on a handoff: the caller is transferred to the **other box**. |
 | 5 | `transfer_to` | `agent_config` table | Same as 4, for campaigns that name a SIP URI directly instead of using a dialler. |
+| 6 | `APP_ENV` | `admin/.env` | The login page names the wrong box. Clone a development server and production greets you in amber as "Development"; clone the other way and a development box says "Production" in calm grey, which is the direction that matters. `deploy.sh` also reads it, and refuses to run if it is unset. |
 
 1, 2 and 3 stack: fixing one at a time gives you three different failures in a
 row, each of which looks like a new problem. Fix all of them before testing, or
@@ -132,6 +133,20 @@ docker exec -i postgres psql -U aivoice -d aivoice -c \
 ```
 
 Anything returned needs updating to `<NEW_IP>`.
+
+### 5. What this box calls itself
+
+```bash
+grep '^APP_ENV=' admin/.env       # whatever the source box was
+```
+
+Set it to `production` or `development` for what this box actually is, then the
+next `deploy.sh` picks it up. It is the one line the login page reads to name the
+server, and `deploy.sh` refuses to run without it rather than assume.
+
+Nothing breaks if it is wrong — which is the problem. A development box quietly
+labelled "Production" is a box people will trust, and both servers are identical
+on every other screen.
 
 ---
 

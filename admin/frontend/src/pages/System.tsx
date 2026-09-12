@@ -4,6 +4,7 @@ import { PAGE, PageHeader } from '@/components/Layout'
 import { Badge, Card, CardBody, CardHeader, CardTitle, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatNumber, formatRelative } from '@/lib/utils'
+import { APP_ENV, APP_VERSION, ENV_LABEL } from '@/lib/version'
 import type { SystemHealth } from '@/types'
 
 /**
@@ -41,6 +42,15 @@ export function System() {
     refetchIntervalInBackground: false,
   })
 
+  // Separate from the health poll and fetched once: a version cannot change
+  // while the process that reports it is running, so putting it on the 15-second
+  // refresh would be nine sockets a minute to re-read a constant.
+  const ver = useQuery({
+    queryKey: ['api-version'],
+    queryFn: () => api<{ version: string; environment: string }>('/version'),
+    staleTime: Infinity,
+  })
+
   if (q.isLoading) {
     return (
       <div className={PAGE}>
@@ -71,6 +81,42 @@ export function System() {
         title="System"
         description="Is everything running — without opening a terminal."
       />
+
+      {/* What is actually deployed here, from BOTH halves.
+          The version on the left was inlined into this page when it was built;
+          the one on the right is what the API reports at runtime. One deploy
+          sets both, so they agree - and when they do not, a container did not
+          get replaced and half of this build is older than the other half.
+          Nothing else produces that signature, and without showing both there
+          is no way to see it at all. */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-2xs">
+        <span className="text-muted-foreground">
+          Console <span className="tnum font-medium text-foreground">{APP_VERSION}</span>
+        </span>
+        <span className="text-muted-foreground">
+          API{' '}
+          <span className="tnum font-medium text-foreground">
+            {ver.data?.version ?? '…'}
+          </span>
+        </span>
+        <span className="text-muted-foreground">
+          Server{' '}
+          <span
+            className={cn(
+              'font-medium',
+              APP_ENV === 'production' ? 'text-foreground'
+                                       : 'text-amber-600 dark:text-amber-400',
+            )}
+          >
+            {ENV_LABEL[APP_ENV]}
+          </span>
+        </span>
+        {ver.data && ver.data.version !== APP_VERSION && (
+          <span className="font-medium text-destructive">
+            These do not match — one half of a deploy did not replace its container.
+          </span>
+        )}
+      </div>
 
       {down > 0 && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs">

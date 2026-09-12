@@ -20,27 +20,61 @@ writes. Setting up another clone: [REPLICA.md](REPLICA.md).
 
 ## Deploy
 
-The one command. `git pull`, rebuild the console, restart the workers — with a
-guard so a call in progress is never cut off.
+One script, and it behaves differently on each box:
 
 ```bash
-cd /srv/aivoice && git pull && \
-  asterisk -rx "core show channels" | grep -q "^0 active calls" && \
-  docker compose -f admin/docker-compose.yml up -d --build && \
-  systemctl restart aivoice-agent@{1,2,3,4,5,6} && sleep 8 && \
-  systemctl is-active aivoice-agent@{1,2,3,4,5,6}
+cd /srv/aivoice
+server-configs/deploy.sh                # development — follows main
+server-configs/deploy.sh v0.7.0         # production  — checks out that release
 ```
 
-If it stops after `git pull` with nothing else printed, a call was live. Wait
-and run it again.
+Which box it is comes from `APP_ENV` in `admin/.env`, **never from an IP** — a
+hardcoded address is what sent production's calls to the development box for two
+days ([REPLICA.md](REPLICA.md)). A box that has not been told what it is refuses
+to deploy rather than guessing.
 
-**When there is a new migration**, apply it between the pull and the rebuild:
+It does, in this order: get the code, apply any pending migrations, rebuild the
+console, restart the workers, then check that what is running is what it just
+deployed. Migrations before services, always — the other way round runs new code
+against an old schema, and the failure lands on a live call.
+
+**If calls are in progress** the console is updated and the workers are left
+alone, because restarting them drops those calls. It prints the command to
+finish with; `--force` restarts anyway.
+
+**Migrations are tracked now**, in a `schema_migrations` table, so "which ones
+has this box had" is a question with an answer instead of an inference from
+whichever commit it happens to be checked out at. They are still all safe to
+re-run.
+
+---
+
+## Release a version
+
+The version **only changes when code goes to production**. On development, once
+the changes are proven:
 
 ```bash
-docker exec -i postgres psql -U aivoice -d aivoice < migrations/0NN_name.sql
+server-configs/release.sh 0.7.0         # note: no v, it is added
 ```
 
-Every migration in this repo is safe to re-run.
+That tags `v0.7.0` and pushes it — it deploys nothing. The tag message carries
+every commit since the last release, so `git show v0.7.0` answers "what was in
+it" months later.
+
+Then on production: `server-configs/deploy.sh v0.7.0`.
+
+The number on the login page is `git describe` from the box it was built on, so
+its shape tells you where you are:
+
+| Shows | Means |
+|---|---|
+| `v0.7.0` | sitting exactly on a release — production |
+| `v0.7.0-20-gabc1234` | 20 commits past it — development, unreleased |
+| `unknown` | brought up by hand instead of through `deploy.sh` |
+
+Development cannot show a clean version by accident, and production showing a
+dirty one is labelled `(untagged)` on the login page.
 
 ---
 

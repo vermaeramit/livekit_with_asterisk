@@ -279,15 +279,45 @@ substituted `sip/config.yaml`. Provider keys, tool auth values and the postback
 credential are Fernet-encrypted in Postgres and never returned by the API — the
 console works from a four-character hint.
 
-### Tags
+### Versions
+
+**A version is a git tag, and nothing else.** No `VERSION` file to fall out of
+step with it; the `0.0.0` in `package.json` means nothing on purpose. The number
+is `git describe --tags` computed on the box being deployed, which makes its
+*shape* carry information:
+
+| Shows | Means |
+|---|---|
+| `v0.7.0` | checked out exactly on a release — production |
+| `v0.7.0-20-gabc1234` | 20 commits past it — development, unreleased |
+| `unknown` | brought up by hand instead of through `deploy.sh` |
+
+That is what makes "the version only changes when code reaches production" true
+rather than a rule somebody has to remember: **production is checked out at a
+tag**, so its version *is* the tag. Development is always some commits past the
+last one and cannot claim a clean number even by accident.
+
+It is shown on the login page next to which server you are signing in to —
+production in grey, anything else in amber. The two boxes are otherwise identical
+on screen, and an afternoon has gone to not knowing which was which.
+
+```bash
+server-configs/release.sh 0.7.0     # on development: tag it and push
+server-configs/deploy.sh v0.7.0     # on production:  check it out and deploy
+```
 
 | Tag | Milestone |
 |---|---|
 | `v0.3.0` | Step 8 — working AI voice pipeline |
+| `v0.4.0` | Step 9 — knowledge base + grounding |
+| `v0.4.1` | Step 9 complete — + human transfer |
+| `v0.5.0` | Step 10a — production deployment + measured capacity |
+| `v0.6.0` | Step 10c — cost guardrails + monitoring |
 
-> The only tag ever cut. Steps 9 through 12 are all done and on `main`; the
-> history is in [docs/PROGRESS.md](docs/PROGRESS.md), which is the honest record
-> and considerably more useful than a tag would have been.
+> These five were cut on 31 Jul and 1 Aug 2026 and then nothing was tagged for
+> six weeks, because there was one server and no reason to. The full history is
+> in [docs/PROGRESS.md](docs/PROGRESS.md) either way — a tag says when, and
+> PROGRESS says what did not work, which is the more useful half.
 
 ---
 

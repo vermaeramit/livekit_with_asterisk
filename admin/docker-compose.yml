@@ -12,6 +12,18 @@ services:
     container_name: admin-api
     restart: unless-stopped
     env_file: .env
+    environment:
+      # From `git describe --tags` at deploy time, because the build context
+      # carries no .git and a container cannot work it out for itself.
+      #
+      # `unknown` rather than empty, and deliberately not a made-up number: a
+      # version that is wrong is worse than one that admits it does not know,
+      # because somebody will report a bug against it. Seeing `unknown` means
+      # the stack was brought up by hand instead of through deploy.sh.
+      APP_VERSION: ${APP_VERSION:-unknown}
+      # APP_ENV comes from env_file above. It is per-host, set once, and is what
+      # the login page reads to say which box you are about to sign in to -
+      # both servers are otherwise identical on screen.
     volumes:
       # The agent's kb.py is mounted, not copied. One implementation of
       # extraction and chunking - two would drift and retrieval quality would
@@ -72,7 +84,19 @@ services:
         limits: { cpus: '0.5', memory: 512M }
 
   admin-web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Baked into the bundle, not fetched. The login page is the one screen
+      # that renders before anyone is authenticated, and a version it had to
+      # ask the API for would be blank exactly when the API is the thing that
+      # is broken.
+      #
+      # Both of these come from the same `docker compose up` as admin-api's, so
+      # the two agree. If they ever disagree, one half of a deploy failed - the
+      # System page shows both side by side for that reason.
+      args:
+        VITE_APP_VERSION: ${APP_VERSION:-unknown}
+        VITE_APP_ENV: ${APP_ENV:-unknown}
     container_name: admin-web
     restart: unless-stopped
     depends_on: [ admin-api ]
