@@ -48,7 +48,7 @@ git fetch --tags --quiet origin 2>/dev/null || true
 # A tag pointing at a commit that only exists on this machine is worse than no
 # tag: production fetches it, cannot find the commit, and the error names the
 # sha rather than the cause.
-[ -z "$(git log origin/main..HEAD --oneline 2>/dev/null)" ] \
+[ -z "$(git --no-pager log origin/main..HEAD --oneline 2>/dev/null)" ] \
     || die "there are commits here that are not pushed. 'git push' first, or
          production will fetch a tag whose commit does not exist."
 
@@ -56,7 +56,7 @@ git fetch --tags --quiet origin 2>/dev/null || true
 # HEAD is behind the remote then everything pushed since gets left out of the
 # release - with nothing to say so, because the tag is perfectly valid and the
 # omission only shows up as a bug fix that "did not go out".
-BEHIND=$(git log HEAD..origin/main --oneline 2>/dev/null | wc -l | tr -d ' ')
+BEHIND=$(git --no-pager log HEAD..origin/main --oneline 2>/dev/null | wc -l | tr -d ' ')
 [ "$BEHIND" = "0" ] \
     || die "origin/main is $BEHIND commit(s) ahead of this checkout. A tag cut
          here would silently leave them out of the release. 'git pull' first."
@@ -80,18 +80,38 @@ fi
 # Into the tag message, not just onto the screen. `git show v0.7.0` then answers
 # "what changed in this release" months later, on any clone, with no access to
 # whatever terminal this was run in.
-COUNT=$(git log --no-merges --oneline "$RANGE" | wc -l | tr -d ' ')
+COUNT=$(git --no-pager log --no-merges --oneline "$RANGE" | wc -l | tr -d ' ')
 
 echo "Release v$NEW"
 [ -n "$LATEST" ] && echo "  since v$LATEST: $COUNT commits" || echo "  first tagged release"
 echo
-git log --no-merges --pretty='  %s' "$RANGE"
+
+# --no-pager, and capped.
+#
+# Without it git opens `less`, which in a script means the release stops dead
+# waiting for a keypress nobody knew to make - and on quitting, git takes a
+# SIGPIPE, exits non-zero, and `set -e` ends the script with no tag, no error and
+# no output. That happened on the first real release: 323 commits opened a pager
+# and the run died in silence.
+#
+# The cap is the other half. Anything long enough to need a pager is too long to
+# read on a terminal anyway; the FULL list still goes into the tag message below,
+# which is where it is actually useful.
+git --no-pager log --no-merges --pretty='  %s' "$RANGE" | head -20
+# `if` rather than `[ … ] && echo` for legibility only. The && form is also
+# safe here, contrary to what this comment first claimed: POSIX exempts every
+# command in an AND-OR list except the last one from set -e, so a test that
+# fails there does not end the script. Verified rather than assumed -
+# `sh -c 'set -e; false && echo x; echo survived'` prints survived.
+if [ "$COUNT" -gt 20 ]; then
+    echo "  ... and $((COUNT - 20)) more - all of them go into the tag message"
+fi
 echo
 
 [ "$COUNT" -gt 0 ] || die "nothing has changed since v$LATEST. Releasing the same
          code under a new number makes the number meaningless."
 
-MSG=$(printf 'Release v%s\n\n%s\n' "$NEW" "$(git log --no-merges --pretty='* %s' "$RANGE")")
+MSG=$(printf 'Release v%s\n\n%s\n' "$NEW" "$(git --no-pager log --no-merges --pretty='* %s' "$RANGE")")
 git tag -a "v$NEW" -m "$MSG"
 git push --quiet origin "v$NEW"
 
