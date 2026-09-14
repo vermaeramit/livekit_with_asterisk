@@ -104,7 +104,12 @@ echo
 # a box happens to be checked out at. That inference was wrong at least once:
 # the production clone sat on a checkout that said 047 while nobody could say
 # what its database actually held.
-psql_q "CREATE TABLE IF NOT EXISTS schema_migrations (
+# SET first: IF NOT EXISTS still raises a NOTICE when the table is there,
+# which is every deploy after the first. It went to stderr, past the
+# > /dev/null, and printed on every run - noise that trains people to skim
+# past exactly the output a real warning would appear in.
+psql_q "SET client_min_messages = warning;
+        CREATE TABLE IF NOT EXISTS schema_migrations (
             filename   text PRIMARY KEY,
             applied_at timestamptz NOT NULL DEFAULT now())" > /dev/null
 
