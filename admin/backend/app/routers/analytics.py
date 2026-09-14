@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import costing, db
 from ..deps import CurrentUser, active_user, tenant_scope
@@ -20,9 +20,40 @@ from ..schemas import (AnalyticsCost, AnalyticsSummary, LatencySplit,
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
-def _window(days: int) -> tuple[datetime, datetime]:
-    now = datetime.now(timezone.utc)
-    return now - timedelta(days=days), now
+# The widest window either endpoint will scan. `days` was capped at 365, and an
+# arbitrary date range must not quietly lift that and turn one click into a scan
+# of every call ever made. 366 so a leap year still fits.
+MAX_WINDOW_DAYS = 366
+
+
+def _aware(d: datetime | None) -> datetime | None:
+    # A date sent without an offset is read as UTC rather than rejected. Comparing
+    # it to an aware `now` would otherwise raise, and the console always sends one.
+    return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
+
+
+def _window(days: int, date_from: datetime | None = None,
+            date_to: datetime | None = None) -> tuple[datetime, datetime]:
+    """The time window: explicit dates when given, `days` when not.
+
+    Explicit dates are what the dashboard sends now, from the same picker as the
+    calls list. That picker already turns a chosen day into LOCAL midnight before
+    sending it, and sends the day after the last one as an exclusive end - so
+    nothing here reinterprets the boundaries, which is where "to 9 Sept" once
+    lost most of the 9th.
+
+    An open end means "until now". An open start means `days` before the end -
+    so "from Monday" works, and a missing start never becomes all of history.
+    """
+    end = _aware(date_to) or datetime.now(timezone.utc)
+    start = _aware(date_from) or (end - timedelta(days=days))
+    if start >= end:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "date_from must be before date_to")
+    if end - start > timedelta(days=MAX_WINDOW_DAYS):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"ranges longer than {MAX_WINDOW_DAYS} days are not supported")
+    return start, end
 
 
 def _filters(user: CurrentUser, tenant_id: int | None, campaign_id: int | None,
@@ -118,10 +149,13 @@ async def _window_cost(clause: str, args: list) -> AnalyticsCost | None:
 async def summary(
     user: CurrentUser = Depends(active_user),
     days: int = Query(7, ge=1, le=365),
+    # Win over `days` when given - see _window.
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     tenant_id: int | None = None,
     campaign_id: int | None = None,
 ):
-    date_from, date_to = _window(days)
+    date_from, date_to = _window(days, date_from, date_to)
     clause, args = _filters(user, tenant_id, campaign_id, date_from, date_to)
 
     totals = await db.pool().fetchrow(f"""
@@ -201,15 +235,23 @@ async def summary(
 async def timeseries(
     user: CurrentUser = Depends(active_user),
     days: int = Query(7, ge=1, le=365),
+    # Win over `days` when given - see _window.
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     tenant_id: int | None = None,
     campaign_id: int | None = None,
 ):
-    date_from, date_to = _window(days)
+    date_from, date_to = _window(days, date_from, date_to)
     clause, args = _filters(user, tenant_id, campaign_id, date_from, date_to)
 
     # Hourly buckets stop being readable past a couple of days, and daily ones
     # hide the intraday shape below that.
-    bucket = "hour" if days <= 2 else "day"
+    #
+    # Decided on the SPAN now that a range can be picked, not on `days`. The
+    # dashboard makes the same two-day call for its axis labels; change one
+    # without the other and hourly buckets get day-only labels that all read
+    # the same.
+    bucket = "hour" if date_to - date_from <= timedelta(days=2) else "day"
 
     # Call-level and turn-level aggregates are computed separately and joined on
     # the bucket. Doing both over one joined set would multiply each call row by

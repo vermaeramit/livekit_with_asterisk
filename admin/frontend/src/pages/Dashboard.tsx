@@ -26,7 +26,9 @@ import {
   TriangleAlert,
   Wallet,
 } from 'lucide-react'
+import { addDays, differenceInCalendarDays, format, parseISO, startOfDay, subDays } from 'date-fns'
 import { PAGE, PageHeader } from '@/components/Layout'
+import { DateRangeField } from '@/components/ui/daterange'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle, EmptyState, Select, Skeleton } from '@/components/ui/primitives'
 import { api, buildQuery } from '@/lib/api'
@@ -34,12 +36,14 @@ import { useAuth } from '@/lib/auth'
 import { cn, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
 import type { AnalyticsSummary, Campaign, TimeBucket } from '@/types'
 
-const RANGES = [
-  { days: 1, label: 'Last 24 hours' },
-  { days: 7, label: 'Last 7 days' },
-  { days: 30, label: 'Last 30 days' },
-  { days: 90, label: 'Last 90 days' },
-]
+/** The window when nothing else is chosen: the last seven days, today included -
+ *  the same span as the picker's own "Last 7 days" preset. */
+function lastSevenDays() {
+  return {
+    from: format(subDays(new Date(), 6), 'yyyy-MM-dd'),
+    to: format(new Date(), 'yyyy-MM-dd'),
+  }
+}
 
 // Kept consistent with the call-detail latency bar, so the same stage is the
 // same colour wherever it appears.
@@ -165,10 +169,26 @@ const tooltipStyle = {
 
 export function Dashboard() {
   const { user } = useAuth()
-  const [days, setDays] = useState(7)
+  const [range, setRange] = useState(lastSevenDays)
   const [campaignId, setCampaignId] = useState('')
 
-  const query = buildQuery({ days, campaign_id: campaignId || undefined })
+  const query = buildQuery({
+    // LOCAL day boundaries, exactly as the calls list sends them - see the note
+    // there. new Date('2026-09-09') reads UTC midnight, which is 05:30 IST, and
+    // most of the chosen first day would fall outside its own chart.
+    date_from: range.from ? startOfDay(parseISO(range.from)).toISOString() : undefined,
+    // Inclusive in the picker, exclusive in the query: the start of the next day.
+    // No end means "until now", which the API supplies.
+    date_to: range.to ? startOfDay(addDays(parseISO(range.to), 1)).toISOString() : undefined,
+    campaign_id: campaignId || undefined,
+  })
+
+  // Calendar days in the window, for choosing axis labels. Must agree with the
+  // API's rule for hourly buckets - two days or fewer, in timeseries() in
+  // analytics.py - or hourly buckets get day-only labels that all read the same.
+  const spanDays = range.from
+    ? differenceInCalendarDays(range.to ? parseISO(range.to) : new Date(), parseISO(range.from)) + 1
+    : 7
 
   const summary = useQuery({
     queryKey: ['analytics-summary', query],
@@ -191,7 +211,7 @@ export function Dashboard() {
     t: new Date(b.bucket).toLocaleString('en-IN', {
       day: '2-digit',
       month: 'short',
-      ...(days <= 2 ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
+      ...(spanDays <= 2 ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
     }),
     uncached: Math.max(0, (b.prompt_tokens ?? 0) - (b.cached_tokens ?? 0)),
   }))
@@ -257,17 +277,21 @@ export function Dashboard() {
                 ))}
               </Select>
             )}
-            <Select
-              value={String(days)}
-              onChange={(e) => setDays(Number(e.target.value))}
-              className="w-40"
-            >
-              {RANGES.map((r) => (
-                <option key={r.days} value={r.days}>
-                  {r.label}
-                </option>
-              ))}
-            </Select>
+            {/* The same picker as the calls list, so a date range means the same
+                thing on both pages. Wide enough for "8 Sept - 14 Sept 2026". */}
+            <div className="w-60">
+              <DateRangeField
+                from={range.from}
+                to={range.to}
+                // No "Any date" and no clear button. On the calls list an empty
+                // range is a real filter; here there is no chart of every call
+                // ever made, so offering one would put "Any date" above a week
+                // of data. The fallback stays as the guard if an empty range
+                // arrives anyway.
+                allowAny={false}
+                onChange={(r) => setRange(r.from || r.to ? r : lastSevenDays())}
+              />
+            </div>
           </div>
         }
       />

@@ -4802,6 +4802,30 @@ the prompt never writes.
 
 ---
 
+## Raptor, and one date control for the dashboard (14 Sep 2026)
+
+The console is called **Raptor** now - sidebar, login page, browser tab.
+
+The dashboard's window was a four-option dropdown (24 hours, 7, 30, 90 days)
+while the calls list had a proper range picker. It uses the same picker now, and
+that needed the API first: `/analytics/summary` and `/analytics/timeseries` only
+accepted `days`. Both take `date_from`/`date_to` as well, with `days` kept as the
+default span - an open end means "until now", an open start means `days` before
+the end, never all of history. The old 365-day cap survives as a range limit, so
+a picked range cannot become a scan of every call.
+
+Hourly or daily buckets are chosen from the span now, not from `days`, and the
+dashboard makes the same two-day call for its axis labels. The two must agree:
+hourly buckets with day-only labels all read the same.
+
+The dates go out as local midnight with an exclusive next-day end - the same
+conversion the calls list learned the hard way, when "to 9 Sept" lost most of the
+9th. And the picker gained `allowAny`: the dashboard hides "Any date" and the
+clear button, because there is no chart of every call ever made and a control
+reading "Any date" above a week of data would be lying.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which

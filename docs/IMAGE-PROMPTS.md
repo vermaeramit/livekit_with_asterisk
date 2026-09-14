@@ -33,8 +33,9 @@ the real words on top of it in PowerPoint, Figma or Canva. It takes five minutes
 and it is the difference between a slide that looks made and one that looks
 generated.
 
-**Replace the name.** These say "Voice Console". Put the product's real name in
-before generating, or leave the name out entirely and add it yourself.
+**The product is called Raptor.** Some of these were written when it was "Voice
+Console" — put Raptor in before generating, or leave the name out entirely and add
+it yourself.
 
 ---
 

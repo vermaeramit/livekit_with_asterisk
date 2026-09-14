@@ -84,10 +84,16 @@ export function DateRangeField({
   from,
   to,
   onChange,
+  allowAny = true,
 }: {
   from: string
   to: string
   onChange: (range: { from: string; to: string }) => void
+  /** Whether "no range at all" can be chosen - the "Any date" preset and the
+      clear button. True on the calls list, where it is a real filter. False
+      where there is nothing sensible to show for every call ever made, so the
+      control never offers a choice the page cannot honour. */
+  allowAny?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<DateRange | undefined>()
@@ -142,7 +148,7 @@ export function DateRangeField({
       >
         <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">{label(from, to)}</span>
-        {set && (
+        {set && allowAny && (
           <span
             role="button"
             tabIndex={-1}
@@ -181,13 +187,15 @@ export function DateRangeField({
                 {p.label}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => apply(undefined)}
-              className="mt-0.5 rounded border-t border-border/70 px-2 py-1 pt-1.5 text-left text-2xs text-muted-foreground hover:bg-muted"
-            >
-              Any date
-            </button>
+            {allowAny && (
+              <button
+                type="button"
+                onClick={() => apply(undefined)}
+                className="mt-0.5 rounded border-t border-border/70 px-2 py-1 pt-1.5 text-left text-2xs text-muted-foreground hover:bg-muted"
+              >
+                Any date
+              </button>
+            )}
           </div>
 
           <div className="p-2">

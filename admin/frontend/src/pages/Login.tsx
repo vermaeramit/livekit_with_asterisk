@@ -131,7 +131,7 @@ export function Login() {
             <Radio className="h-4 w-4" />
           </span>
           <span className="flex flex-col leading-none">
-            <span className="font-semibold tracking-tight text-white">Voice Console</span>
+            <span className="font-semibold tracking-tight text-white">Raptor</span>
             <span className="mt-1 text-2xs text-slate-400">AI calling platform</span>
           </span>
         </div>
@@ -177,7 +177,7 @@ export function Login() {
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
               <Radio className="h-4 w-4" />
             </span>
-            <span className="font-semibold tracking-tight">Voice Console</span>
+            <span className="font-semibold tracking-tight">Raptor</span>
           </div>
 
           <h2 className="text-[1.75rem] font-semibold leading-tight tracking-tight">

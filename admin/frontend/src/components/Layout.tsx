@@ -91,7 +91,7 @@ function Wordmark() {
         <Radio className="h-4 w-4" />
       </span>
       <span className="flex flex-col leading-none">
-        <span className="text-sm font-semibold tracking-tight text-foreground">Voice Console</span>
+        <span className="text-sm font-semibold tracking-tight text-foreground">Raptor</span>
         <span className="mt-0.5 text-2xs text-muted-foreground">AI calling platform</span>
       </span>
     </div>
