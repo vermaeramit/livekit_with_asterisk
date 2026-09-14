@@ -30,7 +30,7 @@ import aiohttp
 from livekit import api
 from livekit.agents import (
     Agent, AgentSession, JobContext, JobProcess, RoomInputOptions, RunContext,
-    WorkerOptions, cli, function_tool, metrics,
+    StopResponse, WorkerOptions, cli, function_tool, metrics,
 )
 # aliased: bare stt/tts/llm would shadow the local variables of the same name
 from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
@@ -58,6 +58,13 @@ logger = logging.getLogger("voice-agent")
 
 CONFIG_NAME = os.getenv("AGENT_CONFIG", "default")
 MIN_ENDPOINTING = float(os.getenv("MIN_ENDPOINTING_DELAY", "0.25"))
+
+# How long a reply can be held back while the greeting plays - see
+# KBAgent.on_user_turn_completed. Not a delay anybody hears: the gate lifts the
+# moment the greeting finishes, about seven seconds in. This is only the ceiling
+# for the case where that signal never arrives, and without a ceiling that case
+# is an agent that answers nothing for the rest of the call.
+GREETING_GATE_MAX_SEC = float(os.getenv("GREETING_GATE_MAX_SEC", "30"))
 # The 4.0 default froze calls for 4s when a short closing scored below threshold.
 MAX_ENDPOINTING = float(os.getenv("MAX_ENDPOINTING_DELAY", "1.5"))
 # How long we will wait for the STT to call a transcript final once the words
@@ -355,6 +362,16 @@ class KBAgent(Agent):
         self.turn_count = 0
         self.prompt_tokens = 0
         self.limit_hit: str | None = None
+        # False until the greeting has been heard in FULL - see
+        # on_user_turn_completed.
+        #
+        # Starts False here in the constructor, not just before the greeting is
+        # spoken. The agent is built before session.start, and session.start is
+        # the moment the caller's audio begins arriving: a flag set any later
+        # leaves a window in which a caller who says "hello" first gets an
+        # answer to it instead of the greeting - the bug this exists to close.
+        self.greeting_done = False
+        self._greeting_gate_since = time.monotonic()
         # Set when the model writes the end-of-call marker. Acted on after the
         # sentence carrying it has finished playing, never during.
         self.end_requested = False
@@ -408,6 +425,36 @@ class KBAgent(Agent):
                     "tool are both live, and the model may use either")
 
     # ────────────────────── end of call ──────────────────────
+
+    async def on_user_turn_completed(self, turn_ctx, new_message):
+        """Say nothing back until the greeting has finished playing.
+
+        A caller who spoke first, or over the greeting, used to get an answer to
+        "hello" and lose the greeting. The greeting itself is now uninterruptible
+        (see _speak_greeting), which stops it being cut; this stops a reply being
+        generated around it. Both are needed: a turn can COMPLETE before the
+        greeting is even scheduled, because session.start opens the caller's
+        audio before the greeting is queued and preemptive generation starts the
+        model on whatever it hears.
+
+        StopResponse is livekit's own way to decline a turn - no reply, no
+        speech. What the caller said is not answered; the greeting ends in a
+        question, so they are asked to speak again anyway.
+
+        THE FAILURE THIS MUST NOT HAVE is a flag that never clears: an agent
+        silent for the whole call. So the gate has a ceiling. Past
+        GREETING_GATE_MAX_SEC it opens regardless, and says so in the log.
+        """
+        if not self.greeting_done:
+            waited = time.monotonic() - self._greeting_gate_since
+            if waited < GREETING_GATE_MAX_SEC:
+                logger.info("greeting still playing - not replying to %r",
+                            (getattr(new_message, "text_content", None) or "")[:60])
+                raise StopResponse()
+            logger.warning("greeting never reported finishing after %.0fs - "
+                           "replying anyway rather than going silent", waited)
+            self.greeting_done = True
+        await super().on_user_turn_completed(turn_ctx, new_message)
 
     def _markers(self) -> dict[str, str]:
         """{marker text -> the flag it sets}, empties dropped."""
@@ -1987,6 +2034,8 @@ async def entrypoint(ctx: JobContext):
         try:
             item = ev.item
             role = getattr(item, "role", "?")
+            # livekit sets this on an agent turn a barge-in cut short.
+            interrupted = bool(getattr(item, "interrupted", False))
             text = getattr(item, "text_content", None) or str(getattr(item, "content", ""))
             t = dict(pending) if role == "assistant" else {}
 
@@ -1998,7 +2047,7 @@ async def entrypoint(ctx: JobContext):
             #
             # Timings are checked too, not just the text: an agent turn cut off
             # by a barge-in has no text and is worth keeping.
-            if not (text or "").strip() and not t:
+            if not (text or "").strip() and not t and not interrupted:
                 return
 
             seq += 1
@@ -2032,7 +2081,8 @@ async def entrypoint(ctx: JobContext):
                     asyncio.create_task(enforce_limit(f"max_turns={cfg.max_turns}"))
 
             bits = "  ".join(f"{k[:-3]}={v}ms" for k, v in t.items() if k.endswith("_ms"))
-            logger.info("[%-9s] %s%s", role, text,
+            logger.info("[%-9s] %s%s%s", role, text,
+                        "  (interrupted)" if interrupted else "",
                         f"\n            {bits}{extra}" if bits else "")
             # Named, not matched on a suffix. log_turn has read kb_chunk_ids
             # and kb_scores since the table was created, the API has returned
@@ -2041,6 +2091,11 @@ async def entrypoint(ctx: JobContext):
             # time. Four working pieces and one silent filter in the middle.
             asyncio.create_task(store.log_turn(
                 call_id, seq, "agent" if role == "assistant" else "user", text,
+                # On its own, not left to the comprehension below - which keeps
+                # only timing and kb keys and dropped this on every turn. The
+                # column existed, log_turn wrote it and the console rendered it,
+                # so every turn recorded until now says it was not interrupted.
+                interrupted=interrupted,
                 **{k: v for k, v in t.items()
                    if k.endswith("_ms") or k in ("kb_chunk_ids", "kb_scores")}))
         except Exception:
@@ -2180,6 +2235,27 @@ async def entrypoint(ctx: JobContext):
     # measures 5 ms invite-to-ringing and 43 ms to the room.
     logger.info("TIMING session_started=%dms  warm_done=%s", since(), warm.done())
 
+    async def _speak_greeting(text: str, **kw) -> None:
+        """The greeting, in full, whatever the caller does.
+
+        Never interruptible, whichever way the campaign's barge-in is set. That
+        setting is right for the conversation and wrong here: it let a caller's
+        "hello" cut the greeting off - and the recording notice with it, since
+        the two are one utterance.
+
+        Awaiting say() waits for playout (SpeechHandle.__await__ is
+        wait_for_playout), so the flag is set when the caller has HEARD it, not
+        when it was queued.
+
+        In `finally`: if this raises and the flag is never set, the agent refuses
+        to answer for the rest of the call. The gate's ceiling covers that too;
+        this is the first line of defence, not the only one.
+        """
+        try:
+            await session.say(text, allow_interruptions=False, **kw)
+        finally:
+            agent.greeting_done = True
+
     # One utterance, not two. Said separately, a caller who speaks over the
     # greeting cancels what follows - and what follows is the recording notice.
     # Joined here it is either both or neither.
@@ -2200,7 +2276,11 @@ async def entrypoint(ctx: JobContext):
 
     opening = " ".join(x for x in (_render(greeting_tpl, dialler),
                                    cfg.recording_disclosure) if x)
-    if opening:
+    if not opening:
+        # Nothing to say, so nothing to wait for. Without this a campaign with no
+        # opening would never lift the gate, and would answer nothing at all.
+        agent.greeting_done = True
+    else:
         # Cacheable only when the greeting does not depend on who is calling. A
         # placeholder gives every caller a different opening, and a cache with
         # one entry per caller is not a cache - it is a disk leak.
@@ -2227,10 +2307,9 @@ async def entrypoint(ctx: JobContext):
             # seconds long. Nothing else in the call is a better place to spend
             # a connection handshake.
             asyncio.create_task(_warm_tts(tts_stack, warm_requests))
-            await session.say(opening, audio=cached,
-                              allow_interruptions=cfg.allow_interrupt)
+            await _speak_greeting(opening, audio=cached)
         else:
-            await session.say(opening, allow_interruptions=cfg.allow_interrupt)
+            await _speak_greeting(opening)
             if cache_path is not None:
                 # Started after the greeting, not before it: this call has
                 # already paid for a connection and there is no sense competing

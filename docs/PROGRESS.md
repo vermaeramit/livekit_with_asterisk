@@ -4826,6 +4826,68 @@ reading "Any date" above a week of data would be lying.
 
 ---
 
+## The greeting is never cut off (14 Sep 2026)
+
+Reported from live calls: a caller who speaks first, or over the greeting, often
+never hears it. The requirement is flat - the greeting always plays in full.
+
+### Two causes, at two different moments
+
+**During the greeting.** It was spoken with `allow_interruptions=cfg.allow_interrupt`
+- the campaign's barge-in setting, which is right for the conversation and wrong
+here. A caller's "hello" cut it off. And the greeting is joined to the recording
+notice as one utterance on purpose, so the notice went with it.
+
+**Before the greeting.** `session.start` opens the caller's audio before the
+greeting is queued, and preemptive generation starts the model on whatever it
+hears. A caller who says "hello" the instant the call connects can complete a turn
+before the greeting is scheduled at all - and get an answer to "hello" instead.
+
+Making the greeting uninterruptible fixes the first and not the second. Both are
+needed.
+
+### The fix
+
+- `_speak_greeting` - always `allow_interruptions=False`, whatever the campaign says.
+- `KBAgent.on_user_turn_completed` raises `StopResponse` until the greeting has
+  finished PLAYING. The flag starts False in the constructor, because the agent
+  exists before `session.start` and a flag set any later leaves the "speaks first"
+  window open. Awaiting `say()` waits for playout (`SpeechHandle.__await__` is
+  `wait_for_playout`), so the gate lifts when the caller has heard it.
+
+Verified in livekit-agents 1.6.7 on the server before relying on it: the
+"skipping reply ... cannot be interrupted" path and `except StopResponse` both
+exist there. The machine the code is written on has 1.4.6, which is not what runs.
+
+**The failure this must not have is a gate that never lifts** - an agent silent
+for the whole call. So: the flag is set in `finally` even if the greeting raises;
+a campaign with no opening lifts it immediately; and past `GREETING_GATE_MAX_SEC`
+(30 s, env-tunable) it opens regardless and logs why. The gate was tested against
+the real method lifted out of the file: held at 0.5 s and 8 s, released once the
+greeting finished, released and logged when stuck at 31 s.
+
+The cost, stated rather than discovered: what a caller says during the greeting is
+not answered, and with livekit's default interruption settings not transcribed
+either. The greeting ends in a question, so they are asked to speak again.
+
+### Why this could not be measured, and now can
+
+`turns.interrupted` has existed all along, `log_turn` wrote it and the console
+rendered it. The handler in between passed only timing and kb keys, so every turn
+ever recorded said it was not interrupted - the same silent filter its own comment
+already describes. It is passed now, and the journal marks `(interrupted)`.
+
+A query over the last 15 calls showed every greeting's text complete - which proves
+nothing about the audio, for exactly that reason.
+
+### Noticed on the way
+
+Every one of those greetings ended in ` .` - saltworx's `recording_disclosure` is a
+single full stop. The column is NOT NULL so a campaign cannot skip the notice, and
+this one satisfies the constraint without telling callers anything.
+
+---
+
 ## ⏭️ Next
 
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
