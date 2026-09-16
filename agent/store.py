@@ -101,6 +101,16 @@ class AgentConfig:
     # one keeps the wording for when somebody turns it back on.
     kb_filler_enabled: bool
     kb_filler_message: Optional[str]
+    # A short, content-free noise made while the reply is being produced -
+    # 1555 ms of silence on the median turn, measured over 2,350 of them.
+    # Off everywhere until a campaign turns it on.
+    reply_filler_enabled: bool
+    reply_filler_lines: Optional[list]
+    reply_filler_after_ms: int
+    # How long a KB search or a tool call may run before the caller is told
+    # something. Was an environment variable, so one number served every
+    # campaign on the box.
+    lookup_filler_after_ms: int
     # Where the call's result goes afterwards. Only what the AGENT needs is
     # here: it extracts and stores, it never delivers. The url, auth and retry
     # settings are read by admin-api at send time, so changing them fixes calls
@@ -159,6 +169,7 @@ class CampaignUnavailable(Exception):
 # the failure of forgetting one is not an exception.
 _JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
               "calling_hours", "calling_holidays",
+              "reply_filler_lines",
               "stt_context_terms")
 
 

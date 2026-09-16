@@ -21,6 +21,7 @@ import functools
 import json
 import logging
 import os
+import random
 import re
 import time
 import zoneinfo
@@ -316,6 +317,36 @@ def _tool_name(tool) -> str:
     return ""
 
 
+def _lookup_filler_s(cfg) -> float:
+    """How long a lookup may run before the caller is told something.
+
+    The campaign's own number, falling back to the environment default for a row
+    written before the column existed.
+    """
+    ms = getattr(cfg, "lookup_filler_after_ms", None)
+    return (ms / 1000) if ms else tools_mod.FILLER_AFTER_S
+
+
+async def _warm_fillers(cfg, tts) -> None:
+    """Render the acknowledgements once, so every later turn plays them instantly.
+
+    Run after the greeting, when the caller is answering it and the TTS is idle -
+    the call that finds the cache empty pays nothing it would not have paid
+    anyway, and every call after it, on any worker, reads them from disk.
+
+    The cache key is the text AND the voice, so changing either re-renders on its
+    own; there is nothing to clear. See greeting_cache.
+    """
+    for raw in (getattr(cfg, "reply_filler_lines", None) or []):
+        line = (raw or "").strip()
+        if not line:
+            continue
+        path = greeting_cache.path_for(line, cfg.tts_provider, cfg.tts_model,
+                                       cfg.tts_voice)
+        if not path.exists():
+            await greeting_cache.store(tts, line, path)
+
+
 class KBAgent(Agent):
     def __init__(self, instructions: str, cfg, kb_mode: str, room, keys: dict,
                  chat_ctx=None, extra_tools=None):
@@ -371,6 +402,14 @@ class KBAgent(Agent):
         # leaves a window in which a caller who says "hello" first gets an
         # answer to it instead of the greeting - the bug this exists to close.
         self.greeting_done = False
+        # The acknowledgement scheduled for the turn in flight, so the reply can
+        # take it back if it turns out to be fast. Set to None the instant it
+        # starts speaking - after that there is nothing left to cancel, and
+        # cancelling would cut the caller off mid-word.
+        self.pending_filler: asyncio.Task | None = None
+        # Set by the entrypoint once the session exists. The agent is built
+        # first, so this cannot be a constructor argument.
+        self.session_ref = None
         self._greeting_gate_since = time.monotonic()
         # Set when the model writes the end-of-call marker. Acted on after the
         # sentence carrying it has finished playing, never during.
@@ -454,7 +493,58 @@ class KBAgent(Agent):
             logger.warning("greeting never reported finishing after %.0fs - "
                            "replying anyway rather than going silent", waited)
             self.greeting_done = True
+        self._start_reply_filler()
         await super().on_user_turn_completed(turn_ctx, new_message)
+
+    def _start_reply_filler(self) -> None:
+        """Schedule a short acknowledgement, in case the reply is slow.
+
+        Measured over 2,350 turns: the model's first token lands at 931 ms and
+        its first audio at 1555 ms. That is the silence this covers - not the
+        gap before it, which belongs to turn detection and to a caller who has
+        only just stopped speaking.
+
+        The line is pre-rendered (see _warm_fillers), so it starts the moment it
+        is due rather than paying for its own synthesis first. That is the whole
+        reason it can wait 300 ms where the tool filler has to wait 600.
+
+        Never added to the chat context: the model must not see itself having
+        spoken - it would answer as though it had already acknowledged - and the
+        transcript must not gain a turn that carries no answer.
+        """
+        self.cancel_reply_filler()
+        lines = [s.strip() for s in (getattr(self.cfg, "reply_filler_lines", None) or [])
+                 if (s or "").strip()]
+        session = self.session_ref
+        if not getattr(self.cfg, "reply_filler_enabled", False) or not lines or session is None:
+            return
+        wait = (getattr(self.cfg, "reply_filler_after_ms", None) or 300) / 1000
+        line = random.choice(lines)
+
+        async def hold_on() -> None:
+            try:
+                await asyncio.sleep(wait)
+                # Cleared BEFORE it speaks. cancel_reply_filler() can then never
+                # interrupt the acknowledgement half way through.
+                self.pending_filler = None
+                path = greeting_cache.path_for(line, self.cfg.tts_provider,
+                                               self.cfg.tts_model, self.cfg.tts_voice)
+                frames = greeting_cache.frames(path)
+                await session.say(line, allow_interruptions=True,
+                                  add_to_chat_ctx=False,
+                                  **({"audio": frames} if frames is not None else {}))
+            except asyncio.CancelledError:
+                pass        # the reply arrived first, which is the good case
+            except Exception:
+                logger.exception("reply filler failed")
+
+        self.pending_filler = asyncio.create_task(hold_on())
+
+    def cancel_reply_filler(self) -> None:
+        """Take back an acknowledgement that has not been spoken yet."""
+        task, self.pending_filler = self.pending_filler, None
+        if task is not None and not task.done():
+            task.cancel()
 
     def _markers(self) -> dict[str, str]:
         """{marker text -> the flag it sets}, empties dropped."""
@@ -743,7 +833,7 @@ class KBAgent(Agent):
 
         async def hold_on() -> None:
             try:
-                await asyncio.sleep(tools_mod.FILLER_AFTER_S)
+                await asyncio.sleep(_lookup_filler_s(self.cfg))
                 # Kept out of the chat context on purpose. It is a noise made
                 # while waiting, not something the agent said: the model should
                 # not see itself having spoken, and the transcript should not
@@ -1705,7 +1795,8 @@ async def entrypoint(ctx: JobContext):
                 specs, call_id,
                 functools.partial(store.record_tool_call, call_id),
                 _tool_says,
-                functools.partial(store.record_gap, call_id, cfg.campaign_id))
+                functools.partial(store.record_gap, call_id, cfg.campaign_id),
+                filler_after_s=_lookup_filler_s(cfg))
             logger.info("campaign tools: %s",
                         ", ".join(s["name"] for s in specs))
 
@@ -1743,6 +1834,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     live["session"] = session
+    agent.session_ref = session
 
     usage = metrics.UsageCollector()
     pending: dict[str, int] = {}
@@ -1830,6 +1922,11 @@ async def entrypoint(ctx: JobContext):
         # Same second. And correct by the old rule, which is what made it worth
         # writing down.
         agent_busy = state != "listening"
+        if state == "speaking":
+            # The reply beat the acknowledgement to it. Only on "speaking":
+            # "thinking" arrives immediately after every turn and would cancel
+            # the acknowledgement before it had a chance to be needed.
+            agent.cancel_reply_filler()
         if state == "listening":
             # The clock starts when the AGENT stops, not when the caller last
             # spoke. Otherwise a long answer from the agent counts as the
@@ -2316,6 +2413,11 @@ async def entrypoint(ctx: JobContext):
                 # with it for the one thing the caller is waiting on.
                 asyncio.create_task(
                     greeting_cache.store(tts_stack, opening, cache_path))
+
+    if getattr(cfg, "reply_filler_enabled", False):
+        # After the greeting, not before it: the greeting has the TTS to itself,
+        # and the caller is about to answer it, so nothing is waiting on this.
+        asyncio.create_task(_warm_fillers(cfg, tts_stack))
 
 
 if __name__ == "__main__":

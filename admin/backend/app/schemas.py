@@ -439,6 +439,10 @@ class AgentConfigOut(BaseModel):
     # Spoken while search_knowledge_base runs. None = silence.
     kb_filler_enabled: bool = True
     kb_filler_message: str | None
+    reply_filler_enabled: bool = False
+    reply_filler_lines: list | None = None
+    reply_filler_after_ms: int = 300
+    lookup_filler_after_ms: int = 600
     stt_context_terms: list[str] = Field(default_factory=list)
 
     # Things that are wrong but not invalid - see agent_config._warnings.
@@ -649,6 +653,35 @@ class AgentConfigUpdate(BaseModel):
     # hears a sentence about waiting and then waits anyway.
     kb_filler_enabled: bool | None = None
     kb_filler_message: str | None = Field(default=None, max_length=200)
+    reply_filler_enabled: bool | None = None
+    reply_filler_lines: list | None = None
+    # Floors and ceilings match the CHECKs in migration 055.
+    reply_filler_after_ms: int | None = Field(default=None, ge=150, le=2000)
+    lookup_filler_after_ms: int | None = Field(default=None, ge=150, le=5000)
+
+    @field_validator("reply_filler_lines")
+    @classmethod
+    def _short_and_few(cls, v):
+        """Short, and not many.
+
+        An acknowledgement has to finish before the answer it is covering
+        arrives - the tool filler was once a full sentence in front of a lookup
+        that answered in 74 ms. Six is already more variety than a caller hears
+        in one call.
+        """
+        if v is None:
+            return v
+        out = []
+        for item in v:
+            line = str(item).strip()
+            if not line:
+                continue
+            if len(line) > 40:
+                raise ValueError(f"{line!r} is too long for something said while waiting")
+            out.append(line)
+        if len(out) > 6:
+            raise ValueError("six acknowledgements are plenty")
+        return out
 
     stt_context_terms: list[str] | None = None
 

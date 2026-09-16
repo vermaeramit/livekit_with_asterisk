@@ -4886,6 +4886,121 @@ Every one of those greetings ended in ` .` - saltworx's `recording_disclosure` i
 single full stop. The column is NOT NULL so a campaign cannot skip the notice, and
 this one satisfies the constraint without telling callers anything.
 
+## A sound in the gap (16 Sep 2026)
+
+A person does not go silent for a second and a half before answering. Ours does,
+on every single turn, and the number is not a guess - measured over **2,350 agent
+turns** on the development box:
+
+| | p50 |
+|---|---|
+| `llm_ttft` — first token out of the model | 931 ms |
+| `tts_ttfb` — first audio out of the voice | 653 ms |
+| **together** | **1555 ms** |
+
+That is the window this fills, and it is worth being precise about which window
+it is *not*. The whole pause a caller experiences is longer: turn detection has
+to decide they have finished speaking before any of the above starts. Nothing can
+be said during that part - the caller may not have finished, and talking over
+them is a worse failure than making them wait. So the acknowledgement covers the
+second half of the pause, the half that belongs to us.
+
+### Why it can be so eager
+
+The existing tool filler waits 600 ms. The new one waits **300**, and the reason
+is not confidence - it is that its audio already exists.
+
+The tool filler is synthesised while the caller waits, so starting it costs
+another ~650 ms of TTS on top of the wait that triggered it; it is only worth
+beginning once the wait is already long. The acknowledgement is rendered once
+and read off disk, so it starts the moment it is due and costs nothing to have
+been wrong about.
+
+The rendering reuses `greeting_cache` exactly as it stands - `path_for()` keys on
+the text **and** the voice, so changing either re-renders on its own and there is
+nothing to clear. The first call on a campaign finds the cache empty and fills it
+**after the greeting**, while the caller is answering it and the TTS is idle.
+Every call after that, on any of the six workers, reads it from disk.
+
+`MIN_BYTES = 8000` was checked before relying on it: at 48,000 bytes/s, `जी…` is
+roughly 19 KB. It clears the guard with room to spare.
+
+### The lines have to mean nothing
+
+`जी…` and `हम्म`, and that is a constraint rather than a shortage of ideas.
+
+The line is chosen **before the model has read what the caller said**. Anything
+that agrees (`बिल्कुल`), understands (`समझ गई`) or praises (`अच्छा सवाल`) will
+eventually land on a question where it makes no sense - or, worse, be contradicted
+by the answer arriving a third of a second behind it. A sound can never be wrong
+about content it does not have.
+
+Two further rules, both inherited from the tool filler and both load-bearing:
+
+- **Never added to the chat context.** The model must not see itself having
+  spoken - it would answer as though it had already acknowledged. And the
+  transcript must not gain a turn that carries no answer.
+- **Interruptible.** If the caller was not finished, the acknowledgement gets out
+  of the way, which is the entire reason it is a short sound and not a sentence.
+
+### Cancelling it, and one ordering trap
+
+The acknowledgement is scheduled in `on_user_turn_completed` and taken back in
+`agent_state_changed` if the reply beats it. The trap is which state:
+
+```python
+if state == "speaking":
+    agent.cancel_reply_filler()
+```
+
+Not `!= "listening"`. `thinking` arrives immediately after *every* turn, so
+cancelling on that would cancel the acknowledgement before it had any chance to
+be needed - the feature would be off, silently, and look like it was working.
+
+The other half is in the task itself: `self.pending_filler = None` is set
+**before** it speaks, not after. Cancelling a task that is inside
+`await session.say(...)` cuts the audio off mid-word; clearing the handle first
+means there is nothing left to cancel by the time it is audible.
+
+### The tool wait became per-campaign too
+
+`TOOL_FILLER_AFTER_MS` was an environment variable, which meant one number for
+every campaign on the box - the same 600 ms in front of a dealer lookup that
+answers in 74 ms and a tool that takes three seconds. It is now
+`lookup_filler_after_ms` on `agent_config`, defaulting to the 600 it already
+used, and it covers knowledge-base searches and tool calls alike. The environment
+variable survives as the fallback for a row written before the column existed.
+
+### Where it lives in the console
+
+- **Conversation** → the switch, the lines, and the 300 ms wait
+- **Knowledge** → the search wording, and the 600 ms wait that also governs tools
+
+The lines are edited with `PhraseList`, a new component, deliberately **not** a
+textarea split on newlines: a controlled textarea whose value is `join('\n')`
+deletes the newline the instant it is pressed, because the round trip out to an
+array and back drops the empty last line - which is exactly the line the person
+has just started. `TermList` already solved this with an add-button; `PhraseList`
+is the same idea without the speech-recogniser copy.
+
+### Off everywhere
+
+`reply_filler_enabled` defaults to false, so migration 055 changes the behaviour
+of no campaign. It is turned on per campaign, on the development box, and listened
+to on a real call before it goes anywhere near production.
+
+### Still to prove on a call
+
+Two things the code cannot settle on its own, both to be watched on .243:
+
+- **A reply that lands at ~310 ms now queues behind the acknowledgement.** The
+  cancel only helps before it starts speaking. Inherent to the idea, and the
+  reason the wait is a per-campaign field rather than a constant.
+- **`say(..., audio=frames, add_to_chat_ctx=False)` together**, on
+  livekit-agents 1.6.7. Each half is proven separately - the greeting uses
+  `audio=`, the KB filler uses `add_to_chat_ctx=False` - but not the pair.
+
+---
 ---
 
 ## ⏭️ Next

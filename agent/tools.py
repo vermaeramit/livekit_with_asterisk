@@ -135,12 +135,16 @@ def _idempotency_key(call_id: int, name: str, args: dict[str, Any]) -> str:
 _DIGITS_ONLY = re.compile(r"^\^(?:\[0-9\]|\\d)(?:\{\d+(?:,\d*)?\}|\+)\$$")
 
 
+# The default only. Each campaign carries its own lookup_filler_after_ms - one
+# number on the box was the same for a tool that answers in 74 ms and one that
+# takes three seconds.
 FILLER_AFTER_S = float(os.getenv("TOOL_FILLER_AFTER_MS", "600")) / 1000
 
 
 def build(spec: dict, call_id: int | None, record: Callable,
           speak: Callable | None = None,
-          note_gap: Callable | None = None):
+          note_gap: Callable | None = None,
+          filler_after_s: float | None = None):
     """-> a livekit function tool for one campaign_tools row.
 
     livekit is imported HERE and not at the top of the file. The admin API
@@ -150,7 +154,8 @@ def build(spec: dict, call_id: int | None, record: Callable,
     """
     from livekit.agents import llm as lk_llm
 
-    name, schema, run = build_raw(spec, call_id, record, speak, note_gap)
+    name, schema, run = build_raw(spec, call_id, record, speak, note_gap,
+                                  filler_after_s)
     return lk_llm.function_tool(run, raw_schema={
         "name": name, "description": schema["description"],
         "parameters": schema["parameters"]})
@@ -158,7 +163,8 @@ def build(spec: dict, call_id: int | None, record: Callable,
 
 def build_raw(spec: dict, call_id: int | None, record: Callable,
               speak: Callable | None = None,
-              note_gap: Callable | None = None):
+              note_gap: Callable | None = None,
+              filler_after_s: float | None = None):
     """-> (name, json schema, async callable), with no livekit in sight.
 
     Split out so the text chat can call a campaign's tools with THIS code
@@ -216,10 +222,12 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
                 return line
         return fallback
 
+    wait_s = filler_after_s if filler_after_s else FILLER_AFTER_S
+
     async def hold_on() -> None:
         """Say the filler, but only if the tool is still running by then."""
         try:
-            await asyncio.sleep(FILLER_AFTER_S)
+            await asyncio.sleep(wait_s)
             await speak(filler)
         except asyncio.CancelledError:
             pass        # the tool answered first, which is the good case
@@ -401,7 +409,8 @@ def build_raw(spec: dict, call_id: int | None, record: Callable,
 
 def build_all(specs: list[dict], call_id: int | None, record: Callable,
               speak: Callable | None = None,
-              note_gap: Callable | None = None) -> list:
+              note_gap: Callable | None = None,
+              filler_after_s: float | None = None) -> list:
     """One bad tool must not take the others down.
 
     A campaign with five tools and one malformed schema should lose one tool,
@@ -411,7 +420,8 @@ def build_all(specs: list[dict], call_id: int | None, record: Callable,
     out = []
     for spec in specs:
         try:
-            out.append(build(spec, call_id, record, speak, note_gap))
+            out.append(build(spec, call_id, record, speak, note_gap,
+                             filler_after_s))
         except Exception:
             log.exception("tool %r could not be built - skipping",
                           spec.get("name"))

@@ -34,6 +34,7 @@ import { ProviderKeys } from '@/components/ProviderKeys'
 import { PAGE } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { ComboField, NumberField, SelectField, TextArea, TextField, Toggle } from '@/components/ui/field'
+import { PhraseList } from '@/components/PhraseList'
 import { TermList } from '@/components/TermList'
 import { CampaignChat } from '@/components/CampaignChat'
 import { PromptVersions } from '@/components/PromptVersions'
@@ -635,6 +636,51 @@ export function CampaignConfig() {
               </>
             )}
 
+            <Toggle
+              label="Make a short sound while thinking"
+              checked={value.reply_filler_enabled}
+              onChange={(v) => {
+                set('reply_filler_enabled', v)
+                if (v && !(value.reply_filler_lines ?? []).length) {
+                  set('reply_filler_lines', ['जी…', 'हम्म'])
+                }
+              }}
+              hint="After a caller stops speaking there is about 1.5s before the agent's voice starts — measured across 2,350 turns. This fills it the way a person does."
+            />
+
+            {value.reply_filler_enabled && (
+              <>
+                <PhraseList
+                  label="What to say"
+                  phrases={value.reply_filler_lines ?? []}
+                  onChange={(p) => set('reply_filler_lines', p)}
+                  placeholder="जी…"
+                  help={
+                    <>
+                      Keep these <strong>content-free</strong>. One is picked before
+                      the agent has read what the caller said, so anything that agrees
+                      or says it understood will sooner or later land on a question and
+                      make no sense — or be contradicted by the answer right behind
+                      it. A sound, not a reply.
+                      <br />
+                      They are never shown to the agent, so tell it in the prompt to
+                      answer directly rather than opening with one itself. Otherwise the
+                      caller hears it twice.
+                    </>
+                  }
+                />
+                <NumberField
+                  label="Wait this long first"
+                  value={value.reply_filler_after_ms}
+                  onChange={(v) => set('reply_filler_after_ms', v)}
+                  min={150}
+                  max={2000}
+                  suffix="ms"
+                  hint="If the reply is ready sooner, nothing is said. The audio is rendered once on the first call and kept, so it starts the moment it is due."
+                />
+              </>
+            )}
+
             <TextField
               label="Recording notice"
               value={value.recording_disclosure ?? ''}
@@ -1047,17 +1093,28 @@ export function CampaignConfig() {
               label="Say something while searching"
               checked={value.kb_filler_enabled}
               onChange={(v) => set('kb_filler_enabled', v)}
-              hint="Off keeps the wording below for later rather than making you retype it. Spoken only if the search is still running after ~600ms, and cut off the moment it answers."
+              hint="Off keeps the wording below for later rather than making you retype it. Spoken only if the search is still running after the wait below, and cut off the moment it answers."
             />
 
             {value.kb_filler_enabled && (
-              <TextField
-                label="Say this while searching"
-                value={value.kb_filler_message ?? ''}
-                onChange={(v) => set('kb_filler_message', v.trim() || null)}
-                placeholder="एक मिनट, देखती हूँ…"
-                hint="A search costs 810–1860ms and now runs on nearly every question, so this is a second of silence each time — and silence is what makes a caller say “hello?”. Keep it short: it has to finish before the answer arrives. Empty is silence even with the switch on."
-              />
+              <>
+                <TextField
+                  label="Say this while searching"
+                  value={value.kb_filler_message ?? ''}
+                  onChange={(v) => set('kb_filler_message', v.trim() || null)}
+                  placeholder="एक मिनट, देखती हूँ…"
+                  hint="A search costs 810–1860ms and now runs on nearly every question, so this is a second of silence each time — and silence is what makes a caller say “hello?”. Keep it short: it has to finish before the answer arrives. Empty is silence even with the switch on."
+                />
+                <NumberField
+                  label="Wait this long first"
+                  value={value.lookup_filler_after_ms}
+                  onChange={(v) => set('lookup_filler_after_ms', v)}
+                  min={150}
+                  max={5000}
+                  suffix="ms"
+                  hint="Applies to tool calls as well as searches. Longer than the thinking sound on the Conversation tab, because this one is synthesised while the caller waits — only worth starting once the wait is already long."
+                />
+              </>
             )}
 
             <TextArea

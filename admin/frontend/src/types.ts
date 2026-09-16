@@ -299,6 +299,12 @@ export interface AgentConfig {
   // Off = stay silent while searching, keeping the wording below for later.
   kb_filler_enabled: boolean
   kb_filler_message: string | null
+  /** A short, content-free noise while the reply is being produced. */
+  reply_filler_enabled: boolean
+  reply_filler_lines: string[] | null
+  reply_filler_after_ms: number
+  /** Applies to knowledge-base searches and to tool calls. */
+  lookup_filler_after_ms: number
   // Words the speech recogniser would otherwise get wrong. Soniox only.
   stt_context_terms: string[]
 

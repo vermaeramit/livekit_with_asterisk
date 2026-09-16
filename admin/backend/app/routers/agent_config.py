@@ -37,6 +37,8 @@ FIELDS = (
     "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
     "kb_filler_enabled", "kb_filler_message",
+    "reply_filler_enabled", "reply_filler_lines", "reply_filler_after_ms",
+    "lookup_filler_after_ms",
     "stt_context_terms",
     "max_turns", "max_duration_sec", "max_prompt_tokens", "limit_message",
     # Read by Asterisk over ODBC as well as by this page - see migration 046.
@@ -302,6 +304,7 @@ async def _get(campaign_id: int) -> dict:
     # reads it quietly does the wrong thing.
     for col in ("postback_fields", "transfer_hours", "transfer_holidays",
                 "calling_hours", "calling_holidays",
+                "reply_filler_lines",
                 "stt_context_terms"):
         if isinstance(d.get(col), str):
             d[col] = json.loads(d[col])
@@ -571,6 +574,7 @@ async def update_config(campaign_id: int, body: AgentConfigUpdate,
     # about the new columns. Add a JSONB column, add it in BOTH places.
     JSON_COLS = ("postback_fields", "transfer_hours", "transfer_holidays",
                  "calling_hours", "calling_holidays",
+                 "reply_filler_lines",
                  "stt_context_terms")
     values = [json.dumps(v) if k in JSON_COLS and v is not None else v
               for k, v in fields.items()]
