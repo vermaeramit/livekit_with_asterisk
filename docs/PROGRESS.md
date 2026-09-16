@@ -4905,16 +4905,32 @@ be said during that part - the caller may not have finished, and talking over
 them is a worse failure than making them wait. So the acknowledgement covers the
 second half of the pause, the half that belongs to us.
 
-### Why it can be so eager
+### The ordering that a live call settled
 
-The existing tool filler waits 600 ms. The new one waits **300**, and the reason
-is not confidence - it is that its audio already exists.
+The first version slept 300 ms and then called `say()`. On the first real call
+the sound arrived **after the answer**, which is the opposite of the point.
 
-The tool filler is synthesised while the caller waits, so starting it costs
-another ~650 ms of TTS on top of the wait that triggered it; it is only worth
-beginning once the wait is already long. The acknowledgement is rendered once
-and read off disk, so it starts the moment it is due and costs nothing to have
-been wrong about.
+livekit creates the reply's speech handle the moment the turn ends, and the
+speech queue plays handles in the order they were made. A `say()` issued 300 ms
+later is therefore *behind* the reply, however short it is. The wait cannot be a
+sleep before `say()`.
+
+So the acknowledgement is queued in `on_user_turn_completed` **before**
+`super()` asks for the reply, and the wait became a silence at the front of its
+audio instead - `_filler_audio` yields nothing for 300 ms, then the cached
+frames. The handle keeps its place at the head of the queue, and the caller
+still gets a beat in which nothing has been said.
+
+**The consequence is worth stating plainly: the sound is made on every turn, not
+only on slow ones.** Nothing can know whether the reply will be fast, because
+the decision has to be taken before the reply has even been asked for. It costs
+the caller only when the answer would have arrived sooner than the
+acknowledgement finishes - roughly 700 ms, against a median of 1555.
+
+A cold cache is silent rather than slow: if the line has not been rendered yet,
+nothing is queued at all, and the call behaves exactly as it did before. Paying
+650 ms of TTS to say "जी…" in front of the answer would be worse than saying
+nothing.
 
 The rendering reuses `greeting_cache` exactly as it stands - `path_for()` keys on
 the text **and** the voice, so changing either re-renders on its own and there is
@@ -4943,25 +4959,6 @@ Two further rules, both inherited from the tool filler and both load-bearing:
 - **Interruptible.** If the caller was not finished, the acknowledgement gets out
   of the way, which is the entire reason it is a short sound and not a sentence.
 
-### Cancelling it, and one ordering trap
-
-The acknowledgement is scheduled in `on_user_turn_completed` and taken back in
-`agent_state_changed` if the reply beats it. The trap is which state:
-
-```python
-if state == "speaking":
-    agent.cancel_reply_filler()
-```
-
-Not `!= "listening"`. `thinking` arrives immediately after *every* turn, so
-cancelling on that would cancel the acknowledgement before it had any chance to
-be needed - the feature would be off, silently, and look like it was working.
-
-The other half is in the task itself: `self.pending_filler = None` is set
-**before** it speaks, not after. Cancelling a task that is inside
-`await session.say(...)` cuts the audio off mid-word; clearing the handle first
-means there is nothing left to cancel by the time it is audible.
-
 ### The tool wait became per-campaign too
 
 `TOOL_FILLER_AFTER_MS` was an environment variable, which meant one number for
@@ -4989,16 +4986,22 @@ is the same idea without the speech-recogniser copy.
 of no campaign. It is turned on per campaign, on the development box, and listened
 to on a real call before it goes anywhere near production.
 
-### Still to prove on a call
+### What the first call proved, and what it did not
 
-Two things the code cannot settle on its own, both to be watched on .243:
+`say(audio=..., add_to_chat_ctx=False)` works on livekit-agents 1.6.7 - the pair
+had only ever been used separately, the greeting for `audio=` and the KB filler
+for `add_to_chat_ctx=False`. The sound played, in the right voice, from the
+cache.
 
-- **A reply that lands at ~310 ms now queues behind the acknowledgement.** The
-  cancel only helps before it starts speaking. Inherent to the idea, and the
-  reason the wait is a per-campaign field rather than a constant.
-- **`say(..., audio=frames, add_to_chat_ctx=False)` together**, on
-  livekit-agents 1.6.7. Each half is proven separately - the greeting uses
-  `audio=`, the KB filler uses `add_to_chat_ctx=False` - but not the pair.
+What it disproved is above: the sleep-then-say ordering. Worth recording that
+the symptom was not silence or an error - the feature appeared to work, in the
+wrong place in the conversation.
+
+It also does not appear on the call detail page, and that is deliberate rather
+than missing. `add_to_chat_ctx=False` keeps it out of the chat context and out
+of the transcript for two separate reasons: the model must not see itself having
+spoken, or it answers as though it had already acknowledged; and a transcript
+should not gain a turn that carries no answer.
 
 ---
 ---

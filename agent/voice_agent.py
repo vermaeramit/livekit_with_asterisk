@@ -402,11 +402,6 @@ class KBAgent(Agent):
         # leaves a window in which a caller who says "hello" first gets an
         # answer to it instead of the greeting - the bug this exists to close.
         self.greeting_done = False
-        # The acknowledgement scheduled for the turn in flight, so the reply can
-        # take it back if it turns out to be fast. Set to None the instant it
-        # starts speaking - after that there is nothing left to cancel, and
-        # cancelling would cut the caller off mid-word.
-        self.pending_filler: asyncio.Task | None = None
         # Set by the entrypoint once the session exists. The agent is built
         # first, so this cannot be a constructor argument.
         self.session_ref = None
@@ -497,54 +492,81 @@ class KBAgent(Agent):
         await super().on_user_turn_completed(turn_ctx, new_message)
 
     def _start_reply_filler(self) -> None:
-        """Schedule a short acknowledgement, in case the reply is slow.
+        """Make a short sound, so the caller is not answered by silence.
 
         Measured over 2,350 turns: the model's first token lands at 931 ms and
-        its first audio at 1555 ms. That is the silence this covers - not the
-        gap before it, which belongs to turn detection and to a caller who has
-        only just stopped speaking.
+        its first audio at 1555 ms. That is the pause after everything a caller
+        says. It does not cover the pause before it - turn detection has to
+        decide they have finished, and talking over somebody who has not is a
+        worse failure than making them wait.
 
-        The line is pre-rendered (see _warm_fillers), so it starts the moment it
-        is due rather than paying for its own synthesis first. That is the whole
-        reason it can wait 300 ms where the tool filler has to wait 600.
+        QUEUED HERE, BEFORE super() ASKS FOR THE REPLY, and that ordering is the
+        whole of it. livekit creates the reply's speech handle the moment the
+        turn ends, and the speech queue plays in the order handles were made. A
+        say() issued 300 ms later therefore lands BEHIND the reply and is heard
+        after the answer - which is exactly what the first version of this did
+        on a live call: "...जी…" once the agent had already finished speaking.
+
+        So the wait cannot be a sleep before say(). It is a silence at the front
+        of the audio instead - see _filler_audio - which leaves the handle at the
+        head of the queue while still giving the caller a beat to carry on
+        speaking if they had not finished. If they do, this is interruptible and
+        nothing was said.
+
+        The consequence, stated plainly: the sound is now made on EVERY turn
+        rather than only on slow ones. Nothing here can know yet whether the
+        reply will be fast, because the decision has to be taken before the
+        reply has even been asked for. It costs the caller something only when
+        the answer would have arrived sooner than this finishes - about 700 ms
+        against a median of 1555.
 
         Never added to the chat context: the model must not see itself having
         spoken - it would answer as though it had already acknowledged - and the
         transcript must not gain a turn that carries no answer.
         """
-        self.cancel_reply_filler()
+        session = self.session_ref
         lines = [s.strip() for s in (getattr(self.cfg, "reply_filler_lines", None) or [])
                  if (s or "").strip()]
-        session = self.session_ref
         if not getattr(self.cfg, "reply_filler_enabled", False) or not lines or session is None:
             return
+
+        # Only lines that are already rendered. A cold cache means the first call
+        # on a campaign stays silent exactly as it does today, rather than paying
+        # 650 ms of TTS in front of the answer to say "जी…" - _warm_fillers is
+        # filling it in the background and the next call will have it.
+        ready = [(ln, p) for ln in lines
+                 if (p := greeting_cache.path_for(ln, self.cfg.tts_provider,
+                                                  self.cfg.tts_model,
+                                                  self.cfg.tts_voice)).exists()]
+        if not ready:
+            return
+        line, path = random.choice(ready)
         wait = (getattr(self.cfg, "reply_filler_after_ms", None) or 300) / 1000
-        line = random.choice(lines)
 
-        async def hold_on() -> None:
-            try:
-                await asyncio.sleep(wait)
-                # Cleared BEFORE it speaks. cancel_reply_filler() can then never
-                # interrupt the acknowledgement half way through.
-                self.pending_filler = None
-                path = greeting_cache.path_for(line, self.cfg.tts_provider,
-                                               self.cfg.tts_model, self.cfg.tts_voice)
-                frames = greeting_cache.frames(path)
-                await session.say(line, allow_interruptions=True,
-                                  add_to_chat_ctx=False,
-                                  **({"audio": frames} if frames is not None else {}))
-            except asyncio.CancelledError:
-                pass        # the reply arrived first, which is the good case
-            except Exception:
-                logger.exception("reply filler failed")
+        try:
+            session.say(line, audio=self._filler_audio(path, wait),
+                        allow_interruptions=True, add_to_chat_ctx=False)
+        except Exception:
+            logger.exception("reply filler could not be queued")
 
-        self.pending_filler = asyncio.create_task(hold_on())
+    async def _filler_audio(self, path, wait: float):
+        """The cached sound, with the configured wait in front of it as silence.
 
-    def cancel_reply_filler(self) -> None:
-        """Take back an acknowledgement that has not been spoken yet."""
-        task, self.pending_filler = self.pending_filler, None
-        if task is not None and not task.done():
-            task.cancel()
+        The delay lives here rather than before say() because the handle has to
+        exist before the reply's does. Yielding nothing at all is a legitimate
+        outcome - the handle simply ends, and the reply follows immediately.
+        """
+        try:
+            frames = greeting_cache.frames(path)
+            if frames is None:
+                return
+            await asyncio.sleep(wait)
+            async for frame in frames:
+                yield frame
+        except asyncio.CancelledError:
+            raise       # the caller carried on speaking; let the interrupt land
+        except Exception:
+            logger.exception("reply filler audio failed")
 
     def _markers(self) -> dict[str, str]:
         """{marker text -> the flag it sets}, empties dropped."""
@@ -1922,11 +1944,6 @@ async def entrypoint(ctx: JobContext):
         # Same second. And correct by the old rule, which is what made it worth
         # writing down.
         agent_busy = state != "listening"
-        if state == "speaking":
-            # The reply beat the acknowledgement to it. Only on "speaking":
-            # "thinking" arrives immediately after every turn and would cancel
-            # the acknowledgement before it had a chance to be needed.
-            agent.cancel_reply_filler()
         if state == "listening":
             # The clock starts when the AGENT stops, not when the caller last
             # spoke. Otherwise a long answer from the agent counts as the

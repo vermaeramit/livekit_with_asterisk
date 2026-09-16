@@ -27,16 +27,22 @@ ALTER TABLE agent_config
     -- and be nonsense - or be contradicted by the answer that follows it.
     ADD COLUMN IF NOT EXISTS reply_filler_lines JSONB,
 
-    -- How long the reply may take before the acknowledgement is spoken.
+    -- A beat of silence in front of the acknowledgement.
     --
-    -- 300 ms, where the tool filler waits 600. It can afford to be twice as
-    -- eager because the audio is pre-rendered and plays instantly; the tool
-    -- filler has to be synthesised while the caller waits, so it can only start
-    -- when the wait is already long enough to be worth another 650 ms of TTS.
+    -- NOT a delay before deciding whether to speak. That was the first design
+    -- and a live call disproved it: livekit creates the reply's speech handle
+    -- the moment the turn ends, and the queue plays in the order handles were
+    -- made, so anything scheduled 300 ms later is heard AFTER the answer. The
+    -- acknowledgement is therefore queued immediately, on every turn, and this
+    -- number is silence at the front of its audio.
     --
-    -- Floor of 150: at 0 it fires on turns that were never slow, and an
-    -- acknowledgement before a fast answer is just a word in the way. Ceiling of
-    -- 2000: the median gap is 1555 ms, so beyond that it would never speak.
+    -- It still earns its place: it stops the agent answering the instant a
+    -- caller pauses, and leaves them room to carry on - the sound is
+    -- interruptible, and during this window nothing has been said yet.
+    --
+    -- Floor of 150, because below that there is no beat at all. Ceiling of
+    -- 2000: this plus the sound itself is the most the reply can ever be
+    -- delayed, and the median reply takes 1555 ms to arrive anyway.
     ADD COLUMN IF NOT EXISTS reply_filler_after_ms INTEGER NOT NULL DEFAULT 300,
 
     -- The same decision for the slow lookups: knowledge-base searches and tool

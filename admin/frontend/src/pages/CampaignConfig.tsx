@@ -645,7 +645,7 @@ export function CampaignConfig() {
                   set('reply_filler_lines', ['जी…', 'हम्म'])
                 }
               }}
-              hint="After a caller stops speaking there is about 1.5s before the agent's voice starts — measured across 2,350 turns. This fills it the way a person does."
+              hint="After a caller stops speaking there is about 1.5s before the agent's voice starts — measured across 2,350 turns. This fills it the way a person does, on every turn."
             />
 
             {value.reply_filler_enabled && (
@@ -676,7 +676,7 @@ export function CampaignConfig() {
                   min={150}
                   max={2000}
                   suffix="ms"
-                  hint="If the reply is ready sooner, nothing is said. The audio is rendered once on the first call and kept, so it starts the moment it is due."
+                  hint="A beat of silence before the sound, so it does not answer the instant a caller pauses — and so they can carry on speaking without being talked over. The reply is never delayed by more than this plus the sound itself."
                 />
               </>
             )}
