@@ -1915,10 +1915,36 @@ async def entrypoint(ctx: JobContext):
     # somebody hanging up.
     closed = False
 
+    # One write, from whichever of the two below comes first. See
+    # store.mark_ended for why the row cannot wait for the shutdown handler.
+    end_stamp: asyncio.Task | None = None
+
+    def _stamp_end() -> None:
+        nonlocal end_stamp
+        if end_stamp is None:
+            end_stamp = asyncio.create_task(
+                store.mark_ended(call_id, agent.turn_count))
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_gone(p):
+        # The caller's hangup, straight from the room. This is the one proven
+        # to fire on call 464 - livekit's own "closing agent session due to
+        # participant disconnect" is its reaction to it.
+        #
+        # Not the session's close event alone: the session awaits any
+        # uninterruptible speech before it emits that, and the greeting is
+        # uninterruptible. A caller who hangs up during it is exactly the call
+        # where "close" comes late or not at all.
+        if sip_participant is None or p.identity == sip_participant.identity:
+            _stamp_end()
+
     @session.on("close")
     def _on_close(_ev=None):
         nonlocal closed
         closed = True
+        # For the calls the AGENT ends - a limit, a goodbye, a transfer. Those
+        # can close the session without the caller's disconnect arriving first.
+        _stamp_end()
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev):

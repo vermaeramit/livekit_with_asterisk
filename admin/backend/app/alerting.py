@@ -17,6 +17,9 @@ import urllib.error
 import urllib.request
 
 from . import db
+# The live monitor's own rule for "this call is dead", imported rather than
+# copied so the two can never disagree about which rows those are.
+from .routers.live import STALE_FACTOR
 
 log = logging.getLogger("admin-api")
 
@@ -336,9 +339,68 @@ async def evaluate_once() -> int:
     return raised
 
 
+# On a call the sweeper closed. Nothing matches on it - it is there to be read,
+# on the calls page, by whoever wonders why a call has no duration.
+SWEPT_OUTCOME = "no end was ever recorded - closed by the sweeper"
+
+
+async def sweep_stale_calls() -> list[int]:
+    """Close calls that no worker is ever going to close. -> their ids.
+
+    The agent now closes the row at the caller's hangup (store.mark_ended),
+    which covers the way call 464 died. This is for the ways that come BEFORE a
+    hangup - an OOM kill, a crash mid-call - where nothing inside the job
+    survives to write anything. Left open, such a row holds one of its
+    campaign's slots in the dialler capacity API indefinitely.
+
+    Same threshold as the live monitor's "stale": past the campaign's duration
+    guardrail and half again. max() rather than a plain lookup, so that two
+    config rows for one campaign pick the longer limit instead of failing the
+    query - the direction that can never close a call still in progress.
+
+    duration_ms is left NULL. Nobody knows when these calls ended, and a guessed
+    number would go straight into AHT and cost per minute; NULL is left out of
+    both. ended_at is therefore when the row was closed, not when the call was.
+    turn_count is counted from the turns that did get written, so a call that
+    died mid-conversation still shows up in postback_missing.
+
+    The cost, stated: the live monitor's stale banner will rarely be seen again,
+    because a stale row now lasts a minute at most. The trace moves to this log
+    line and to the outcome on the calls page.
+    """
+    rows = await db.pool().fetch("""
+        UPDATE calls c
+           SET ended_at   = now(),
+               end_reason = 'error',
+               outcome    = COALESCE(c.outcome, $1),
+               turn_count = (SELECT count(*) FROM turns t
+                              WHERE t.call_id = c.id AND t.role = 'assistant')
+         WHERE c.ended_at IS NULL
+           AND EXTRACT(EPOCH FROM (now() - c.started_at)) >
+               COALESCE((SELECT max(ac.max_duration_sec) FROM agent_config ac
+                          WHERE ac.campaign_id = c.campaign_id), 600) * $2::float8
+        RETURNING c.id""", SWEPT_OUTCOME, STALE_FACTOR)
+    return [r["id"] for r in rows]
+
+
 async def run_forever() -> None:
     log.info("alert evaluator started (every %ss)", INTERVAL_SEC)
     while True:
+        # Its own try, ahead of the rules: a failed sweep must not stop the
+        # alerts, and the alerts must not stop the sweep.
+        try:
+            swept = await sweep_stale_calls()
+            if swept:
+                # Loud on purpose. Each of these is a worker that died with a
+                # call on it, and this is the only line that says so when it
+                # is found.
+                log.warning("closed %d call(s) no worker will ever close: %s",
+                            len(swept), swept)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("stale-call sweep failed")
+
         try:
             raised = await evaluate_once()
             if raised:

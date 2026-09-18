@@ -5004,6 +5004,108 @@ spoken, or it answers as though it had already acknowledged; and a transcript
 should not gain a turn that carries no answer.
 
 ---
+## A call that held a slot for hours (18 Sep 2026)
+
+Production's live monitor showed one call open for **201 minutes**, 0 turns,
+flagged stale. Call 464, saltworx, agent@3.
+
+### What the journal said
+
+| IST | |
+|---|---|
+| 13:43:18.07 | row created, `call_id=464` |
+| 13:43:18.83 | session started, greeting chosen |
+| 13:43:18 | **caller hung up** - `CLIENT_INITIATED`, before the greeting was heard |
+| 13:43:38 | `process exiting` |
+| 13:43:38.214 | `livekit_ffi ... Attempted to drop unknown FFI handle: 8` |
+| 13:44:23 | `process did not exit in time, killing process` - exit -10 |
+
+`_shutdown` logs `usage: ... turns=` as its very first statement, before any
+`await`. That line is absent. So the shutdown handler **never started** - and
+neither did `_safety_net`, which was written for exactly this kind of row.
+
+### Why the safety net could not help
+
+livekit's teardown on 1.6.7 (`ipc/job_proc_lazy_main.py`, checked on the box):
+
+```
+377  shutdown_info = await self._shutdown_fut
+393  await asyncio.wait_for(session.aclose(), timeout=_SESSION_ACLOSE_TIMEOUT)
+423  await self._client.send(Exiting(...))     <- "process exiting", 13:43:38
+424  await self._room.disconnect()             <- no timeout; hung here
+428  for callback in self._job_ctx._shutdown_callbacks:   <- never reached
+```
+
+Both closers are shutdown callbacks, and shutdown callbacks run after
+`room.disconnect()`. The safety net was built for a job that **raises** before
+the session exists. It cannot help a job whose teardown **hangs** in livekit,
+because it waits behind that same hang.
+
+### Why it mattered beyond the monitor
+
+`GET /dialler/capacity` computes `availableSlots = capacity - open rows`. The dead
+call held one of saltworx's slots on production from 13:43 until it was closed
+by hand. The dialler was told there was one fewer free line than there was.
+
+### The fix, in three parts
+
+**A. The row is closed at the hangup.** `store.mark_ended()` writes `ended_at`,
+`duration_ms` and `turn_count`, from the room's `participant_disconnected` for
+the SIP caller, while the job is still perfectly healthy. `end_call_usage` still
+writes usage and the real `end_reason` afterwards, but keeps the `ended_at` it
+finds.
+
+Not from the session's `close` event alone. livekit's `_aclose_impl` does this
+before it emits `close`:
+
+```python
+# wait any uninterruptible speech to finish
+if activity.current_speech:
+    await activity.current_speech
+```
+
+and the greeting has been uninterruptible since 14 Sep. A caller who hangs up
+during it is precisely the call where `close` comes late or never. The room
+event is the one proven to fire on call 464 - livekit's own "closing agent
+session due to participant disconnect" is its reaction to it. The `close` hook
+stays as well, for calls the agent ends itself.
+
+`mark_ended` writes **no outcome**. It runs on every call, well before the
+shutdown handler, and a message would sit on every healthy call until that
+handler cleared it. A row with `ended_at` set and `end_reason` NULL already says
+it: the call ended, and the handler that explains how never ran.
+
+**B. A sweeper for what nothing will ever close.** In admin-api's alert loop,
+every 60 s: open rows past `max_duration × STALE_FACTOR` are closed with
+`end_reason='error'` and a plain outcome. `STALE_FACTOR` is imported from the
+live monitor, not copied, so the two can never disagree about which calls are
+dead. `duration_ms` stays NULL - nobody knows when those calls ended, and a guess
+would go straight into AHT. This is for deaths that come before any hangup: an
+OOM kill, a crash mid-call.
+
+The cost, stated: the monitor's stale banner will rarely be seen again, because
+a stale row now lasts a minute. The trace moves to the admin-api log and to the
+outcome on the calls page.
+
+**C. Call 464 was closed by hand** on production, with a one-second duration
+taken from the journal.
+
+### A correction to what was said when this was proposed
+
+It was said that `duration_ms` would drop by about twenty seconds on every call
+once A is deployed. That figure came from calls 595 and 464 - **both hung up
+during the greeting**. On an ordinary call the teardown may be much shorter, and
+the shift in AHT with it. To be measured on .243, not assumed.
+
+### Still open
+
+The hang itself is inside livekit. What is suspicious is that both calls showing
+the long teardown hung up during an **uninterruptible** greeting, and livekit's
+close waits on uninterruptible speech. Force-interrupting the greeting when the
+caller disconnects may remove the hang rather than just survive it - to be
+verified against 1.6.7 before anything is built.
+
+---
 ---
 
 ## ⏭️ Next

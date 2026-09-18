@@ -432,6 +432,41 @@ async def end_call_if_open(call_id: int, reason: str, outcome: str) -> None:
     )
 
 
+async def mark_ended(call_id: int, turn_count: int) -> None:
+    """Record the end of the call at the moment it ends. Never raises.
+
+    Call 464, 18 Sep 2026: the caller hung up a second after connecting, and the
+    row stayed open for hours. Both of the things that close a row - _safety_net
+    and _shutdown - are livekit shutdown callbacks, and livekit runs those only
+    AFTER `await room.disconnect()`, which has no timeout on 1.6.7. It hung
+    there for 45 s, the process was killed, and neither closer ever started.
+
+    That was not only untidy. The dialler capacity API counts open rows as calls
+    in progress, so the dead call held one of the campaign's slots for as long
+    as it stayed open.
+
+    So the end is stamped here, from the caller's own disconnect, while the job
+    is still healthy. The shutdown handler still writes the usage and the real
+    end_reason afterwards; it no longer moves ended_at.
+
+    Deliberately no outcome. This runs on every call, some twenty seconds before
+    the shutdown handler, and a message here would sit on every healthy call for
+    that long. A row with ended_at set and end_reason still NULL already says it
+    exactly: the call ended, and the handler that explains how never ran.
+    """
+    try:
+        await (await pool()).execute(
+            """UPDATE calls
+                  SET ended_at    = now(),
+                      duration_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
+                      turn_count  = $2
+                WHERE id = $1 AND ended_at IS NULL""",
+            call_id, turn_count)
+    except Exception:
+        logging.getLogger("voice-agent").exception(
+            "could not record the end of call %s", call_id)
+
+
 async def end_call(call_id: int, reason: str, outcome: str | None = None):
     await (await pool()).execute(
         """UPDATE calls
@@ -455,8 +490,12 @@ async def end_call_usage(call_id: int, reason: str, limit_hit: str | None,
     """
     await (await pool()).execute(
         """UPDATE calls SET
-               ended_at    = now(),
-               duration_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
+               -- Kept when mark_ended already wrote them at the hangup. That
+               -- is the length of the call; now() here is the call plus
+               -- livekit's teardown, which is what duration_ms used to be.
+               ended_at    = COALESCE(ended_at, now()),
+               duration_ms = COALESCE(duration_ms,
+                                      EXTRACT(EPOCH FROM (now() - started_at)) * 1000),
                end_reason  = $2,
                -- Clear the safety net's message, and ONLY that message. It
                -- writes an outcome when it closes a call nobody else closed,
