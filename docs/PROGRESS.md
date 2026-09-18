@@ -5090,20 +5090,39 @@ outcome on the calls page.
 **C. Call 464 was closed by hand** on production, with a one-second duration
 taken from the journal.
 
-### A correction to what was said when this was proposed
+### Measured on .243, not assumed
 
-It was said that `duration_ms` would drop by about twenty seconds on every call
-once A is deployed. That figure came from calls 595 and 464 - **both hung up
-during the greeting**. On an ordinary call the teardown may be much shorter, and
-the shift in AHT with it. To be measured on .243, not assumed.
+Two calls after the deploy, `ended_at` (now the hangup) against the `usage:` line
+- the moment the shutdown handler runs, which is what `ended_at` used to be:
+
+| Call | | `ended_at` | `usage:` | Removed |
+|---|---|---|---|---|
+| 612 | hung up during the greeting | 17:33:14.743 | 17:33:34.254 | **19.5 s** |
+| 613 | an ordinary short call | 17:33:40.596 | 17:34:00.256 | **19.7 s** |
+
+When this was proposed, a twenty-second drop was quoted, then walked back as
+resting only on two calls that hung up during the greeting. The walk-back was
+wrong: 613 is an ordinary call and loses the same 19.7 s. Every call's
+`duration_ms` has been about twenty seconds too long, and on a short call that
+is not a rounding error - 613 would have been recorded at 40.4 s instead of
+20.7. AHT and cost per minute drop by that much once this reaches production.
+Calls before the deploy keep the inflated figure; there is no way to recover
+their real hangup time.
 
 ### Still open
 
-The hang itself is inside livekit. What is suspicious is that both calls showing
-the long teardown hung up during an **uninterruptible** greeting, and livekit's
-close waits on uninterruptible speech. Force-interrupting the greeting when the
-caller disconnects may remove the hang rather than just survive it - to be
-verified against 1.6.7 before anything is built.
+**The twenty seconds themselves.** 19.5 and 19.7 on two very different calls is a
+fixed timer, not work being done. It is spent before the shutdown callbacks
+start, so it is inside livekit's teardown or waiting for it to begin - the
+likeliest candidate is the LiveKit server holding the room open for a departure
+timeout after the caller leaves, and the job waiting for the room to go. Not
+verified. It matters beyond the numbers now fixed: for those twenty seconds the
+job still counts as a job on its worker, and load is a job count.
+
+**The hang in `room.disconnect()`.** Inside livekit, seen once in seven days.
+Both closers now survive it; nothing here prevents it. The earlier suspicion -
+that the uninterruptible greeting keeps the session from closing - is weaker now
+that an ordinary call shows the same twenty seconds.
 
 ---
 ---
