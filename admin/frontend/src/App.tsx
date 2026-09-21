@@ -12,6 +12,7 @@ import { Roles } from '@/pages/Roles'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
 import { Backups } from '@/pages/Backups'
+import { Debug } from '@/pages/Debug'
 import { Campaigns } from '@/pages/Campaigns'
 import { CampaignConfig } from '@/pages/CampaignConfig'
 import { ChangePassword } from '@/pages/ChangePassword'
@@ -127,6 +128,16 @@ export function App() {
           element={
             <Protected roles={[]}>
               <Backups />
+            </Protected>
+          }
+        />
+        {/* Superadmin only, like Backups: restarting a worker or Asterisk is
+            the platform's business, and every tenant shares both. */}
+        <Route
+          path="/debug"
+          element={
+            <Protected roles={[]}>
+              <Debug />
             </Protected>
           }
         />

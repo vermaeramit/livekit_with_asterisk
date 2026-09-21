@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, ListTree, Server, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ShieldCheck, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, ListTree, Server, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Stethoscope, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
@@ -62,6 +62,7 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/diallers', label: 'Dialers', icon: PhoneForwarded, needs: ['campaign.write'] },
   { kind: 'link', to: '/system', label: 'System', icon: Server, needs: ['system.manage'] },
   { kind: 'link', to: '/backups', label: 'Backups', icon: Database, needs: ['system.manage'] },
+  { kind: 'link', to: '/debug', label: 'Debug', icon: Stethoscope, needs: ['system.manage'] },
 ]
 
 // The seeded roles get a friendlier name; anything created since falls back to

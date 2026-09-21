@@ -5125,6 +5125,71 @@ that the uninterruptible greeting keeps the session from closing - is weaker now
 that an ordinary call shows the same twenty seconds.
 
 ---
+## A Debug page, and a voice issue parked half way (21 Sep 2026)
+
+### The page
+
+**Debug**, under System and Backups, superadmin only. Seven problems, each with
+the checks worth running in order, a copy button, and a line saying what a good
+answer looks like:
+
+1. Is everything up? *(open by default - it is where every problem starts)*
+2. Calls don't reach the bot, or ring and die
+3. The voice breaks, or audio is one-way
+4. What happened on one call *(a Call ID field fills the commands)*
+5. A call stuck in the live monitor, or too few free slots
+6. A call's result never reached the client
+7. Restart something *(each one says whether it drops calls)*
+
+plus the three commands never to run.
+
+It **shows** commands and never runs them. Running them would mean giving the
+console a way to act on the host - the docker socket, a shell - and a web page
+that can restart Asterisk is a larger risk than the half minute it saves over
+SSH.
+
+Every command on it has been run on these boxes; most come from COMMANDS.md.
+A debugging page with a command that does not work is reached for at the worst
+moment and believed.
+
+The copy button falls back to `execCommand('copy')`. The console is usually
+opened as `http://<ip>`, which is not a secure context, and there
+`navigator.clipboard` does not exist at all.
+
+Writing it turned up a trap in COMMANDS.md: *Restart one thing* gave
+`docker compose ... up -d --build` for the console. Typed by hand, that stamps
+the build `unknown` - deploy.sh exists largely to prevent exactly that. It now
+says `docker restart admin-api admin-web`, and new code goes through deploy.sh.
+
+### The voice breaking on .244 - parked
+
+Reported after v0.12.0 reached production. Measured on one test call:
+
+| Leg | Result |
+|---|---|
+| livekit-sip ↔ Asterisk (RTP) | ~50 packets/s both ways, 0 lost |
+| Asterisk ↔ dialler (IAX2) | RTT 1 ms, jitter 1-2 ms, 0 lost |
+| CPU | 97-98 % idle, steal 0 |
+| Agent log | no TTS error, timeout or retry |
+
+**That call did not break**, so all this proves is that the path *can* be clean -
+nothing permanent is wrong with codec, ptime, CPU or the trunk. It says nothing
+about the calls that did break. Worth remembering too that livekit-sip sends a
+packet every 20 ms whether or not there is anything to say, so a gap in the voice
+travels as perfectly regular silence and clean RTP never clears the audio.
+
+To pick it up again, on a call where the voice **did** break:
+
+- its recording - broken there too means our side (agent, TTS, livekit-sip);
+  clean means the dialler's Asterisk or the carrier
+- whether the greeting breaks as well - it plays from disk, so that would clear
+  the TTS provider
+- the Debug page's *What happened on one call*: `interrupted` turns and the call's
+  warnings. The leading suspect is a **false interruption** - line noise, echo or
+  a caller's "haan" pausing the agent and resuming it, which sounds exactly like a
+  breaking voice and shows in neither RTP nor any error.
+
+---
 ---
 
 ## ⏭️ Next

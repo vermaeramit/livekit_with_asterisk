@@ -4,6 +4,9 @@
 The short list. Everything here is something that gets typed on a normal day —
 for anything deeper, see [RUNBOOK.md](RUNBOOK.md).
 
+The same checks, ordered by symptom and with copy buttons, are on the console's
+**Debug** page (superadmin only). It shows commands and never runs them.
+
 Two paths, and they are not the same thing:
 
 | | |
@@ -87,8 +90,9 @@ dirty one is labelled `(untagged)` on the login page.
 # agent workers — after any agent/ change. DROPS CALLS IN PROGRESS.
 systemctl restart aivoice-agent@{1,2,3,4,5,6}
 
-# the console — after any admin/ change. Never touches calls.
-docker compose -f /srv/aivoice/admin/docker-compose.yml up -d --build
+# the console. Never touches calls. NEW admin/ code goes through deploy.sh:
+# a compose build typed by hand cannot know the version and stamps it `unknown`.
+docker restart admin-api admin-web
 
 # Asterisk — after a dialplan change
 systemctl restart asterisk
