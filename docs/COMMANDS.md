@@ -213,6 +213,28 @@ cd /srv/aivoice/agent
 Refuses a call that already has a row, so it cannot double-send. Prefix
 `POSTBACK_EXTRACT_TIMEOUT=120` for a long call on a slow gateway.
 
+**Many at once, after the client's API was down.** One row first: if the API is
+still broken, one row finds out rather than every row burning its five attempts.
+The same UPDATE as the console's Retry - attempts back to 0 - and the delivery
+worker uses the campaign's *current* URL and auth, sending 20 rows every ~10 s.
+
+```bash
+# one row, then check it says sent
+( TODAY="date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"
+PID=$(docker exec postgres psql -U aivoice -d aivoice -qAt -c "UPDATE call_postbacks SET status='pending', attempts=0, next_attempt_at=now() WHERE id = (SELECT id FROM call_postbacks WHERE status='failed' AND created_at >= $TODAY ORDER BY created_at DESC LIMIT 1) RETURNING id;")
+sleep 20
+docker exec postgres psql -U aivoice -d aivoice -c "SELECT id, call_id, status, last_status_code FROM call_postbacks WHERE id = $PID;" )
+
+# then the rest of today's
+( TODAY="date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"
+docker exec postgres psql -U aivoice -d aivoice -qAt -c "WITH u AS (UPDATE call_postbacks SET status='pending', attempts=0, next_attempt_at=now() WHERE status='failed' AND created_at >= $TODAY RETURNING 1) SELECT count(*) || ' requeued' FROM u;" )
+```
+
+Used on 22 Sep 2026 on production: 93 saltworx postbacks had failed with the
+client's own `500 {"message":"A database error occurred."}` between 10:44 and
+14:41 IST, after a change on their side. One test row came back `200`, then the
+other 92 went, and all 96 of the day were `sent`.
+
 ---
 
 ## Test a TTS on its own

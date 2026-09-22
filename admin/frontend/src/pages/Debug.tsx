@@ -466,6 +466,31 @@ journalctl -u 'aivoice-agent@*' --since '-24 hours' --no-pager | grep -c "proces
 /opt/aivoice/agent/.venv/bin/python requeue_postback.py ${id} --dry-run
 /opt/aivoice/agent/.venv/bin/python requeue_postback.py ${id}`}</Cmd>
         </Step>
+        <Step
+          n={3}
+          title="The client's API was down: resend everything that failed today"
+          good={
+            <>
+              the one test row comes back <code>sent</code> with <code>200</code>; only then run the second
+              command. Same as the Retry button: <code>attempts</code> back to 0, and the current URL and auth are
+              used. Today means since midnight IST.
+            </>
+          }
+        >
+          <Cmd>{String.raw`# 1. how many, and why
+( TODAY="date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"
+docker exec postgres psql -U aivoice -d aivoice -c "SELECT cam.name AS campaign, p.last_status_code AS code, count(*) AS failed, left(max(p.last_error), 80) AS sample_error FROM call_postbacks p LEFT JOIN campaigns cam ON cam.id = p.campaign_id WHERE p.status = 'failed' AND p.created_at >= $TODAY GROUP BY 1, 2 ORDER BY 1, 2;" )
+
+# 2. one row first - if the API is still broken, one row finds out, not all of them
+( TODAY="date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"
+PID=$(docker exec postgres psql -U aivoice -d aivoice -qAt -c "UPDATE call_postbacks SET status='pending', attempts=0, next_attempt_at=now() WHERE id = (SELECT id FROM call_postbacks WHERE status='failed' AND created_at >= $TODAY ORDER BY created_at DESC LIMIT 1) RETURNING id;")
+sleep 20
+docker exec postgres psql -U aivoice -d aivoice -c "SELECT id, call_id, status, last_status_code, left(last_error, 80) AS error FROM call_postbacks WHERE id = $PID;" )
+
+# 3. only after the row above says sent: the rest
+( TODAY="date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"
+docker exec postgres psql -U aivoice -d aivoice -qAt -c "WITH u AS (UPDATE call_postbacks SET status='pending', attempts=0, next_attempt_at=now() WHERE status='failed' AND created_at >= $TODAY RETURNING 1) SELECT count(*) || ' requeued' FROM u;" )`}</Cmd>
+        </Step>
       </Section>
 
       <Section
