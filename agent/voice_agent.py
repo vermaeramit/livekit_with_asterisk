@@ -317,6 +317,26 @@ def _tool_name(tool) -> str:
     return ""
 
 
+def _audio_output_state(session) -> str:
+    """'playing', 'paused' or 'unknown' - for the log, never for a decision.
+
+    livekit pauses the room output when a caller starts speaking over a speech
+    that has not begun yet, and resumes it on a timer. Whether it is paused at
+    a given moment is not exposed, so this reads the room output's own flag
+    down the chain. Private, and therefore allowed to answer 'unknown'.
+    """
+    try:
+        out = getattr(session.output, "audio", None)
+        while out is not None:
+            flag = getattr(out, "_playback_enabled", None)
+            if flag is not None:
+                return "playing" if flag.is_set() else "paused"
+            out = getattr(out, "next_in_chain", None)
+    except Exception:
+        pass
+    return "unknown"
+
+
 def _lookup_filler_s(cfg) -> float:
     """How long a lookup may run before the caller is told something.
 
@@ -544,8 +564,9 @@ class KBAgent(Agent):
         wait = (getattr(self.cfg, "reply_filler_after_ms", None) or 300) / 1000
 
         try:
-            session.say(line, audio=self._filler_audio(path, wait),
-                        allow_interruptions=True, add_to_chat_ctx=False)
+            h = session.say(line, audio=self._filler_audio(path, wait),
+                            allow_interruptions=True, add_to_chat_ctx=False)
+            logger.info("reply filler %s: %r after %dms", h.id, line, int(wait * 1000))
         except Exception:
             logger.exception("reply filler could not be queued")
 
@@ -860,8 +881,10 @@ class KBAgent(Agent):
                 # while waiting, not something the agent said: the model should
                 # not see itself having spoken, and the transcript should not
                 # gain a turn that carries no answer.
-                await context.session.say(filler, allow_interruptions=True,
-                                          add_to_chat_ctx=False)
+                h = context.session.say(filler, allow_interruptions=True,
+                                        add_to_chat_ctx=False)
+                logger.info("kb filler %s: %r", h.id, filler)
+                await h
             except asyncio.CancelledError:
                 pass        # the search answered first, which is the good case
             except Exception:
@@ -1938,6 +1961,41 @@ async def entrypoint(ctx: JobContext):
         if sip_participant is None or p.identity == sip_participant.identity:
             _stamp_end()
 
+    # ---- speech trace ----
+    # Call 618 (22 Sep 2026): from 09:30:00 nothing the agent tried to say was
+    # heard - not the answer after a search, not the silence prompt - and the
+    # log could not say why, because livekit reports none of it at INFO. One
+    # speech that never finishes holds every speech behind it; these lines
+    # name it. Every speech created and finished, every false interruption,
+    # and whether the audio output was paused at the time.
+    speech_born: dict[str, float] = {}
+
+    @session.on("speech_created")
+    def _on_speech_created(ev):
+        h = ev.speech_handle
+        speech_born[h.id] = time.monotonic()
+        logger.info("SPEECH + %s source=%s interruptible=%s output=%s",
+                    h.id, ev.source, h.allow_interruptions,
+                    _audio_output_state(session))
+
+        def _done(handle):
+            born = speech_born.pop(handle.id, None)
+            logger.info("SPEECH - %s interrupted=%s after %sms", handle.id,
+                        handle.interrupted,
+                        int((time.monotonic() - born) * 1000) if born else "?")
+
+        h.add_done_callback(_done)
+
+    @session.on("agent_false_interruption")
+    def _on_false_interruption(ev):
+        logger.info("FALSE_INTERRUPTION resumed=%s output=%s",
+                    getattr(ev, "resumed", None), _audio_output_state(session))
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev):
+        logger.info("USER %s -> %s", getattr(ev, "old_state", None),
+                    getattr(ev, "new_state", None))
+
     @session.on("close")
     def _on_close(_ev=None):
         nonlocal closed
@@ -1950,6 +2008,8 @@ async def entrypoint(ctx: JobContext):
     def _on_agent_state(ev):
         nonlocal agent_busy, last_activity
         state = getattr(ev, "new_state", None)
+        logger.info("AGENT %s -> %s  output=%s", getattr(ev, "old_state", None),
+                    state, _audio_output_state(session))
         # Anything that is not "listening" means the agent has the floor -
         # thinking counts as much as speaking.
         #
@@ -2081,9 +2141,12 @@ async def entrypoint(ctx: JobContext):
             line = prompts[min(silence_attempts, len(prompts) - 1)]
             silence_attempts += 1
             final = silence_attempts >= len(prompts)
-            logger.info("silence %ds - prompt %d/%d%s", timeout,
-                        silence_attempts, len(prompts),
-                        " (last)" if final else "")
+            cur = getattr(session, "current_speech", None)
+            logger.info("silence %ds - prompt %d/%d%s  current_speech=%s output=%s",
+                        timeout, silence_attempts, len(prompts),
+                        " (last)" if final else "",
+                        cur.id if cur is not None else None,
+                        _audio_output_state(session))
             try:
                 handle = await session.say(line, allow_interruptions=not final)
                 await handle.wait_for_playout()
