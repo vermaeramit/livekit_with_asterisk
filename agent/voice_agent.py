@@ -777,6 +777,65 @@ class KBAgent(Agent):
             task.cancel()
 
     async def tts_node(self, text, model_settings):
+        """Measure how an answer's audio arrives. Passes every frame through untouched.
+
+        Call 621 (22 Sep 2026): a 15-word answer was "speaking" for 17.5 s, and
+        10.0 s of it was dead silence in 18 holes - measured in the recording,
+        up to 2.2 s long, in the middle of sentences. The greeting and the
+        fillers in the same call, played from disk, had none. CPU was idle and
+        nothing interrupted the agent. So the audio reached the output slower
+        than it plays - but whether the TTS was slow, or the model's text was
+        still trickling in, nothing logged could say.
+
+        This says it. Playback is modelled from the first frame in real time:
+        a frame that arrives after the audio already received has run out is a
+        stall, of exactly that gap - the holes heard on the call. Alongside it,
+        when the model's text had fully arrived, relative to the first audio.
+        Stalls after that moment are the TTS; stalls before it may be waiting
+        on the text. No stalls here but holes in the recording would put the
+        fault downstream of the TTS instead.
+        """
+        spoken: list[str] = []
+        text_done: list[float] = []
+        started = time.monotonic()
+
+        async def watched_text():
+            async for chunk in text:
+                spoken.append(chunk)
+                yield chunk
+            text_done.append(time.monotonic())
+
+        first = run_out = None
+        audio_s = 0.0
+        stalls: list[tuple[float, float]] = []    # (s after first audio, length)
+        try:
+            async for frame in self._tts_frames(watched_text(), model_settings):
+                now = time.monotonic()
+                if first is None:
+                    first = run_out = now
+                elif now > run_out + 0.02:
+                    stalls.append((run_out - first, now - run_out))
+                    run_out = now
+                run_out += frame.duration
+                audio_s += frame.duration
+                yield frame
+        finally:
+            # Logging only, and nothing awaited: this runs while the generator
+            # is being closed, including when the caller barges in.
+            if first is not None:
+                label = " ".join("".join(spoken).split())[:40]
+                logger.info(
+                    "TTS_STREAM %r audio=%.1fs stalls=%d stalled=%.1fs worst=%dms "
+                    "first_audio=%dms text_complete=%s",
+                    label, audio_s, len(stalls), sum(g for _, g in stalls),
+                    int(max((g for _, g in stalls), default=0) * 1000),
+                    int((first - started) * 1000),
+                    f"{int((text_done[0] - first) * 1000):+d}ms" if text_done else "never")
+                if stalls:
+                    logger.info("TTS_STALLS at+len(ms) %s", " ".join(
+                        f"{int(at * 1000)}+{int(g * 1000)}" for at, g in stalls[:30]))
+
+    async def _tts_frames(self, text, model_settings):
         """Strip control markers before anything is synthesised.
 
         A marker cannot simply be searched for in each chunk. An LLM streams its

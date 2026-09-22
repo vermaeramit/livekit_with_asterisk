@@ -5233,6 +5233,46 @@ in; a window entirely before 22 Sep shows no figure, which is true. The split by
 provider is unchanged.
 
 ---
+## Where the voice breaks - measured, not guessed (22 Sep 2026)
+
+Call 621 on .243, Soniox tts-rt-v2. The speech trace against the recording's
+deep gaps (below -60 dB, 60 ms or longer), recording 0:00 = 10:57:16.14:
+
+| Speech | "speaking" | Dead silence inside | Holes |
+|---|---|---|---|
+| greeting (from disk) | 5.2 s | 0.96 s | 2, both between sentences |
+| three fillers (from disk) | ~1.03 s each | 0 | 0 |
+| answer 1, ~13 words | 5.8 s | 0.93 s | 2, at "Amit ji," and "swagat hai." |
+| **answer 2, ~15 words** | **17.5 s** | **10.0 s** | **18, mid-sentence, up to 2.2 s** |
+| **answer 3** | **15.8 s** | **9.6 s** | **19, many of 61-170 ms, then 1-1.7 s** |
+
+Answer 2 held about 7.4 s of actual audio - normal for its length. The other ten
+seconds were holes. That is the breaking voice.
+
+Ruled out, each by evidence from the same call: CPU (load 0.43, 47 minutes after
+the last deploy), the worker (no unresponsive or blocked warnings), barge-in and
+livekit's pause (no USER event and no FALSE_INTERRUPTION during either answer;
+the agent stayed "speaking" throughout), and the audio path as a whole (the
+disk-played greeting and fillers in the same call had no holes).
+
+What is left: only TTS-synthesised answers broke, so their audio reached the
+output slower than it plays. Whether that was Soniox or the model's text still
+arriving, nothing logged could separate - neither provider's per-request timing
+was recorded.
+
+So `tts_node` now measures it, passing every frame through untouched. Playback is
+modelled from the first frame in real time; a frame that arrives after the audio
+already received has run out is a stall of exactly that length. It logs
+`TTS_STREAM` (audio, stalls, total stalled, worst, and when the model's text had
+fully arrived relative to the first audio) and `TTS_STALLS` (where each one was).
+Stalls after the text was complete are the TTS; stalls before it may be the text;
+no stalls here with holes in the recording would put the fault downstream.
+
+Checked before shipping by lifting the method out with `ast` and feeding it fake
+frames with a known one-second pause after 0.5 s of audio: one stall, 503 ms, at
+500 ms, text complete at +0 ms, all ten frames through.
+
+---
 ---
 
 ## ⏭️ Next
