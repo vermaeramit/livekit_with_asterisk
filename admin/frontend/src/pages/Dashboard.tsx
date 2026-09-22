@@ -319,7 +319,7 @@ export function Dashboard() {
           label="Median response"
           value={formatMs(s?.latency.p50)}
           tone={tone(s?.latency.p50)}
-          hint={`across ${formatNumber(s?.latency.turns)} timed turns`}
+          hint={`caller's wait, across ${formatNumber(s?.latency.turns)} answers`}
         />
         <Stat
           icon={Clock}
@@ -438,7 +438,7 @@ export function Dashboard() {
 
         <ChartCard
           title="Response latency"
-          subtitle="Median and p95 per turn — p95 is what a caller notices"
+          subtitle="The caller's wait for each answer, median and p95 — measured from 22 Sep 2026"
           empty={!buckets.some((b) => b.p50 != null)}
         >
           <ResponsiveContainer width="100%" height="100%">

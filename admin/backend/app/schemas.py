@@ -1222,6 +1222,10 @@ class TurnOut(BaseModel):
     interrupted: bool
     kb_chunk_ids: list[int] | None = None
     kb_scores: list[float] | None = None
+    # The caller's real wait for this answer, and what filled it. NULL on turns
+    # written before migration 056, which the console draws the old way.
+    wait_ms: int | None = None
+    timeline: list | None = None
 
 
 class PromptTokens(BaseModel):

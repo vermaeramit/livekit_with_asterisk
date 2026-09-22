@@ -425,6 +425,14 @@ class KBAgent(Agent):
         # Set by the entrypoint once the session exists. The agent is built
         # first, so this cannot be a constructor argument.
         self.session_ref = None
+        # What happened between the caller's last word and the answer: fillers
+        # heard and lookups run, stamped in wall-clock time (livekit's own
+        # timestamps are time.time() too) and drained into the answer's
+        # timeline in _on_item. filler_ids names the speeches that are fillers,
+        # so the moment one starts playing can be recognised.
+        self.filler_ids: dict[str, str] = {}
+        self.heard: list[dict] = []
+        self.caller_stopped_at: float | None = None
         self._greeting_gate_since = time.monotonic()
         # Set when the model writes the end-of-call marker. Acted on after the
         # sentence carrying it has finished playing, never during.
@@ -567,6 +575,7 @@ class KBAgent(Agent):
             h = session.say(line, audio=self._filler_audio(path, wait),
                             allow_interruptions=True, add_to_chat_ctx=False)
             logger.info("reply filler %s: %r after %dms", h.id, line, int(wait * 1000))
+            self.filler_ids[h.id] = line
         except Exception:
             logger.exception("reply filler could not be queued")
 
@@ -884,6 +893,7 @@ class KBAgent(Agent):
                 h = context.session.say(filler, allow_interruptions=True,
                                         add_to_chat_ctx=False)
                 logger.info("kb filler %s: %r", h.id, filler)
+                self.filler_ids[h.id] = filler
                 await h
             except asyncio.CancelledError:
                 pass        # the search answered first, which is the good case
@@ -891,6 +901,7 @@ class KBAgent(Agent):
                 logger.exception("kb filler failed")
 
         waiting = asyncio.create_task(hold_on()) if filler else None
+        looked_from = time.time()
         try:
             hits = await kb.search(query, self.cfg.name,
                                    self.cfg.kb_top_k, self.cfg.kb_min_score,
@@ -902,6 +913,8 @@ class KBAgent(Agent):
         finally:
             if waiting is not None:
                 waiting.cancel()
+            self.heard.append({"kind": "lookup", "label": "knowledge base search",
+                               "start": looked_from, "end": time.time()})
         self.last_kb_ms = int((time.perf_counter() - t0) * 1000)
         # Kept per turn rather than per call: a model that searches twice for one
         # answer used both, and the reader wants to see both. Best score wins on
@@ -1830,7 +1843,19 @@ async def entrypoint(ctx: JobContext):
         if session is None:
             logger.warning("a tool wanted to speak before the session existed")
             return
-        await session.say(line, allow_interruptions=True)
+        h = session.say(line, allow_interruptions=True)
+        agent.filler_ids[h.id] = line
+        await h
+
+    def _record_tool(**kw):
+        # The tool's own timing, placed on the turn's timeline as well, so a
+        # slow lookup shows up as the reason for a slow answer.
+        ms = kw.get("duration_ms")
+        if ms is not None:
+            now = time.time()
+            agent.heard.append({"kind": "lookup", "label": kw.get("name") or "tool",
+                                "start": now - ms / 1000, "end": now})
+        return store.record_tool_call(call_id, **kw)
 
     extra_tools = []
     if cfg.campaign_id is not None:
@@ -1838,7 +1863,7 @@ async def entrypoint(ctx: JobContext):
         if specs:
             extra_tools = tools_mod.build_all(
                 specs, call_id,
-                functools.partial(store.record_tool_call, call_id),
+                _record_tool,
                 _tool_says,
                 functools.partial(store.record_gap, call_id, cfg.campaign_id),
                 filler_after_s=_lookup_filler_s(cfg))
@@ -1969,6 +1994,7 @@ async def entrypoint(ctx: JobContext):
     # name it. Every speech created and finished, every false interruption,
     # and whether the audio output was paused at the time.
     speech_born: dict[str, float] = {}
+    filler_playing: dict[str, dict] = {}
 
     @session.on("speech_created")
     def _on_speech_created(ev):
@@ -1979,6 +2005,9 @@ async def entrypoint(ctx: JobContext):
                     _audio_output_state(session))
 
         def _done(handle):
+            ev = filler_playing.pop(handle.id, None)
+            if ev is not None:
+                ev["end"] = time.time()
             born = speech_born.pop(handle.id, None)
             logger.info("SPEECH - %s interrupted=%s after %sms", handle.id,
                         handle.interrupted,
@@ -2010,6 +2039,15 @@ async def entrypoint(ctx: JobContext):
         state = getattr(ev, "new_state", None)
         logger.info("AGENT %s -> %s  output=%s", getattr(ev, "old_state", None),
                     state, _audio_output_state(session))
+        if state == "speaking":
+            # "speaking" is set on a speech's first audio frame, so this is the
+            # moment the caller started hearing it - not when it was queued.
+            cur = getattr(session, "current_speech", None)
+            said = agent.filler_ids.pop(cur.id, None) if cur is not None else None
+            if said is not None:
+                ev_ = {"kind": "filler", "label": said, "start": time.time(), "end": None}
+                agent.heard.append(ev_)
+                filler_playing[cur.id] = ev_
         # Anything that is not "listening" means the agent has the floor -
         # thinking counts as much as speaking.
         #
@@ -2242,6 +2280,29 @@ async def entrypoint(ctx: JobContext):
             text = getattr(item, "text_content", None) or str(getattr(item, "content", ""))
             t = dict(pending) if role == "assistant" else {}
 
+            # The caller's real wait, from livekit's own per-message metrics:
+            # e2e_latency is this answer's first audio minus the caller's last
+            # word, and it includes what total_ms leaves out - a search, the
+            # second model call after it, the fillers the answer queued behind.
+            m = getattr(item, "metrics", None) or {}
+            timeline = None
+            if role == "user" and m.get("stopped_speaking_at"):
+                agent.caller_stopped_at = m["stopped_speaking_at"]
+                # Anything from before this caller turn belonged to a turn that
+                # never got an answer, and explains nothing about the next one.
+                agent.heard[:] = [e for e in agent.heard
+                                  if e["start"] >= agent.caller_stopped_at - 0.05]
+            elif role == "assistant" and m.get("e2e_latency") is not None:
+                t["wait_ms"] = int(m["e2e_latency"] * 1000)
+                t0 = agent.caller_stopped_at
+                if t0:
+                    timeline = [
+                        {"kind": e["kind"], "label": e["label"],
+                         "at_ms": int((e["start"] - t0) * 1000),
+                         "ms": int(((e["end"] or time.time()) - e["start"]) * 1000)}
+                        for e in agent.heard if e["start"] >= t0 - 0.05] or None
+                agent.heard.clear()
+
             # An empty item with nothing measured is not a turn. One arrives at
             # the start of every session and was being written down anyway,
             # putting a "(no transcript)" caller line at the top of every
@@ -2299,6 +2360,7 @@ async def entrypoint(ctx: JobContext):
                 # column existed, log_turn wrote it and the console rendered it,
                 # so every turn recorded until now says it was not interrupted.
                 interrupted=interrupted,
+                timeline=timeline,
                 **{k: v for k, v in t.items()
                    if k.endswith("_ms") or k in ("kb_chunk_ids", "kb_scores")}))
         except Exception:

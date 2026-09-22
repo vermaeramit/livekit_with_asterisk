@@ -153,6 +153,17 @@ export interface Turn {
   interrupted: boolean
   kb_chunk_ids: number[] | null
   kb_scores: number[] | null
+  /** Caller's last word to this answer's first audio. Null before migration 056. */
+  wait_ms?: number | null
+  /** Fillers heard and lookups run inside that wait, relative to the caller's last word. */
+  timeline?: TurnEvent[] | null
+}
+
+export interface TurnEvent {
+  kind: 'filler' | 'lookup'
+  label: string
+  at_ms: number
+  ms: number
 }
 
 export interface CallUsage {

@@ -5190,6 +5190,49 @@ To pick it up again, on a call where the voice **did** break:
   breaking voice and shows in neither RTP nor any error.
 
 ---
+## The wait a caller actually sat through (22 Sep 2026)
+
+The call page's "total" on each agent turn was `eou_ms + llm_ttft_ms +
+tts_ttfb_ms`. On a turn that searched the knowledge base that left out the
+search, the second model call that read its results, and every filler the answer
+queued behind. Call 619, the turn about 100cc bikes: **1.97 s** on the page. The
+speech trace put the caller's last word at 09:48:52.44, the first filler at 1.2 s,
+the search filler at 3.6 s and the answer at **~7.3 s**. The dashboard's median
+and p95 were built from the same sum.
+
+livekit 1.6.7 already measures the real thing. Every assistant message carries
+`metrics["e2e_latency"]` - that answer's first audio minus the caller's last
+word - and across a tool call it carries the caller's stop time forward itself
+when the first reply said nothing (`agent_activity.py` 3468-3470, read in the
+1.6.7 wheel rather than the 1.4.6 installed locally).
+
+**Migration 056** adds two columns to `turns`:
+
+| Column | What |
+|---|---|
+| `wait_ms` | livekit's `e2e_latency` for the answer |
+| `timeline` | fillers heard and lookups run inside that wait, each as `{kind, label, at_ms, ms}` from the caller's last word |
+
+Fillers are stamped when they start **playing** (the agent's `speaking` state is
+set on a speech's first audio frame), not when queued. Lookups are the knowledge
+base search and every HTTP tool, from the tool's own duration.
+
+`total_ms` is untouched. It is the provider split and still the right thing to
+blame a slow turn on; it was only ever wrong as a measure of the wait, and
+redefining it would have changed the meaning of every figure already stored.
+
+**On the page:** a turn with `wait_ms` draws on a time axis - turn detection,
+lookups and fillers where they happened, silence where the model was still
+working - ending in "caller waited 7.8s · first sound 1.2s". Turns recorded
+before 056 keep the old bar. The call's median uses one measure or the other,
+never both.
+
+**On the dashboard:** median, p95 and the latency chart are the caller's wait.
+Ordered-set aggregates skip NULLs, so older turns are left out rather than mixed
+in; a window entirely before 22 Sep shows no figure, which is true. The split by
+provider is unchanged.
+
+---
 ---
 
 ## ⏭️ Next

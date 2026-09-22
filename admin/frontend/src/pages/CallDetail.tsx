@@ -103,6 +103,97 @@ function LatencyBar({ turn, max }: { turn: Turn; max: number }) {
   )
 }
 
+/**
+ * What the caller actually waited for one answer, and what filled the wait.
+ *
+ * `wait_ms` is livekit's own e2e_latency: the caller's last word to the first
+ * audio of THIS answer. Unlike LatencyBar's three provider parts it includes
+ * everything - a search, the second model call after it, the fillers the answer
+ * queued behind. Call 619 (22 Sep 2026): one turn read 1.97 s on the old bar
+ * and began 7.3 s after the caller stopped.
+ *
+ * Drawn on a time axis from the caller's last word to the answer, with each
+ * thing where it actually happened. A stretch with nothing on it is silence
+ * while the model was still working.
+ */
+function WaitBar({ turn, max }: { turn: Turn; max: number }) {
+  const wait = turn.wait_ms ?? 0
+  const events = (turn.timeline ?? []).filter((e) => e.at_ms < wait)
+  const fillers = events.filter((e) => e.kind === 'filler')
+  const lookups = events.filter((e) => e.kind === 'lookup')
+  const firstSound = fillers.length ? Math.min(...fillers.map((f) => f.at_ms)) : null
+  const tone = latencyTone(wait)
+  const pct = (ms: number) => `${(Math.max(0, ms) / max) * 100}%`
+  const clip = (e: { at_ms: number; ms: number }) => Math.max(0, Math.min(e.ms, wait - e.at_ms))
+
+  const spans = [
+    ...(turn.eou_ms != null
+      ? [{ key: 'eou', at: 0, ms: Math.min(turn.eou_ms, wait), cls: 'bg-primary/70', title: `Turn detection ${formatMs(turn.eou_ms)}` }]
+      : []),
+    ...lookups.map((e, i) => ({ key: `l${i}`, at: e.at_ms, ms: clip(e), cls: 'bg-sky-500/70', title: `${e.label} ${formatMs(e.ms)}` })),
+    ...fillers.map((e, i) => ({ key: `f${i}`, at: e.at_ms, ms: clip(e), cls: 'bg-success/70', title: `"${e.label}" at ${formatMs(e.at_ms)}` })),
+  ]
+
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className="absolute inset-y-0 left-0 bg-foreground/15" style={{ width: pct(wait) }} />
+        {spans.map((s) => (
+          <div
+            key={s.key}
+            className={cn('absolute inset-y-0', s.cls)}
+            style={{ left: pct(s.at), width: pct(s.ms) }}
+            title={s.title}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-2xs text-muted-foreground">
+        {turn.eou_ms != null && (
+          <span className="inline-flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+            Turn detection <span className="tnum text-foreground/70">{formatMs(turn.eou_ms)}</span>
+          </span>
+        )}
+        {lookups.map((e, i) => (
+          <span key={`l${i}`} className="inline-flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-500/70" />
+            {e.label} <span className="tnum text-foreground/70">{formatMs(e.ms)}</span>
+          </span>
+        ))}
+        {fillers.map((e, i) => (
+          <span key={`f${i}`} className="inline-flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-success/70" />
+            “{e.label}” <span className="tnum text-foreground/70">at {formatMs(e.at_ms)}</span>
+          </span>
+        ))}
+        {turn.llm_ttft_ms != null && (
+          <span>
+            LLM first token <span className="tnum text-foreground/70">{formatMs(turn.llm_ttft_ms)}</span>
+          </span>
+        )}
+        {turn.tts_ttfb_ms != null && (
+          <span>
+            TTS first byte <span className="tnum text-foreground/70">{formatMs(turn.tts_ttfb_ms)}</span>
+          </span>
+        )}
+        <span
+          className={cn(
+            'ml-auto tnum font-medium',
+            tone === 'success' && 'text-success',
+            tone === 'warning' && 'text-warning',
+            tone === 'danger' && 'text-danger',
+          )}
+        >
+          caller waited {formatMs(wait)}
+          {firstSound != null && (
+            <span className="font-normal text-muted-foreground"> · first sound {formatMs(firstSound)}</span>
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function Citations({ turn, chunks }: { turn: Turn; chunks: Record<string, KbChunk> | undefined }) {
   const [open, setOpen] = useState(false)
   if (!turn.kb_chunk_ids?.length) return null
@@ -280,7 +371,7 @@ function TurnRow({
           {turn.text || <span className="italic text-muted-foreground">(no transcript)</span>}
         </p>
 
-        <LatencyBar turn={turn} max={max} />
+        {turn.wait_ms != null ? <WaitBar turn={turn} max={max} /> : <LatencyBar turn={turn} max={max} />}
         <Citations turn={turn} chunks={chunks} />
       </div>
     </div>
@@ -490,14 +581,23 @@ export function CallDetail() {
   }
 
   const c = call.data
-  const timed = c.turns.filter((t) => t.total_ms != null)
-  const sorted = [...timed].map((t) => t.total_ms!).sort((a, b) => a - b)
+  // The caller's real wait when the call has it (every call since migration
+  // 056); the old provider sum only for calls recorded before it. Never mixed
+  // within one call - the two measure different things.
+  const measured = c.turns.some((t) => t.wait_ms != null)
+  const latencyOf = (t: Turn) => (measured ? t.wait_ms : t.total_ms)
+  const sorted = c.turns
+    .map(latencyOf)
+    .filter((ms): ms is number => ms != null)
+    .sort((a, b) => a - b)
   const p50 = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null
   const worst = sorted.length ? sorted[sorted.length - 1] : null
-  // scale every bar against the slowest turn so they are comparable down the page
+  // One time scale for every bar on the page, so they are comparable down it.
   const barMax = Math.max(
     1,
-    ...c.turns.map((t) => (t.eou_ms ?? 0) + (t.llm_ttft_ms ?? 0) + (t.tts_ttfb_ms ?? 0)),
+    ...c.turns.map(
+      (t) => t.wait_ms ?? (t.eou_ms ?? 0) + (t.llm_ttft_ms ?? 0) + (t.tts_ttfb_ms ?? 0),
+    ),
   )
 
   // Absent, not zero, when the viewer may not see usage - the API leaves it out
@@ -689,7 +789,7 @@ export function CallDetail() {
         />
         <Stat
           icon={Clock}
-          label="Median response"
+          label={measured ? 'Median wait' : 'Median response'}
           value={formatMs(p50)}
           hint={worst ? `slowest ${formatMs(worst)}` : undefined}
         />
@@ -729,7 +829,7 @@ export function CallDetail() {
           <CardTitle>Transcript</CardTitle>
           <span className="flex items-center gap-2 text-2xs text-muted-foreground">
             <span>
-              {timed.length} timed turn{timed.length === 1 ? '' : 's'}
+              {sorted.length} timed turn{sorted.length === 1 ? '' : 's'}
             </span>
             {tools.length > 0 && (
               <Badge tone={toolsFailed ? 'danger' : 'muted'}>

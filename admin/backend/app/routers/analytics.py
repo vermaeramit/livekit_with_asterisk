@@ -178,17 +178,25 @@ async def summary(
 
     # percentile_cont interpolates, which is what "p95" is normally taken to
     # mean; percentile_disc would snap to an actual observation instead.
+    #
+    # The response figures are wait_ms - the caller's last word to the answer's
+    # first audio - and not total_ms, which leaves out searches, the second
+    # model call and fillers. Ordered-set aggregates skip NULLs, so turns from
+    # before migration 056 are simply not in them rather than mixed in: a window
+    # entirely before it shows no figure, which is true. The split below stays
+    # on the provider parts, which were always measured correctly.
     lat = await db.pool().fetchrow(f"""
-        SELECT percentile_cont(0.50) WITHIN GROUP (ORDER BY t.total_ms) AS p50,
-               percentile_cont(0.90) WITHIN GROUP (ORDER BY t.total_ms) AS p90,
-               percentile_cont(0.95) WITHIN GROUP (ORDER BY t.total_ms) AS p95,
-               max(t.total_ms)                                          AS worst,
-               count(*)                                                 AS turns,
+        SELECT percentile_cont(0.50) WITHIN GROUP (ORDER BY t.wait_ms) AS p50,
+               percentile_cont(0.90) WITHIN GROUP (ORDER BY t.wait_ms) AS p90,
+               percentile_cont(0.95) WITHIN GROUP (ORDER BY t.wait_ms) AS p95,
+               max(t.wait_ms)                                          AS worst,
+               count(t.wait_ms)                                        AS turns,
                percentile_cont(0.50) WITHIN GROUP (ORDER BY t.eou_ms)      AS eou,
                percentile_cont(0.50) WITHIN GROUP (ORDER BY t.llm_ttft_ms) AS llm,
                percentile_cont(0.50) WITHIN GROUP (ORDER BY t.tts_ttfb_ms) AS tts
           FROM turns t JOIN calls c ON c.id = t.call_id
-         WHERE {clause} AND t.total_ms IS NOT NULL""", *args)
+         WHERE {clause}
+           AND (t.total_ms IS NOT NULL OR t.wait_ms IS NOT NULL)""", *args)
 
     reasons = await db.pool().fetch(f"""
         SELECT COALESCE(
@@ -275,13 +283,13 @@ async def timeseries(
             -- bucketed by the CALL's start, not the turn's, so the two series
             -- line up on the same x axis
             SELECT date_trunc('{bucket}', s.started_at)                   AS bucket,
-                   percentile_cont(0.50) WITHIN GROUP (ORDER BY t.total_ms)    AS p50,
-                   percentile_cont(0.95) WITHIN GROUP (ORDER BY t.total_ms)    AS p95,
+                   percentile_cont(0.50) WITHIN GROUP (ORDER BY t.wait_ms)     AS p50,
+                   percentile_cont(0.95) WITHIN GROUP (ORDER BY t.wait_ms)     AS p95,
                    percentile_cont(0.50) WITHIN GROUP (ORDER BY t.eou_ms)      AS eou_ms,
                    percentile_cont(0.50) WITHIN GROUP (ORDER BY t.llm_ttft_ms) AS llm_ttft_ms,
                    percentile_cont(0.50) WITHIN GROUP (ORDER BY t.tts_ttfb_ms) AS tts_ttfb_ms
               FROM turns t JOIN scoped s ON s.id = t.call_id
-             WHERE t.total_ms IS NOT NULL
+             WHERE t.total_ms IS NOT NULL OR t.wait_ms IS NOT NULL
              GROUP BY 1
         )
         SELECT ca.bucket, ca.calls, ca.transferred, ca.limit_hit,

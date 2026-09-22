@@ -156,7 +156,8 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
 
     turns = await db.pool().fetch(
         """SELECT seq, role, text, ts, eou_ms, stt_ms, llm_ttft_ms,
-                  tts_ttfb_ms, total_ms, interrupted, kb_chunk_ids, kb_scores
+                  tts_ttfb_ms, total_ms, interrupted, kb_chunk_ids, kb_scores,
+                  wait_ms, timeline
              FROM turns WHERE call_id = $1 ORDER BY seq""", call_id)
 
     # Ordered by time so the console can interleave them with the transcript:
@@ -210,6 +211,13 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
     audio = recording_file(d["sip_call_id"])
     may_listen = user.can("calls.recording")
 
+    def _turn(r) -> TurnOut:
+        t = dict(r)
+        # JSONB arrives as text - no codec is registered on the pool.
+        if isinstance(t.get("timeline"), str):
+            t["timeline"] = json.loads(t["timeline"])
+        return TurnOut(**t)
+
     def _inv(r) -> ToolInvocationOut:
         t = dict(r)
         if isinstance(t.get("arguments"), str):
@@ -225,7 +233,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
                       recording_available=audio is not None and may_listen,
                       recording_bytes=(audio.stat().st_size
                                        if audio and may_listen else None),
-                      turns=[TurnOut(**dict(t)) for t in turns],
+                      turns=[_turn(t) for t in turns],
                       tools=[_inv(r) for r in invocations])
 
 
