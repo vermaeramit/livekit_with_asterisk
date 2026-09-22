@@ -30,6 +30,12 @@ import { APP_ENV, ENV_LABEL } from '@/lib/version'
  * Every command is one that has been run on these boxes, most of them from
  * docs/COMMANDS.md. A debugging page with a command that does not work is
  * worse than none: it is reached for at the worst moment and believed.
+ *
+ * No `docker exec -i` with psql -c. -i attaches stdin, and when several lines
+ * are pasted at once it swallows every line after it as its own input: the
+ * rest of the command silently never runs. psql -c needs no stdin. Multi-line
+ * commands are wrapped in ( ... ) as well, so bash reads the whole block
+ * before running any of it.
  */
 
 // The console is usually opened as http://<ip>, which is not a secure context,
@@ -352,8 +358,9 @@ asterisk -rx "iax2 show peers"`}</Cmd>
             </>
           }
         >
-          <Cmd>{String.raw`ID=${id}
-docker exec -i postgres psql -U aivoice -d aivoice -c "
+          <Cmd>{String.raw`(
+ID=${id}
+docker exec postgres psql -U aivoice -d aivoice -c "
 SELECT seq, role, interrupted, total_ms, left(text, 50) AS text
   FROM turns WHERE call_id = $ID ORDER BY seq;"
 JOB=$(journalctl -u 'aivoice-agent@*' --since '-3 days' --no-pager \
@@ -363,7 +370,8 @@ if [ -z "$JOB" ]; then echo "no worker log for call $ID in the last 3 days"; els
   journalctl -u 'aivoice-agent@*' --since '-3 days' --no-pager -o short-iso | grep "$JOB" \
     | grep -E '"level": "(WARNING|ERROR)"' | grep -v deprecated \
     | sed -E 's/call_[0-9]+/call_XXXX/g' | cut -c1-300
-fi`}</Cmd>
+fi
+)`}</Cmd>
         </Step>
         <Step n={2} title="Follow calls live, as they happen">
           <Cmd>{String.raw`journalctl -u "aivoice-agent@*" -f -o short-precise`}</Cmd>
@@ -384,7 +392,7 @@ fi`}</Cmd>
           title="Which calls are open right now?"
           good="only calls that are genuinely in progress."
         >
-          <Cmd>{String.raw`docker exec -i postgres psql -U aivoice -d aivoice -c "SELECT id, callee, config_name, to_char(started_at AT TIME ZONE 'Asia/Kolkata','DD Mon HH24:MI') AS started_ist, now() - started_at AS open_for FROM calls WHERE ended_at IS NULL ORDER BY started_at;"`}</Cmd>
+          <Cmd>{String.raw`docker exec postgres psql -U aivoice -d aivoice -c "SELECT id, callee, config_name, to_char(started_at AT TIME ZONE 'Asia/Kolkata','DD Mon HH24:MI') AS started_ist, now() - started_at AS open_for FROM calls WHERE ended_at IS NULL ORDER BY started_at;"`}</Cmd>
         </Step>
         <Step
           n={2}
@@ -418,7 +426,7 @@ journalctl -u 'aivoice-agent@*' --since '-24 hours' --no-pager | grep -c "proces
             </>
           }
         >
-          <Cmd>{String.raw`docker exec -i postgres psql -U aivoice -d aivoice -c "SELECT c.id, c.config_name, c.end_reason, ac.postback_enabled, p.status, p.attempts, p.last_status_code FROM calls c JOIN agent_config ac ON ac.name=c.config_name LEFT JOIN call_postbacks p ON p.call_id=c.id WHERE c.id=${id};"`}</Cmd>
+          <Cmd>{String.raw`docker exec postgres psql -U aivoice -d aivoice -c "SELECT c.id, c.config_name, c.end_reason, ac.postback_enabled, p.status, p.attempts, p.last_status_code FROM calls c JOIN agent_config ac ON ac.name=c.config_name LEFT JOIN call_postbacks p ON p.call_id=c.id WHERE c.id=${id};"`}</Cmd>
         </Step>
         <Step
           n={2}
