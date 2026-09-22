@@ -5302,6 +5302,46 @@ Production must not move to Sarvam until that is settled. `tts-bench.py` now
 sends the greeting, the disclosure and the joined opening each on its own.
 
 ---
+## The breaking voice: Soniox's side, and where it was parked (22 Sep 2026)
+
+The last two measurements, and the verdict they support.
+
+**No interception.** From .243, `tts-rt.soniox.com` presents a certificate issued
+by Google Trust Services (Soniox is on Google Cloud, which is also why its edge
+answers in ~8 ms); `api.sarvam.ai` presents Let's Encrypt. A firewall doing TLS
+inspection would have shown its own CA. This was checked because the dialler
+team reported an IT firewall change around the same days.
+
+**The same bench, later, is clean.** Soniox at 24 kHz: 52.5 s of audio with
+**1.2 s** stalled, first audio ~500 ms - against 46.6 s stalled over 51.0 s in the
+run that followed call 625. Same box, same code, same settings.
+
+What is proven:
+
+- The holes are in the TTS audio stream - they match `TTS_STALLS` to within
+  milliseconds.
+- Not the call pipeline: the bench reproduced them with no call at all.
+- Not the model's text, CPU, barge-in, Asterisk or RTP.
+- Not TLS interception.
+- Not the office link as a whole: while Soniox stalled, Sarvam from the same box
+  delivered audio about four times faster than real time.
+- It varies with time outside anything of ours: 09:48 clean, 10:57 and 12:00
+  broken, the afternoon bench broken, the later bench clean.
+
+What is not: whether the slowness is Soniox's servers or the route from this
+network to them. Only a run during a bad window settles it - 24 kHz against
+8 kHz (`--sample-rate`), since a third of the bytes stalling less would point at
+the route. No such window was caught.
+
+**Verdict: the cause is on Soniox's side of the path, not in this system.**
+Parked here at the user's call. When it recurs, run the Debug page's
+"The voice breaks" steps 3 and 4 while it is happening.
+
+Proposed and not started: a 15-minute Soniox health probe logging to a file,
+a report to Soniox support with these numbers, and per-turn stall storage with
+an alert.
+
+---
 ---
 
 ## ⏭️ Next
