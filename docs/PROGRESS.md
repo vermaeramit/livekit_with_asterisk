@@ -5273,6 +5273,35 @@ frames with a known one-second pause after 0.5 s of audio: one stall, 503 ms, at
 500 ms, text complete at +0 ms, all ten frames through.
 
 ---
+## Sarvam clean, Soniox not - and Sarvam cannot say the greeting (22 Sep 2026)
+
+**Call 622, Soniox**, now with `TTS_STREAM` measuring: the model's text had fully
+arrived **2.7 s before** the first audio, and 1.5 s of speech still came with
+**6.0 s of stalls**. Each of the four stalls matches a hole in the recording to
+within 4-50 ms. The second answer: 4.2 s of audio, 14.6 s stalled, text complete
+1.1 s before its first audio.
+
+**Call 625, the same campaign switched to Sarvam** (bulbul:v3, kavya), same box,
+same day: eight TTS streams, **zero stalls** on every one. The 9.4 s answer was
+"speaking" for 9.35 s, and its seven recording gaps (65-279 ms) are its seven
+commas and full stops.
+
+So the pipeline, the box and its network are clear. The stalls are on the Soniox
+side of the path - the plugin, the route to `tts-rt.soniox.com`, or Soniox's
+servers - and calls 619 (fine, 09:48) against 621 and 622 (broken, 10:57 and
+12:00) say it comes and goes.
+
+**But Sarvam refused the greeting.** Four attempts, each
+`400: Text must contain at least one character from the allowed languages`, and
+the caller heard **10.6 s of nothing** until the silence prompt spoke. The opening
+is `greeting + " " + recording_disclosure` - here English sentences followed by a
+lone "." - and which part was refused is not logged. The greeting was synthesised
+live because the cache key includes the provider, so the switch was a cache miss.
+
+Production must not move to Sarvam until that is settled. `tts-bench.py` now
+sends the greeting, the disclosure and the joined opening each on its own.
+
+---
 ---
 
 ## ⏭️ Next

@@ -33,6 +33,11 @@ one plays, which is what call 622 was doing when its answers broke.
 Each sentence is sent in Roman script and in Devanagari, so the script the model
 chose can be ruled in or out rather than argued about.
 
+A third round sends the campaign's own opening - the greeting, the recording
+disclosure, and the two joined as a call joins them - each on its own, so a
+provider that refuses one of them says which. Call 625 on Sarvam refused the
+opening and the caller heard nothing for 10.6 s.
+
 Never prints a key.
 """
 from __future__ import annotations
@@ -90,9 +95,13 @@ async def measure(tts, text: str) -> dict:
     }
 
 
+def short(text: str) -> str:
+    return (text[:34] + "…") if len(text) > 35 else text
+
+
 def line(provider: str, mode: str, text: str, r: dict) -> str:
-    label = (text[:34] + "…") if len(text) > 35 else text
-    return (f"{provider:<7} {mode:<6} {label:<36} first {r['first_ms']:>5}ms  "
+    label = short(text)
+    return (f"{provider:<7} {mode:<10} {label:<36} first {r['first_ms']:>5}ms  "
             f"audio {r['audio']:4.1f}s  wall {r['wall']:4.1f}s  "
             f"stalls {r['stalls']:>2}  stalled {r['stalled']:4.1f}s  worst {r['worst_ms']:>5}ms")
 
@@ -138,6 +147,28 @@ async def bench(provider: str, cfg, keys: dict, runs: int) -> None:
                 total_audio += r["audio"]
                 total_stalled += r["stalled"]
                 print(line(provider, "pair", text, r))
+
+        # The campaign's own opening, in its parts. Call 625: Sarvam refused the
+        # greeting four times - "Text must contain at least one character from
+        # the allowed languages" - and the caller heard 10.6 s of nothing. The
+        # opening is greeting + " " + recording_disclosure, and which part it
+        # refused was not logged; each is sent on its own here to find out.
+        whole = " ".join(x for x in (cfg.greeting, cfg.recording_disclosure) if x)
+        for part, text in (("greeting", cfg.greeting or ""),
+                           ("disclosure", cfg.recording_disclosure or ""),
+                           ("opening", whole)):
+            if not text.strip():
+                continue
+            try:
+                print(line(provider, part, text, await measure(target, text)))
+            except Exception as e:
+                # The provider's own message, as the worker log already shows
+                # it. It carries a request id, never the key, which travels in
+                # a header.
+                print(f"{provider:<7} {part:<10} {short(text):<36} FAILED "
+                      f"{type(e).__name__}: {str(e)[:140]}")
+        if "{" in (cfg.greeting or ""):
+            print("  (the greeting has placeholders; they were sent unfilled)")
     finally:
         await tts.aclose()
     print(f"{provider} total: {total_audio:.1f}s of audio, {total_stalled:.1f}s stalled")
