@@ -172,10 +172,14 @@ function FieldList({
         </div>
       )}
 
-      <div className="flex items-center gap-3 pt-1">
+      {/* The button never shrinks: beside this paragraph, flex squeezed it until
+          "Add a field" wrapped one word per line. On a narrow screen the
+          paragraph goes underneath instead. */}
+      <div className="flex flex-col items-start gap-2 pt-1 sm:flex-row sm:gap-3">
         <Button
           variant="outline"
           size="sm"
+          className="shrink-0 whitespace-nowrap"
           disabled={fields.length >= 25}
           onClick={() =>
             onChange([
