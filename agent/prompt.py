@@ -103,6 +103,52 @@ PROMPT_SAFE = {
 }
 
 
+def caller_details(instructions: str | None,
+                   dialler: dict[str, str]) -> tuple[list[str], str | None]:
+    """-> (dialer.* keys given to the model, the message that gives them).
+
+    Only the PROMPT_SAFE fields the campaign's prompt refers to as {{key}}. A
+    prompt that uses none gets nothing - no name, no product, no call type.
+
+    It used to be all three on every call, with "Greet them by name once" added
+    to the message, whether or not the prompt had any use for them. The console
+    had no way to show that message, so a campaign owner reading a prompt that
+    never mentions a name could not know the agent was being given one. Asked
+    for, 22 Sep 2026: nothing from the dialler goes to the model unless the
+    prompt uses it.
+
+    The placeholders stay in the prompt as written. The prompt is the cacheable
+    prefix and must be byte-identical on every call (1198 ms cold against 805 ms
+    warm); the values come in this separate message instead, keyed by the same
+    {{names}} so the model can match them. A default after the pipe is used when
+    the dialler sent nothing; with neither, the model is told plainly that the
+    value is missing, rather than left to guess one.
+    """
+    if not instructions or "{{" not in instructions:
+        return [], None
+    used: dict[str, str] = {}
+    for m in _PLACEHOLDER.finditer(instructions):
+        key, default = m.group(1), (m.group(2) or "").strip()
+        if key in PROMPT_SAFE and (key not in used or (default and not used[key])):
+            used[key] = default
+    if not used:
+        return [], None
+
+    given, lines = [], []
+    for key, default in used.items():
+        value = (dialler.get(f"dialer.{key}") or "").strip()
+        if value:
+            given.append(f"dialer.{key}")
+        lines.append(f"- {{{{{key}}}}} ({PROMPT_SAFE[key].lower()}): "
+                     f"{value or default or 'not provided on this call'}")
+    body = ("CALLER DETAILS for this call, from the dialling system. Your "
+            "instructions refer to them by the names in double braces; use these "
+            "values wherever those names appear.\n"
+            + "\n".join(lines)
+            + "\n\nDo not read these out as a list.")
+    return given, body
+
+
 def render_spoken(template: str | None, dialler: dict[str, str]) -> str | None:
     """Substitute dialler context into a spoken string.
 

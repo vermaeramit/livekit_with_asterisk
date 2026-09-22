@@ -394,7 +394,7 @@ const DIALLER_FIELDS: Record<string, { label: string; toModel: boolean }> = {
   'dialer.language': { label: 'Language requested', toModel: false },
 }
 
-function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
+function DiallerCard({ ctx, given }: { ctx: Record<string, string>; given: string[] | null }) {
   // Every dialer.* attribute the agent stored, whether this console has ever
   // heard of it or not. The dialler added seven fields at once without telling
   // anyone; an eighth should appear here the day it arrives, not the day
@@ -406,7 +406,9 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
       key: k,
       value: v,
       label: DIALLER_FIELDS[k]?.label ?? k.replace(/^dialer\./, '').replace(/[_.]/g, ' '),
-      toModel: DIALLER_FIELDS[k]?.toModel ?? false,
+      // What this call actually gave the model when that was recorded; the
+      // old always-on rule for calls from before it was.
+      toModel: given ? given.includes(k) : (DIALLER_FIELDS[k]?.toModel ?? false),
       isNew: !(k in DIALLER_FIELDS),
     }))
     // Documented fields in their usual order, then anything new at the bottom
@@ -455,10 +457,22 @@ function DiallerCard({ ctx }: { ctx: Record<string, string> }) {
           </div>
         ))}
         <p className="pt-1 text-2xs leading-relaxed text-muted-foreground">
-          Everything the dialer sent is stored and shown here. Only the three marked{' '}
-          <span className="font-medium text-primary">in prompt</span> reach the model — a model
-          given a lead ID will eventually read it out to the caller, so new fields are recorded
-          and withheld until someone decides otherwise.
+          Everything the dialer sent is stored and shown here.{' '}
+          {given ? (
+            <>
+              A field reaches the model only when the campaign's prompt uses it —{' '}
+              <code>{'{{cus_name}}'}</code>, <code>{'{{modalname}}'}</code> or{' '}
+              <code>{'{{calltype}}'}</code> — and those marked{' '}
+              <span className="font-medium text-primary">in prompt</span> were given on this call.
+            </>
+          ) : (
+            <>
+              This call is from before prompts chose their fields: the three marked{' '}
+              <span className="font-medium text-primary">in prompt</span> were given to the model
+              on every call.
+            </>
+          )}{' '}
+          Nothing else ever is — a model given a lead ID will eventually read it out to the caller.
         </p>
       </CardBody>
     </Card>
@@ -820,7 +834,7 @@ export function CallDetail() {
       )}
 
       <div className={cn('grid gap-3', c.dialer_context && 'lg:grid-cols-2')}>
-        {c.dialer_context && <DiallerCard ctx={c.dialer_context} />}
+        {c.dialer_context && <DiallerCard ctx={c.dialer_context} given={c.model_fields ?? null} />}
         <ProvidersCard c={c} />
       </div>
 

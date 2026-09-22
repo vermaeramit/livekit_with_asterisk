@@ -720,6 +720,10 @@ export function CampaignConfig() {
                   The system prompt. Do not repeat the grounding or transfer rules here; they are
                   appended for you. Keep it stable: the first ~1024 tokens are what OpenAI caches,
                   and editing them throws that cache away.
+                  <br />
+                  Write <code>{'{{cus_name}}'}</code>, <code>{'{{modalname}}'}</code> or{' '}
+                  <code>{'{{calltype}}'}</code> in it to give the agent that value from the dialer on
+                  each call. Nothing from the dialer reaches the agent otherwise.
                 </>
               }
             />

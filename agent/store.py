@@ -385,7 +385,8 @@ async def start_call(room_name, caller, callee, config_name, language,
     )
 
 
-async def set_dialler_context(call_id: int, ctx: dict) -> None:
+async def set_dialler_context(call_id: int, ctx: dict,
+                              model_fields: list[str] | None = None) -> None:
     """What the dialling system said about this call, verbatim.
 
     Kept whole rather than split into columns: the dialler owns this set and
@@ -394,9 +395,13 @@ async def set_dialler_context(call_id: int, ctx: dict) -> None:
     """
     import json
 
+    # model_fields beside it: which of these values the model was actually
+    # given on this call, so the call page reports this call rather than
+    # whatever the rule happens to be today. Migration 057.
     await (await pool()).execute(
-        "UPDATE calls SET dialer_context = $2::jsonb WHERE id = $1",
-        call_id, json.dumps(ctx),
+        "UPDATE calls SET dialer_context = $2::jsonb, model_fields = $3 "
+        "WHERE id = $1",
+        call_id, json.dumps(ctx), list(model_fields or []),
     )
 
 

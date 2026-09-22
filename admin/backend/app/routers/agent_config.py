@@ -242,6 +242,19 @@ def _warnings(cfg: dict) -> list[str]:
                     f"nothing. Available: "
                     f"{', '.join('{{' + k + '}}' for k in sorted(speakable))}.")
 
+        # The prompt is the one place a placeholder is never substituted - it is
+        # the cacheable prefix. A speakable key there asks for its value in a
+        # separate message on each call; any other key is never filled at all,
+        # and the model reads the braces as written.
+        for key in dict.fromkeys(_PLACEHOLDER_KEY.findall(cfg.get("instructions") or "")):
+            if key in speakable:
+                continue
+            out.append(
+                f"The prompt uses {{{{{key}}}}}, which is not a dialler field the "
+                f"agent is ever given — the model sees the braces as written. "
+                f"Available: "
+                f"{', '.join('{{' + k + '}}' for k in sorted(speakable))}.")
+
     # A concurrency limit with nothing to play. The caller who hits it hears
     # silence and is then handed off, which reads as a dropped call - and the
     # setting looks configured from the page, because the number is filled in.

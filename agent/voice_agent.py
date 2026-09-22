@@ -214,8 +214,9 @@ def _tts_kwargs(cfg):
 #
 # prompt.py rather than here because it imports nothing, so the console can read
 # the same list and warn before a placeholder like that is ever saved.
-_PROMPT_ATTRS = {f"dialer.{k}": label
-                 for k, label in prompt_mod.PROMPT_SAFE.items()}
+#
+# And since 22 Sep 2026 even those three reach the model only when the campaign's
+# prompt asks for them by {{placeholder}} - prompt.caller_details.
 
 # There is no list of record-only fields, deliberately. It is EVERYTHING ELSE -
 # lead_id, sr_id, call_unique, and whatever the dialler adds next. A tuple naming
@@ -243,15 +244,19 @@ def _dialler_attrs(participant) -> dict[str, str]:
     # arrives but is not on an allowlist is silently thrown away, which is
     # indistinguishable from the dialler never sending it.
     #
-    # This is the STORAGE side only. What reaches the model stays curated, in
-    # _PROMPT_ATTRS: a model handed a lead id will eventually read it out to the
-    # caller, and that must not become automatic.
+    # This is the STORAGE side only. What reaches the model stays curated - see
+    # prompt.caller_details: a model handed a lead id will eventually read it
+    # out to the caller, and that must not become automatic.
     return {k: v for k, raw in attrs.items()
             if k.startswith("dialer.") and (v := (raw or "").strip())}
 
 
-def _caller_context(dialler: dict[str, str]):
-    """-> a ChatContext carrying the caller context, or None.
+def _caller_context(dialler: dict[str, str], instructions: str):
+    """-> (a ChatContext with the caller details the prompt asks for, or None;
+           the dialer.* keys that were given).
+
+    Only fields the campaign's prompt uses as {{cus_name}}, {{modalname}},
+    {{calltype}} - see prompt.caller_details for the rule and why.
 
     A SEPARATE message, never appended to `instructions`. The instructions are
     the cacheable prefix - byte-identical across every call on a campaign, which
@@ -259,24 +264,12 @@ def _caller_context(dialler: dict[str, str]):
     warm). Putting a caller's name into them would make every call's prefix
     unique and the cache would never hit again, silently.
     """
-    lines = [f"- {label}: {dialler[key]}"
-             for key, label in _PROMPT_ATTRS.items() if dialler.get(key)]
-    if not lines:
-        return None
-    body = "\n".join(lines)
+    given, body = prompt_mod.caller_details(instructions, dialler)
+    if not body:
+        return None, given
     c = lk_llm.ChatContext.empty()
-    c.add_message(
-        role="system",
-        content=(
-            "CALLER CONTEXT, provided by the dialling system before the call "
-            "connected. It is reliable - use it rather than asking the caller "
-            "to repeat what we already know.\n"
-            f"{body}\n\n"
-            "Greet them by name once, naturally, and do not read any of this "
-            "back as a list."
-        ),
-    )
-    return c
+    c.add_message(role="system", content=body)
+    return c, given
 
 
 # Substituting dialler context into spoken strings lives in prompt.py, which
@@ -1880,10 +1873,14 @@ async def entrypoint(ctx: JobContext):
     # to land. Logged either way, so a campaign that should have context and does
     # not is visible rather than merely quieter.
     dialler = _dialler_attrs(sip_participant)
+    caller_ctx, given = _caller_context(dialler, instructions)
     if dialler:
         logger.info("dialler context: %s",
                     " ".join(f"{k.split('.', 1)[1]}={v}" for k, v in dialler.items()))
-        await store.set_dialler_context(call_id, dialler)
+        logger.info("given to the model: %s",
+                    ", ".join(k.split(".", 1)[1] for k in given)
+                    or "nothing - the prompt uses no dialler placeholder")
+        await store.set_dialler_context(call_id, dialler, given)
     else:
         logger.info("dialler context: none on this call")
 
@@ -1930,7 +1927,7 @@ async def entrypoint(ctx: JobContext):
                         ", ".join(s["name"] for s in specs))
 
     agent = KBAgent(instructions, cfg, kb_mode, ctx.room, keys,
-                    chat_ctx=_caller_context(dialler),
+                    chat_ctx=caller_ctx,
                     extra_tools=extra_tools)
     agent.call_id = call_id
 

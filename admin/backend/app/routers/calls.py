@@ -143,7 +143,7 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
                    c.tts_characters, c.tts_audio_seconds, c.stt_audio_seconds,
                    c.stt_provider_used, c.llm_provider_used, c.tts_provider_used,
                    c.llm_model_used, c.stt_model_used, c.tts_model_used,
-                   c.dialer_context
+                   c.dialer_context, c.model_fields
               FROM calls c LEFT JOIN campaigns cam ON cam.id = c.campaign_id
              WHERE c.id = $1""", call_id)
 

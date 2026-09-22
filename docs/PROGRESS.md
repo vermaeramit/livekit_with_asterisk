@@ -5342,6 +5342,55 @@ a report to Soniox support with these numbers, and per-turn stall storage with
 an alert.
 
 ---
+## Nothing from the dialler reaches the model unless the prompt asks (22 Sep 2026)
+
+Call 626's page marked Caller name, Product they own and Call type **in prompt**,
+and the campaign's prompt used none of them. The badge was right. Every call has
+been handing those three to the model as a separate system message:
+
+```
+CALLER CONTEXT, provided by the dialling system before the call connected.
+It is reliable - use it rather than asking the caller to repeat what we already know.
+- Caller name: Amit Kumar
+- Product they own: HF DELUXE FLEX
+- Call type: Incoming
+
+Greet them by name once, naturally, and do not read any of this back as a list.
+```
+
+On every call, with no campaign switch, and shown nowhere in the console - not
+in the Final prompt tab, not in the chat tester. The evidence it was acting:
+on call 619 the caller said only "मुझे एक नई बाइक खरीदनी है।" and the agent answered
+"Amit ji, aap kaunse Hero MotoCorp model mein interested hain?".
+
+Decided: none of it goes unless the prompt uses it.
+
+- **The rule** (`prompt.caller_details`): a prompt-safe field reaches the model
+  only when the campaign's prompt writes it as `{{cus_name}}`, `{{modalname}}` or
+  `{{calltype}}`. A prompt with none gets no message at all. `{{lead_id}}` and the
+  rest never do.
+- **The placeholders stay in the prompt as written.** It is the cacheable prefix
+  and must not change per call; the values arrive in a separate message keyed by
+  the same `{{names}}`. A default after the pipe is used when the dialler sent
+  nothing; with neither, the model is told "not provided on this call" rather
+  than left to invent one.
+- **"Greet them by name once" is gone.** How a value is used is the prompt's
+  business now.
+- **Recorded per call** in `calls.model_fields` (migration 057), and the call page
+  marks **in prompt** from that - what this call gave, not today's rule. Calls
+  before 057 are NULL and say that all three went on every call.
+- The campaign page's Instructions hint says how to ask for them, and saving a
+  prompt with a placeholder that can never be filled (`{{lead_id}}`) raises a
+  warning.
+
+Checked by running `caller_details` on five prompts: none, `{{cus_name}}`, a
+default with nothing sent, used but not sent, and `{{lead_id}}` alone.
+
+**Before this reaches production:** saltworx's agent will stop knowing the
+caller's name and product unless its prompt asks for them. Check its prompt for
+the placeholders first.
+
+---
 ---
 
 ## ⏭️ Next

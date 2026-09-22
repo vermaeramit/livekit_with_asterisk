@@ -195,6 +195,8 @@ export interface CallDetail extends CallListItem {
   // What the dialler sent with the call: name, product, their lead/SR ids.
   // Free-form on purpose — the key set is theirs to change.
   dialer_context: Record<string, string> | null
+  /** dialer.* keys given to the model on this call; null before migration 057. */
+  model_fields?: string[] | null
   // Absent when the viewer may not see usage.
   usage?: CallUsage | null
   cost?: CallCost | null

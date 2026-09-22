@@ -1596,6 +1596,9 @@ class CallDetail(CallListItem):
     # and service-request ids. JSONB because the set is theirs to change - they
     # added seven fields once without telling anyone.
     dialer_context: dict | None = None
+    # dialer.* keys given to the model on this call. NULL before migration
+    # 057, when all three prompt-safe fields were always given.
+    model_fields: list[str] | None = None
     # None when the caller may not see usage. Absent rather than zeroed: a zero
     # is a claim about the call, and the honest answer is that we are not saying.
     usage: CallUsage | None = None
