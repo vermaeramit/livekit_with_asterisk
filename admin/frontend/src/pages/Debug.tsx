@@ -340,6 +340,35 @@ asterisk -rx "iax2 show peers"`}</Cmd>
             </li>
           </ul>
         </Step>
+        <Step
+          n={3}
+          title="Was the TTS itself slow? Check the call's own measurement"
+          good={
+            <>
+              <code>stalled=0.0s</code> on every <code>TTS_STREAM</code> line. A large <code>stalled</code> with a{' '}
+              <em>negative</em> <code>text_complete</code> means the text had all arrived and the TTS was still
+              late — the provider, not the model. Each stall is a hole the caller heard.
+            </>
+          }
+        >
+          <Cmd>{String.raw`journalctl -u 'aivoice-agent@*' --since '-1 hour' --no-pager -o short-precise \
+  | grep -E '"message": "TTS_(STREAM|STALLS)' \
+  | sed -E 's/^[A-Za-z]+ [0-9]+ ([0-9:.]+).*"message": "(.{0,200}).*/\1  \2/'`}</Cmd>
+        </Step>
+        <Step
+          n={4}
+          title="Test the TTS on its own, outside any call"
+          good={
+            <>
+              <code>stalls 0</code> on every line, for both <code>alone</code> and <code>pair</code>. Uses the
+              campaign's own key, plugin and voice, and never prints the key. Stalls here with nothing else
+              involved put the fault with the provider or the network to it.
+            </>
+          }
+        >
+          <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a
+  cd /srv/aivoice && /opt/aivoice/agent/.venv/bin/python server-configs/tts-bench.py default )`}</Cmd>
+        </Step>
       </Section>
 
       <Section

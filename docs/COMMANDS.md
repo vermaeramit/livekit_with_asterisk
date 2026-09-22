@@ -215,6 +215,25 @@ Refuses a call that already has a row, so it cannot double-send. Prefix
 
 ---
 
+## Test a TTS on its own
+
+Built after calls 621 and 622, where answers broke into holes while the text
+had long since arrived. Same key, plugin and voice as a call, with no call:
+
+```bash
+( set -a; . /opt/aivoice/.env; set +a
+  cd /srv/aivoice && /opt/aivoice/agent/.venv/bin/python server-configs/tts-bench.py default )
+```
+
+`--providers soniox` for one only, `--runs 5` for more samples. Each line gives
+first audio, audio received, and **stalls** - playback modelled in real time, a
+frame arriving after the audio already received has run out. `alone` is one
+synthesis at a time; `pair` is two at once on the same TTS, which is what a call
+does while the next answer is prepared. Sentences go in Roman script and in
+Devanagari, so the script is ruled in or out by the numbers.
+
+---
+
 ## Ask a provider what it offers
 
 Without the key ever reaching the terminal:
