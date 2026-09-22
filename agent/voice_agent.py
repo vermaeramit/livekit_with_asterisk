@@ -330,6 +330,57 @@ def _audio_output_state(session) -> str:
     return "unknown"
 
 
+def _wait_and_timeline(agent, role: str, m: dict) -> tuple[int | None, list | None]:
+    """-> (the caller's wait for this speech in ms, what filled it) or (None, None).
+
+    `m` is the conversation item's livekit metrics. A caller turn only updates
+    the state on `agent`; an agent speech gets a wait when it is the first thing
+    said after a caller turn - livekit's own e2e_latency where it gave one, the
+    same measure taken here where it did not.
+    """
+    wait_ms = None
+    timeline = None
+    if role == "user":
+        agent.awaiting_answer = True
+        if m.get("stopped_speaking_at"):
+            agent.caller_stopped_at = m["stopped_speaking_at"]
+        elif agent.user_quiet_at:
+            # livekit had no end of speech for this turn. Call 627, turn
+            # 5: the second half of a caller speaking in two pieces,
+            # eou=0 stt=0, and its answer came back with no wait at all -
+            # on the slowest turn of the call. VAD's own "stopped" lands
+            # VAD_MIN_SILENCE after the last word, so that is taken off.
+            agent.caller_stopped_at = agent.user_quiet_at - VAD_MIN_SILENCE
+        if agent.caller_stopped_at:
+            # Anything from before this caller turn belonged to a turn
+            # that never got an answer, and explains nothing about the next.
+            agent.heard[:] = [e for e in agent.heard
+                              if e["start"] >= agent.caller_stopped_at - 0.05]
+    elif role == "assistant":
+        t0 = agent.caller_stopped_at
+        wait = m.get("e2e_latency")
+        if wait is None and agent.awaiting_answer and t0 and m.get("started_speaking_at"):
+            # The same measure, taken here where livekit gives none: this
+            # speech's first audio minus the caller's last word. livekit
+            # never sets e2e on say() - the transfer message after a
+            # caller asks for a person, call 627 turn 10 - nor on a turn
+            # it had no end of speech for. Only the FIRST speech after a
+            # caller turn: the greeting and the silence prompts answer
+            # nobody, and must not look like slow answers.
+            wait = m["started_speaking_at"] - t0
+        if wait is not None and wait >= 0:
+            wait_ms = int(wait * 1000)
+            agent.awaiting_answer = False
+            if t0:
+                timeline = [
+                    {"kind": e["kind"], "label": e["label"],
+                     "at_ms": int((e["start"] - t0) * 1000),
+                     "ms": int(((e["end"] or time.time()) - e["start"]) * 1000)}
+                    for e in agent.heard if e["start"] >= t0 - 0.05] or None
+            agent.heard.clear()
+    return wait_ms, timeline
+
+
 def _lookup_filler_s(cfg) -> float:
     """How long a lookup may run before the caller is told something.
 
@@ -426,6 +477,12 @@ class KBAgent(Agent):
         self.filler_ids: dict[str, str] = {}
         self.heard: list[dict] = []
         self.caller_stopped_at: float | None = None
+        # Set by a caller turn, cleared by the first speech after it: the one
+        # speech a caller was actually waiting for.
+        self.awaiting_answer = False
+        # When VAD last said the caller stopped - the fallback when livekit has
+        # no end of speech for a turn.
+        self.user_quiet_at: float | None = None
         self._greeting_gate_since = time.monotonic()
         # Set when the model writes the end-of-call marker. Acted on after the
         # sentence carrying it has finished playing, never during.
@@ -2080,6 +2137,8 @@ async def entrypoint(ctx: JobContext):
     def _on_user_state(ev):
         logger.info("USER %s -> %s", getattr(ev, "old_state", None),
                     getattr(ev, "new_state", None))
+        if getattr(ev, "new_state", None) == "listening":
+            agent.user_quiet_at = time.time()
 
     @session.on("close")
     def _on_close(_ev=None):
@@ -2341,23 +2400,9 @@ async def entrypoint(ctx: JobContext):
             # word, and it includes what total_ms leaves out - a search, the
             # second model call after it, the fillers the answer queued behind.
             m = getattr(item, "metrics", None) or {}
-            timeline = None
-            if role == "user" and m.get("stopped_speaking_at"):
-                agent.caller_stopped_at = m["stopped_speaking_at"]
-                # Anything from before this caller turn belonged to a turn that
-                # never got an answer, and explains nothing about the next one.
-                agent.heard[:] = [e for e in agent.heard
-                                  if e["start"] >= agent.caller_stopped_at - 0.05]
-            elif role == "assistant" and m.get("e2e_latency") is not None:
-                t["wait_ms"] = int(m["e2e_latency"] * 1000)
-                t0 = agent.caller_stopped_at
-                if t0:
-                    timeline = [
-                        {"kind": e["kind"], "label": e["label"],
-                         "at_ms": int((e["start"] - t0) * 1000),
-                         "ms": int(((e["end"] or time.time()) - e["start"]) * 1000)}
-                        for e in agent.heard if e["start"] >= t0 - 0.05] or None
-                agent.heard.clear()
+            wait_ms, timeline = _wait_and_timeline(agent, role, m)
+            if wait_ms is not None:
+                t["wait_ms"] = wait_ms
 
             # An empty item with nothing measured is not a turn. One arrives at
             # the start of every session and was being written down anyway,

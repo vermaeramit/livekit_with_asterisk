@@ -5391,6 +5391,37 @@ caller's name and product unless its prompt asks for them. Check its prompt for
 the placeholders first.
 
 ---
+## "Caller waited" on every answer, not only where livekit measured it (22 Sep 2026)
+
+Call 627 showed the wait on two of its four agent turns. Each gap had a reason,
+read from the turns table beside the speech trace:
+
+| Turn | What | Why no `wait_ms` |
+|---|---|---|
+| 1 | greeting, `say()` | nobody had spoken - correct |
+| 6 | the model's answer | the caller spoke in two pieces and livekit had no end of speech for the second (`eou=0 stt=0`), so it set no `e2e_latency` - on the slowest turn of the call, first token 5.7 s |
+| 10 | "One moment, connecting you now." | a `say()`; livekit never sets `e2e_latency` on those |
+
+livekit does put `started_speaking_at` on every speech's metrics, `say()` included
+(`agent_activity.py`, 1.6.7). So where it gives no e2e the same measure is taken
+here: that speech's first audio minus the caller's last word. The caller's last
+word is livekit's own `stopped_speaking_at` when it has one; otherwise the moment
+VAD reported the caller quiet, less `VAD_MIN_SILENCE`, which is how long VAD waits
+before saying so.
+
+Only the **first** speech after a caller turn gets a wait. The greeting and the
+silence prompts answer nobody and must not read as slow answers.
+
+The logic moved out of `_on_item` into `_wait_and_timeline` so it could be run:
+lifted with `ast` and fed call 627's sequence plus a silence prompt - greeting
+none, turn 3 1623 (livekit's), turn 6 6350 (measured here), silence prompt none,
+turn 10 1200 with a filler at 500 ms on its timeline.
+
+Also seen on 627, and not changed here: turn 8 gave the date as
+"27 April 2024" and the caller said it was wrong. The model is only told the date
+when the campaign's "Tell the agent the date and time" is on.
+
+---
 ---
 
 ## ⏭️ Next
