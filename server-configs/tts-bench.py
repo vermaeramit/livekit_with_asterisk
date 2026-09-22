@@ -129,7 +129,8 @@ async def bench(provider: str, cfg, keys: dict, runs: int) -> None:
             tts=tts,
             sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(retain_format=True))
     print(f"\n{provider}  model={pcfg.tts_model}  voice={pcfg.tts_voice}  "
-          f"language={pcfg.language}  streaming={tts.capabilities.streaming}")
+          f"language={pcfg.language}  sample_rate={tts.sample_rate}  "
+          f"streaming={tts.capabilities.streaming}")
     print("(the first line includes opening the connection)")
     total_audio = total_stalled = 0.0
     try:
@@ -179,7 +180,18 @@ async def main() -> None:
     ap.add_argument("campaign", help="agent_config name, e.g. default")
     ap.add_argument("--providers", default="soniox,sarvam")
     ap.add_argument("--runs", type=int, default=2)
+    # A call asks Soniox for 24 kHz PCM - 384 kbps - and the phone line keeps
+    # 8 kHz of it. Asking for less is the test that separates the two remaining
+    # suspects: fewer stalls at a lower rate means the bytes are the problem,
+    # which is the network path; the same stalls mean Soniox is generating
+    # slowly, however little is asked for.
+    ap.add_argument("--sample-rate", type=int, default=None,
+                    help="ask Soniox for this rate instead of the call's 24000")
     args = ap.parse_args()
+
+    if args.sample_rate:
+        import voice_agent
+        voice_agent._TTS_NATIVE_RATE["soniox"] = args.sample_rate
 
     from livekit.agents.utils import http_context
     import store
