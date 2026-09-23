@@ -2442,8 +2442,31 @@ async def entrypoint(ctx: JobContext):
                 _note_provider("stt", getattr(m, "label", None))
             elif n == "LLMMetrics":
                 _note_provider("llm", getattr(m, "label", None))
-                # a tool call produces two LLM turns; keep the first TTFT
-                pending.setdefault("llm_ttft_ms", int(m.ttft * 1000))
+                # A generation that was thrown away never reached the caller,
+                # and its timing explains nothing about the answer that did.
+                #
+                # preemptive_generation starts the model on a partial transcript
+                # before the turn is confirmed. A caller who speaks in pieces -
+                # a phrase, a pause, more - gets one generation per piece, and
+                # all but the last are cancelled. Call 646, seq 19: FOUR
+                # generations in three seconds, three cancelled, and the ttft
+                # recorded was the FIRST cancelled one's. The turn read
+                # llm_ttft=2494 against a wait of 4678 and 1.6 s that no number
+                # on the row could account for.
+                #
+                # Counted rather than silently dropped: a turn that took four
+                # attempts is a turn where the caller was talking in fragments,
+                # and that is worth seeing on the row it happened on.
+                #
+                # Only the TIMING is skipped. The tokens below are still
+                # counted: a cancelled generation was billed and spent this
+                # call's prompt budget exactly like one that spoke.
+                if getattr(m, "cancelled", False):
+                    pending["llm_dropped"] = pending.get("llm_dropped", 0) + 1
+                else:
+                    # A tool call produces two LLM generations; keep the first
+                    # TTFT, which is when the model started answering at all.
+                    pending.setdefault("llm_ttft_ms", int(m.ttft * 1000))
                 pending["prompt_tokens"] = getattr(m, "prompt_tokens", 0)
                 pending["cached_tokens"] = getattr(m, "prompt_cached_tokens", 0)
                 agent.prompt_tokens += getattr(m, "prompt_tokens", 0)
@@ -2496,6 +2519,12 @@ async def entrypoint(ctx: JobContext):
                                  + t.get("tts_ttfb_ms", 0))
                 extra = (f"  prompt={t.pop('prompt_tokens', 0)}tok"
                          f"  cached={t.pop('cached_tokens', 0)}")
+                # Generations this turn started and threw away - see the
+                # metrics handler. Paid for, never heard, and the reason a
+                # turn's numbers can fail to add up to its wait.
+                dropped = t.pop("llm_dropped", 0)
+                if dropped:
+                    extra += f"  llm_dropped={dropped}"
                 if agent.last_kb_ms:
                     extra += f"  kb_tool={agent.last_kb_ms}ms"
                     agent.last_kb_ms = 0
