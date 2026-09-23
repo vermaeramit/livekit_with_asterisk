@@ -5544,6 +5544,36 @@ switching a call to the fallback TTS when its stream stalls.
 
 ## ⏭️ Next
 
+- **More TTS providers, one at a time** - decided 23 Sep 2026, after three days
+  in which Soniox stalled on every machine and network we could measure from.
+  One provider is one outage away from silence, and the current fallback only
+  triggers on an error, never on a provider that has merely gone slow.
+  Priced per minute of speech at ~760 characters a minute, which is what this
+  system actually speaks (12.7 chars/s, measured):
+
+  | | ≈ per minute | Region | Note |
+  |---|---|---|---|
+  | Soniox `tts-rt-v2` | $0.0117 | US / EU / Japan | current, and the one failing |
+  | Azure Neural | $0.0122 | **Central India** | HD $0.0167; commitment tiers to $7.50/1M |
+  | OpenAI `gpt-4o-mini-tts` | $0.015 | global | key already on both campaigns |
+  | Google Chirp 3 HD | $0.0228 | global | **plugin already installed**, 1M chars/month free |
+  | Sarvam `bulbul:v3` | ₹30/10k chars | India | in use; refuses a punctuation-only string |
+  | ElevenLabs Flash | $0.038 | global | |
+  | Cartesia Sonic | $0.038 | global | cheaper inside a plan |
+
+  Order to try: **Azure** (as cheap as Soniox, in India), then **Google** (no
+  plugin work, free tier covers the testing). List prices as of 23 Sep 2026 -
+  confirm with the vendor before committing.
+
+  Each one touches `_build_tts`, `tts_defaults`, the console's provider, model
+  and voice lists, the database CHECK on provider names, keys and rates - about
+  half a day each. Judge them on the ear first, then on `tts-bench` numbers
+  (first audio, stalls) at several times of day, then on price.
+
+- **Switch a call to the fallback TTS when its stream stalls** - the other half.
+  `tts_node` already measures stalls; nothing acts on them. Without this, a
+  second provider sits idle through exactly the outage it was bought for.
+
 - **The IAX password in extensions.conf** - move the peer into iax.conf, which
   is already gitignored, before this file is synced back to the repo
 - **The password is still in `extensions.conf` line 231** - the peer is proven
