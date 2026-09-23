@@ -49,7 +49,13 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent"))
+# Beside this file when it is run from the checkout, and the checkout itself when
+# it is not - it gets copied to /tmp to run on a box whose checkout is older.
+for _agent_dir in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent"),
+                   "/srv/aivoice/agent"):
+    if os.path.isfile(os.path.join(_agent_dir, "store.py")):
+        sys.path.insert(0, _agent_dir)
+        break
 
 # Two sentences an agent actually said on the broken calls, and the same two in
 # Devanagari.
