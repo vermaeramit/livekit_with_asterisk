@@ -90,7 +90,8 @@ def play_path(name: str) -> str:
 
 
 async def render(*, provider: str, api_key: str, model: str | None,
-                 voice: str | None, language: str, text: str) -> str:
+                 voice: str | None, language: str, text: str,
+                 region: str | None = None) -> str:
     """Synthesise, write, and return the path to store. Idempotent.
 
     Nothing is spent when the same words in the same voice are saved again: the
@@ -104,7 +105,11 @@ async def render(*, provider: str, api_key: str, model: str | None,
     if target.exists() and target.stat().st_size >= _MIN_BYTES:
         return play_path(name)
 
-    pcm, rate = await _synthesise(provider, api_key, model, voice, language, text)
+    # The region is not part of the filename hash: it changes which host
+    # renders the audio, not what the audio says. The same words in the same
+    # voice from the India region are the same message.
+    pcm, rate = await _synthesise(provider, api_key, model, voice, language,
+                                  text, region)
 
     if rate not in _EXT:
         raise RenderError(
@@ -133,7 +138,7 @@ async def render(*, provider: str, api_key: str, model: str | None,
 
 async def _synthesise(provider: str, api_key: str, model: str | None,
                       voice: str | None, language: str,
-                      text: str) -> tuple[bytes, int]:
+                      text: str, region: str | None = None) -> tuple[bytes, int]:
     """-> (raw signed 16-bit PCM, sample rate)."""
     want = _RATE[provider]
     try:
@@ -141,7 +146,7 @@ async def _synthesise(provider: str, api_key: str, model: str | None,
             data = await ttspreview.soniox(
                 api_key, model=model or "", voice=voice or "",
                 language=language, text=text,
-                audio_format="pcm_s16le", sample_rate=want)
+                audio_format="pcm_s16le", sample_rate=want, region=region)
         elif provider == "sarvam":
             data = await ttspreview.sarvam(
                 api_key, model=model or "", voice=voice or "",

@@ -76,18 +76,20 @@ async def set_client_key(tenant_id: int, provider: str, body: ProviderKeySet,
     _check_provider(provider)
     await _assert_tenant_visible(actor, tenant_id)
 
-    result = await pk.validate(provider, body.key)
+    result = await pk.validate(provider, body.key, body.region)
     if not result.ok:
         # 422, not 400: the value is well-formed, the provider disagrees with it.
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result.message)
 
     hint = await pk.store(tenant_id=tenant_id, campaign_id=None,
-                          provider=provider, key=body.key, actor_id=actor.id)
+                          provider=provider, key=body.key, actor_id=actor.id,
+                          region=body.region)
     # The hint, never the key. This table is readable by every tenant admin in
     # the tenant.
     await audit.record(actor, entity="provider_key", entity_id=provider,
                        action="set", tenant_id=tenant_id,
-                       changes={"scope": "client", "hint": hint})
+                       changes={"scope": "client", "hint": hint,
+                                "region": body.region})
     return ProviderKeyWritten(provider=provider, hint=hint,
                               message=result.message,
                               no_credits=result.no_credits,
@@ -129,15 +131,17 @@ async def set_campaign_key(campaign_id: int, provider: str, body: ProviderKeySet
     _check_provider(provider)
     tenant_id = await assert_campaign_visible(actor, campaign_id)
 
-    result = await pk.validate(provider, body.key)
+    result = await pk.validate(provider, body.key, body.region)
     if not result.ok:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result.message)
 
     hint = await pk.store(tenant_id=tenant_id, campaign_id=campaign_id,
-                          provider=provider, key=body.key, actor_id=actor.id)
+                          provider=provider, key=body.key, actor_id=actor.id,
+                          region=body.region)
     await audit.record(actor, entity="provider_key", entity_id=provider,
                        action="set", tenant_id=tenant_id, campaign_id=campaign_id,
-                       changes={"scope": "campaign", "hint": hint})
+                       changes={"scope": "campaign", "hint": hint,
+                                "region": body.region})
     return ProviderKeyWritten(provider=provider, hint=hint,
                               message=result.message,
                               no_credits=result.no_credits,
@@ -177,7 +181,11 @@ async def delete_campaign_key(campaign_id: int, provider: str,
 _RETIRING = {"tts-rt-v1": "Soniox removes this on 31 Aug 2026",
              "tts-rt-v1-preview": "an alias of tts-rt-v1, removed 31 Aug 2026"}
 
-_CATALOG_URLS = {"soniox": "https://api.soniox.com/v1/tts-models"}
+# Soniox is the only provider with a machine-readable voice list. Its host
+# depends on the region the key belongs to, so the URL cannot be a constant -
+# a US host asked with an India key answers 401, and this endpoint would report
+# that as "could not read the soniox catalogue" with no hint of the real cause.
+_HAS_CATALOG = ("soniox",)
 
 # Opening the campaign form should not hit Soniox every time, and the list
 # changes about as often as they ship a model.
@@ -190,9 +198,9 @@ _preview_cache: dict[str, bytes] = {}
 _CACHE_TTL = 600
 
 
-def _fetch_soniox_models(key: str) -> dict:
+def _fetch_soniox_models(key: str, region: str | None = None) -> dict:
     req = urllib.request.Request(
-        _CATALOG_URLS["soniox"],
+        f"https://{pk.soniox_host('api', region)}/v1/tts-models",
         headers={"Authorization": f"Bearer {key}",
                  # urllib's default is a WAF magnet - see agent/tools.py.
                  "User-Agent": os.getenv("TOOL_USER_AGENT", "AIVoice-Agent/1.0")})
@@ -221,8 +229,11 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     if not text:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "nothing to say")
 
-    cache_key = (f"{body.provider}:{body.model}:{body.voice}:{body.language}:"
-                 f"{body.speed}:{tenant_id}:{hash(text)}")
+    regions = await pk.resolve_regions(tenant_id=tenant_id,
+                                       campaign_id=campaign_id)
+    region = regions.get(body.provider)
+    cache_key = (f"{body.provider}:{region or 'us'}:{body.model}:{body.voice}:"
+                 f"{body.language}:{body.speed}:{tenant_id}:{hash(text)}")
     hit = _preview_cache.get(cache_key)
     if hit:
         return Response(content=hit, media_type="audio/mpeg",
@@ -243,10 +254,13 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
             status.HTTP_501_NOT_IMPLEMENTED,
             f"previews are not wired up for {body.provider} yet")
 
+    # Only the providers that have regions are told one. See pk.validate for
+    # why the others are not handed an argument they do not understand.
+    regional = {"region": region} if body.provider in pk.REGIONAL else {}
     try:
         audio = await synth(
             keys[body.provider], model=body.model, voice=body.voice,
-            language=body.language, text=text, speed=body.speed)
+            language=body.language, text=text, speed=body.speed, **regional)
     except ttspreview.PreviewError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
 
@@ -389,7 +403,7 @@ async def tts_catalog(campaign_id: int, provider: str,
                       user: CurrentUser = Depends(active_user)):
     """Models and voices the campaign's own key can actually use."""
     _check_provider(provider)
-    if provider not in _CATALOG_URLS:
+    if provider not in _HAS_CATALOG:
         # Sarvam publishes no such endpoint; its speakers are documented only.
         # Empty rather than 404, so the console can ask unconditionally and fall
         # back to its static list without special-casing per provider.
@@ -398,7 +412,13 @@ async def tts_catalog(campaign_id: int, provider: str,
     tenant_id = await assert_campaign_visible(user, campaign_id)
     _require_crypto()
 
-    cache_key = f"{provider}:{tenant_id}:{campaign_id}"
+    regions = await pk.resolve_regions(tenant_id=tenant_id,
+                                       campaign_id=campaign_id)
+    region = regions.get(provider)
+    # The region is part of the cache key because it is part of the answer:
+    # moving a key to another region and getting the old region's voice list
+    # back is how a campaign ends up set to a voice its model does not have.
+    cache_key = f"{provider}:{region or 'us'}:{tenant_id}:{campaign_id}"
     hit = _cache.get(cache_key)
     if hit and time.monotonic() - hit[0] < _CACHE_TTL:
         return hit[1]
@@ -411,7 +431,8 @@ async def tts_catalog(campaign_id: int, provider: str,
             "the voice list comes from the provider")
 
     try:
-        raw = await asyncio.to_thread(_fetch_soniox_models, keys[provider])
+        raw = await asyncio.to_thread(_fetch_soniox_models, keys[provider],
+                                      region)
     except Exception as e:
         # The provider, not the key. Never let a failure here carry the secret.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,

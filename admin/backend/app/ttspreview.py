@@ -65,9 +65,12 @@ import uuid
 
 import websockets
 
+# The Soniox host depends on the region its key was issued in, and that mapping
+# lives with the keys - see provider_keys.soniox_host and migration 058.
+from .provider_keys import soniox_host
+
 log = logging.getLogger("admin-api")
 
-SONIOX_WS = "wss://tts-rt.soniox.com/tts-websocket"
 SARVAM_URL = "https://api.sarvam.ai/text-to-speech"
 
 # mp3 so the browser can play the bytes as they are. PCM would mean sending a
@@ -90,7 +93,8 @@ class PreviewError(Exception):
 async def soniox(api_key: str, *, model: str, voice: str, language: str,
                  text: str, speed: float = 1.0,
                  audio_format: str = _FORMAT,
-                 sample_rate: int | None = None) -> bytes:
+                 sample_rate: int | None = None,
+                 region: str | None = None) -> bytes:
     """-> mp3 bytes, or raw PCM when asked for it.
 
     audio_format/sample_rate exist for the hold-message render, which needs
@@ -120,7 +124,8 @@ async def soniox(api_key: str, *, model: str, voice: str, language: str,
 
     audio = bytearray()
     try:
-        async with websockets.connect(SONIOX_WS, max_size=None) as ws:
+        url = f"wss://{soniox_host('tts-rt', region)}/tts-websocket"
+        async with websockets.connect(url, max_size=None) as ws:
             await ws.send(json.dumps(config))
             await ws.send(json.dumps({"stream_id": stream_id, "text": text}))
             await ws.send(json.dumps({"stream_id": stream_id, "text_end": True}))

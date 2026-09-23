@@ -357,6 +357,8 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
 
     provider = cfg["tts_provider"]
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
+    regions = await pk.resolve_regions(tenant_id=tenant_id,
+                                       campaign_id=campaign_id)
     if not keys.get(provider):
         return [f"There is no {provider} key on this campaign, so the queue "
                 f"message could not be synthesised and will not play."]
@@ -371,7 +373,8 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
                 path = await holdaudio.render(
                     provider=provider, api_key=keys[provider],
                     model=cfg.get("tts_model"), voice=cfg.get("tts_voice"),
-                    language=cfg["language"], text=text)
+                    language=cfg["language"], text=text,
+                    region=regions.get(provider))
             except holdaudio.RenderError as e:
                 path = None
                 problems.append(f"The {label} could not be synthesised: {e}")

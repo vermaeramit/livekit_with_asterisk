@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, ShieldAlert, Trash2, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
-import { Badge, Input, Label, Skeleton } from '@/components/ui/primitives'
+import { Badge, Input, Label, Select, Skeleton } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
 import { ApiError, api } from '@/lib/api'
 import type { ProviderKey, ProviderKeyWritten } from '@/types'
@@ -15,6 +15,24 @@ const PROVIDERS: Record<string, { label: string; used: string }> = {
   sarvam: { label: 'Sarvam', used: 'Speech to text, and the voice' },
   soniox: { label: 'Soniox', used: 'Speech to text, and the voice' },
   openrouter: { label: 'OpenRouter', used: 'Language model, through a gateway to many' },
+}
+
+// Providers that run the same API in more than one region, and the regions
+// they run it in. A key belongs to exactly one: it is issued by a project,
+// the project picks a region, and the key is refused everywhere else. So this
+// is asked for with the key and stored with it, not set once per client.
+const REGIONAL: Record<string, { label: string; value: string }[]> = {
+  soniox: [
+    { value: 'us', label: 'United States' },
+    { value: 'eu', label: 'European Union' },
+    { value: 'jp', label: 'Japan' },
+    { value: 'in', label: 'India' },
+  ],
+}
+
+function regionLabel(provider: string, region: string | null) {
+  if (!region) return null
+  return REGIONAL[provider]?.find((r) => r.value === region)?.label ?? region
 }
 
 function when(iso: string | null) {
@@ -45,6 +63,7 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
 
   const [editing, setEditing] = useState<string | null>(null)
   const [value, setValue] = useState('')
+  const [region, setRegion] = useState('us')
   const [error, setError] = useState<string | null>(null)
 
   const keys = useQuery({
@@ -62,6 +81,16 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
   function close() {
     setEditing(null)
     setValue('')
+    setRegion('us')
+    setError(null)
+  }
+
+  function open(row: ProviderKey) {
+    setEditing(row.provider)
+    setValue('')
+    // The region already on this key, so replacing a key does not silently
+    // move it back to the default one.
+    setRegion(row.region ?? 'us')
     setError(null)
   }
 
@@ -69,7 +98,11 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
     mutationFn: (provider: string) =>
       api<ProviderKeyWritten>(`${base}/keys/${provider}`, {
         method: 'PUT',
-        body: { key: value.trim() },
+        // Sent only for providers that have regions. The others would store a
+        // value that means nothing and reads as a fact.
+        body: REGIONAL[provider]
+          ? { key: value.trim(), region }
+          : { key: value.trim() },
       }),
     onSuccess: (r) => {
       refresh()
@@ -162,6 +195,9 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
                     <span className="font-mono text-xs text-muted-foreground">
                       ····{row.hint}
                     </span>
+                    {regionLabel(row.provider, row.region) && (
+                      <Badge tone="muted">{regionLabel(row.provider, row.region)}</Badge>
+                    )}
                     {when(row.updated_at) && (
                       <span className="text-xs text-muted-foreground">
                         {when(row.updated_at)}
@@ -172,8 +208,7 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
               </div>
 
               <div className="flex gap-2">
-                <Button variant="secondary" size="sm"
-                        onClick={() => { setEditing(row.provider); setValue(''); setError(null) }}>
+                <Button variant="secondary" size="sm" onClick={() => open(row)}>
                   {row.source === 'none' ? 'Set key' : inherited ? 'Override' : 'Replace'}
                 </Button>
                 {/* Only offer removal of a key that lives at THIS level. A
@@ -232,6 +267,25 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
               onChange={(e) => { setValue(e.target.value); setError(null) }}
             />
           </div>
+          {editing && REGIONAL[editing] && (
+            <div>
+              <Label htmlFor="provider-region">Region</Label>
+              <Select
+                id="provider-region"
+                value={region}
+                onChange={(e) => { setRegion(e.target.value); setError(null) }}
+              >
+                {REGIONAL[editing].map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                The region the key was created in. A key only works in its own
+                region, so this has to match the project it came from — the
+                provider refuses it otherwise.
+              </p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             The key is checked against the provider before it is saved, so a typo
             is caught here rather than on a live call.

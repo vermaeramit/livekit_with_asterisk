@@ -750,6 +750,9 @@ export interface ProviderKey {
   source: 'campaign' | 'client' | 'none'
   hint: string | null
   updated_at: string | null
+  // Which of the provider's regions this key was issued in - Soniox only
+  // today. null means the provider's default host.
+  region: string | null
 }
 
 export interface ProviderKeyWritten {

@@ -26,6 +26,30 @@ log = logging.getLogger("admin-api")
 PROVIDERS = ("openai", "sarvam", "soniox", "openrouter")
 Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 
+# Soniox is the only provider here that offers a choice of region, and a key
+# belongs to exactly one: a project picks its region when it is created and its
+# keys are rejected everywhere else. See migration 058 for why this matters to
+# us - the US region was stalling mid-sentence and India is not.
+REGIONS = ("us", "eu", "jp", "in")
+REGIONAL = ("soniox",)
+
+
+def soniox_host(kind: str, region: str | None) -> str:
+    """-> the hostname for one Soniox service in one region.
+
+    `kind` is the subdomain the service already has: 'api', 'tts-rt', 'stt-rt'.
+    US is the unprefixed name, which is also what NULL means - every key written
+    before migration 058 is on it.
+
+    Every place that talks to Soniox goes through this, because the host and the
+    key have to agree: an India key on the US host is a 401, and a US key on the
+    India host is the same. The failure is indistinguishable from a bad key.
+    """
+    if not region or region == "us":
+        return f"{kind}.soniox.com"
+    return f"{kind}.{region}.soniox.com"
+
+
 _TIMEOUT = 15
 
 
@@ -235,8 +259,12 @@ def _check_sarvam(key: str) -> Validation:
     return Validation(False, f"Sarvam returned {code}")
 
 
-def _check_soniox(key: str) -> Validation:
+def _check_soniox(key: str, region: str | None = None) -> Validation:
     """GET /v1/models - free, read-only, and genuinely authenticated.
+
+    Asked of the key's OWN region. Checking an India key against the US host
+    returns 401, which this function would report as "Soniox rejected this key"
+    - a correct key, refused at the save, with a message blaming the key.
 
     Every Soniox endpoint tried (models, transcriptions, files, voices) answered
     401 to a made-up key, so unlike Sarvam's /v1/models there is no trap here.
@@ -245,7 +273,7 @@ def _check_soniox(key: str) -> Validation:
     reports as rejected, that is the first thing to re-check.
     """
     req = urllib.request.Request(
-        "https://api.soniox.com/v1/models",
+        f"https://{soniox_host('api', region)}/v1/models",
         headers={"Authorization": f"Bearer {key}"},
     )
     code, body = _status_of(req)
@@ -265,36 +293,50 @@ _CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
            "soniox": _check_soniox, "openrouter": _check_openrouter}
 
 
-async def validate(provider: str, key: str) -> Validation:
+async def validate(provider: str, key: str,
+                   region: str | None = None) -> Validation:
     """Ask the provider whether this key works, before it is ever stored.
 
     A key is saved once and read on every call afterwards, so a typo that is not
     caught here is caught by a caller. This project has shipped three values from
     memory that were wrong and only surfaced on a live call; a save-time check is
     the cheapest place to stop the fourth.
+
+    The region goes only to providers that have one. The others take a key and
+    nothing else, and passing an argument they do not understand to make the
+    call site uniform would be a lie about what they support.
     """
     check = _CHECKS[provider]
+    if provider in REGIONAL:
+        return await asyncio.to_thread(check, key, region)
     return await asyncio.to_thread(check, key)
 
 
 async def store(*, tenant_id: int, campaign_id: int | None, provider: str,
-                key: str, actor_id: int) -> str:
+                key: str, actor_id: int, region: str | None = None) -> str:
     """Encrypt and upsert. -> the hint.
 
     The plaintext exists only as a local and is never handed back.
+
+    The region is written with the key and replaced with it. A key that moves
+    from one region to another is a different key, and leaving the old region
+    behind would point the new one at a host that will refuse it.
     """
     c = secretlib.crypto()
     enc, hint = c.encrypt(key), c.hint(key)
+    region = region if provider in REGIONAL else None
     await db.pool().execute(
         """INSERT INTO provider_keys
-               (tenant_id, campaign_id, provider, key_enc, key_hint, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6)
+               (tenant_id, campaign_id, provider, key_enc, key_hint, updated_by,
+                region)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (tenant_id, COALESCE(campaign_id, 0), provider)
            DO UPDATE SET key_enc    = EXCLUDED.key_enc,
                          key_hint   = EXCLUDED.key_hint,
                          updated_by = EXCLUDED.updated_by,
+                         region     = EXCLUDED.region,
                          updated_at = now()""",
-        tenant_id, campaign_id, provider, enc, hint, actor_id,
+        tenant_id, campaign_id, provider, enc, hint, actor_id, region,
     )
     return hint
 
@@ -337,6 +379,33 @@ async def resolve(*, tenant_id: int, campaign_id: int | None) -> dict[str, str]:
     return out
 
 
+async def resolve_regions(*, tenant_id: int,
+                          campaign_id: int | None) -> dict[str, str | None]:
+    """-> {'soniox': 'in'}, for the same keys resolve() returns.
+
+    A separate query rather than a second value out of resolve(), which has
+    nine callers that want a key and nothing else. The resolution rule is
+    repeated here word for word BECAUSE it has to match: a region that came
+    from the client's row while the key came from the campaign's override would
+    be a pair that exists in no Soniox project.
+
+    No key material passes through here, so the caller can hold the result
+    without the care resolve()'s output needs.
+    """
+    rows = await db.pool().fetch(
+        """SELECT provider, region
+             FROM provider_keys
+            WHERE tenant_id = $1
+              AND (campaign_id = $2 OR campaign_id IS NULL)
+            ORDER BY provider, campaign_id NULLS LAST""",
+        tenant_id, campaign_id,
+    )
+    out: dict[str, str | None] = {}
+    for r in rows:
+        out.setdefault(r["provider"], r["region"])
+    return out
+
+
 async def status_for(*, tenant_id: int,
                      campaign_id: int | None) -> list[dict]:
     """What the console shows: one row per provider, never a key.
@@ -346,7 +415,7 @@ async def status_for(*, tenant_id: int,
     the only question worth answering here. `source` says which.
     """
     rows = await db.pool().fetch(
-        """SELECT provider, campaign_id, key_hint, updated_at
+        """SELECT provider, campaign_id, key_hint, updated_at, region
              FROM provider_keys
             WHERE tenant_id = $1
               AND (campaign_id IS NULL OR campaign_id = $2)""",
@@ -363,10 +432,15 @@ async def status_for(*, tenant_id: int,
             r, source = inherited[p], "client"
         else:
             out.append({"provider": p, "source": "none",
-                        "hint": None, "updated_at": None})
+                        "hint": None, "updated_at": None, "region": None})
             continue
         out.append({"provider": p, "source": source,
-                    "hint": r["key_hint"], "updated_at": r["updated_at"]})
+                    "hint": r["key_hint"], "updated_at": r["updated_at"],
+                    # The region of the key that will actually be used, from the
+                    # same row as the hint. The console shows it beside the hint
+                    # for the same reason the hint is there: to answer "which
+                    # key is live" without revealing one.
+                    "region": r["region"]})
     return out
 
 

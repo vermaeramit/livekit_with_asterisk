@@ -112,7 +112,8 @@ def line(provider: str, mode: str, text: str, r: dict) -> str:
             f"stalls {r['stalls']:>2}  stalled {r['stalled']:4.1f}s  worst {r['worst_ms']:>5}ms")
 
 
-async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False) -> None:
+async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
+                regions: dict | None = None) -> None:
     import voice_agent
 
     if provider == cfg.tts_provider:
@@ -126,7 +127,10 @@ async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False) 
 
     from livekit.agents import tokenize, tts as lk_tts
 
-    tts = voice_agent._build_tts(provider, pcfg, keys[provider], True)
+    # The key's own region, or the bench measures a host this campaign
+    # never speaks to - which is the one thing a bench must not do.
+    tts = voice_agent._build_tts(provider, pcfg, keys[provider], True,
+                                 (regions or {}).get(provider))
     target = tts
     if not tts.capabilities.streaming:
         # Exactly what a call does with a TTS that cannot stream - see
@@ -217,6 +221,7 @@ async def main() -> None:
 
     cfg = await store.load_config(args.campaign)
     keys = await store.load_provider_keys(cfg.campaign_id)
+    regions = await store.load_provider_regions(cfg.campaign_id)
     print(f"campaign {cfg.name}: currently on {cfg.tts_provider}; "
           f"keys for {', '.join(sorted(keys)) or 'nothing'}")
 
@@ -226,7 +231,8 @@ async def main() -> None:
                 print(f"{provider}: not a TTS this bench knows - skipped")
                 continue
             try:
-                await bench(provider, cfg, keys, args.runs, args.quick)
+                await bench(provider, cfg, keys, args.runs, args.quick,
+                            regions)
             except Exception as e:
                 # The message only. A provider's error text can echo the request,
                 # and the request carries the key.

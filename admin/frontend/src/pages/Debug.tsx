@@ -384,7 +384,10 @@ asterisk -rx "iax2 show peers"`}</Cmd>
           <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a; cd /srv/aivoice
 /opt/aivoice/agent/.venv/bin/python server-configs/tts-bench.py default --providers soniox --runs 2 &
 BENCH=$!
-IP=$(getent ahostsv4 tts-rt.soniox.com | awk '{print $1; exit}')
+HOST=$(docker exec postgres psql -U aivoice -d aivoice -At -c "SELECT CASE WHEN region IS NULL OR region='us' THEN 'tts-rt.soniox.com' ELSE 'tts-rt.'||region||'.soniox.com' END FROM provider_keys WHERE provider='soniox' ORDER BY campaign_id NULLS LAST LIMIT 1")
+[ -n "$HOST" ] || HOST=tts-rt.soniox.com
+IP=$(getent ahostsv4 "$HOST" | awk '{print $1; exit}')
+echo "watching $HOST at $IP"
 for i in $(seq 1 20); do date +%T; ss -tin "dst $IP" | tail -2; sleep 3; done
 mtr -rwzc 30 "$IP" | tail -8
 wait $BENCH )`}</Cmd>

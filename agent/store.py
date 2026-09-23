@@ -259,6 +259,38 @@ async def load_provider_keys(campaign_id: int) -> dict[str, str]:
     return out
 
 
+async def load_provider_regions(campaign_id: int) -> dict[str, str | None]:
+    """-> {'soniox': 'in'} for this campaign, by the same rule as the keys.
+
+    Which of a provider's regions its key belongs to. Soniox is the only one
+    with a choice today: a project picks its region when it is created and its
+    keys work in that region alone, so the host the plugin is pointed at and
+    the key handed to it have to come from the SAME row. That is why the
+    ordering below is copied from load_provider_keys word for word rather than
+    written afresh.
+
+    NULL, and a provider missing from the result, both mean the provider's
+    default host - which is what every key used before migration 058.
+
+    Separate from load_provider_keys because its three callers want a key and
+    nothing else, and no key material passes through here.
+    """
+    rows = await (await pool()).fetch(
+        """SELECT pk.provider, pk.region
+             FROM campaigns c
+             JOIN provider_keys pk
+               ON pk.tenant_id = c.tenant_id
+              AND (pk.campaign_id = c.id OR pk.campaign_id IS NULL)
+            WHERE c.id = $1
+            ORDER BY pk.provider, pk.campaign_id NULLS LAST""",
+        campaign_id,
+    )
+    out: dict[str, str | None] = {}
+    for r in rows:
+        out.setdefault(r["provider"], r["region"])
+    return out
+
+
 async def load_tools(campaign_id: int) -> list[dict]:
     """Enabled tools for this campaign, auth values decrypted.
 

@@ -5542,6 +5542,77 @@ switching a call to the fallback TTS when its stream stalls.
 ---
 ---
 
+## Soniox answered: an India region, and a region on every key (23 Sep 2026)
+
+The stall report went to Soniox with the three-machine numbers. Their reply, in
+full substance: they have had no similar reports from other customers, in most
+cases it is *"related to the traffic passing from your location towards our main
+region (which is in US)"*, and they have **enabled the India region for this
+organization**.
+
+That does not contradict anything measured here. Every probe we could run
+stopped at the Cloudflare edge - the LAN was clean, the first hop was clean, no
+retransmissions, no loss, and the bad spells were not synchronised between
+machines. The long leg to the US was the one part never in view. Their
+explanation sits exactly in that gap.
+
+It is still their claim, not a proof. What follows is the measurement.
+
+### The India region, from the same laptop, on the same wifi
+
+`soniox-probe.py --region in`, ten samples over six minutes, 37 s apart:
+
+| | US (23 Sep, 11:57-12:01) | **India (23 Sep, 15:25-15:31)** |
+|---|---|---|
+| bad samples | **8 of 10** | **0 of 10** |
+| first audio | 400-900 ms good, 1-5 s bad | **210-272 ms** |
+| stalls | holes mid-sentence | none |
+
+210 to 272 is a 62 ms spread across six minutes. Not merely faster - steady,
+which is the property that was missing.
+
+`tts-rt-v2` and the voice `Kavya` both exist in the India region, so no campaign
+has to change its model or voice to move.
+
+**Not yet proven:** this is one laptop and six minutes. The fault came in spells
+over hours and hit one machine while sparing another in the same minute. .243 -
+the machine that actually makes calls - has not been measured, and no live call
+has run on it.
+
+### Why the region belongs to the key
+
+A Soniox project picks its region when it is created and is issued keys that
+work in **that region alone**. An India key on the US host is a 401, and so is
+the reverse - indistinguishable from a bad key. So the region is a property of
+the key, stored in the same `provider_keys` row (migration 058, `region`, NULL =
+the provider default) and never resolved separately: a campaign's key meeting
+the client row's region would be a pair that exists in no project.
+
+NULL on every existing row, so nothing changes for a key that does not set one.
+
+### The eleven places a hostname was hiding
+
+Counted before writing any of it, because the same shape has bitten this project
+before:
+
+| Where | What it would have done |
+|---|---|
+| `_check_soniox` | validated an India key against `api.soniox.com` -> 401 -> **"Soniox rejected this key"**, refusing a correct key at the save |
+| `_fetch_soniox_models` | voice list from the wrong region -> "could not read the soniox catalogue" |
+| `ttspreview.soniox` | console voice preview against the US host |
+| `holdaudio.render` | hold and queue messages, same |
+| `voice_agent._build_stt/_build_tts` | the call itself - `base_url=` and `websocket_url=`, confirmed present in the plugin **on the server's venv**, not just upstream |
+| `store.load_provider_regions` | new, mirrors `load_provider_keys` word for word |
+| `tts-bench` | would have benchmarked a host the campaign never speaks to |
+| schemas, router, types.ts, ProviderKeys.tsx | the dropdown, and the region beside the hint |
+
+`_PROVIDER_HOSTS`, the process-start connection warm-up, is deliberately left
+region-blind: it runs before any job has a campaign. The cost is one connection
+setup on a call's first request, which is what it was before the warm-up existed.
+
+The Debug page's stall-window command now reads the host out of the database
+rather than assuming the US one.
+
 ## ⏭️ Next
 
 - **More TTS providers, one at a time** - decided 23 Sep 2026, after three days

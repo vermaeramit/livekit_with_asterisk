@@ -1305,10 +1305,36 @@ def _soniox_lang(language: str) -> str:
     return (language or "en").split("-")[0]
 
 
-def _build_stt(provider: str, cfg, key: str, use_config_model: bool):
+def _soniox_host(kind: str, region: str | None) -> str:
+    """-> the host for one Soniox service in the region this key belongs to.
+
+    `kind` is the subdomain the service already has: 'tts-rt', 'stt-rt', 'api'.
+    None and 'us' both mean the unprefixed name, which is every key written
+    before migration 058.
+
+    The key and the host must agree - an India key on the US host is a 401 at
+    connect, which reaches a call as a provider that will not start. The region
+    comes from the same provider_keys row as the key: see
+    store.load_provider_regions.
+
+    Deliberately a copy of admin/backend/app/provider_keys.soniox_host rather
+    than an import: the agent does not import the console's code, and three
+    lines are cheaper than a shared package. If Soniox adds a region, both
+    change - and the constant lists in that file are the place it will be
+    noticed.
+    """
+    if not region or region == "us":
+        return f"{kind}.soniox.com"
+    return f"{kind}.{region}.soniox.com"
+
+
+def _build_stt(provider: str, cfg, key: str, use_config_model: bool,
+               region: str | None = None):
     """use_config_model is False for a fallback leg: cfg.stt_model names a model
     that belongs to the PRIMARY provider, and handing Sarvam's 'saarika:v2.5' to
-    OpenAI fails at the first utterance rather than at startup."""
+    OpenAI fails at the first utterance rather than at startup.
+
+    region is the provider region this key belongs to, and only Soniox has one."""
     if provider == "sarvam":
         kw = _stt_kwargs(cfg)
         if not use_config_model:
@@ -1352,11 +1378,15 @@ def _build_stt(provider: str, cfg, key: str, use_config_model: bool):
         terms = _context_terms(cfg) if use_config_model else []
         if terms:
             opts["context"] = soniox.ContextObject(terms=terms)
-        return soniox.STT(api_key=key, params=soniox.STTOptions(**opts))
+        return soniox.STT(
+            api_key=key, params=soniox.STTOptions(**opts),
+            base_url=f"wss://{_soniox_host('stt-rt', region)}/transcribe-websocket",
+        )
     raise ValueError(f"unknown STT provider '{provider}'")
 
 
-def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
+def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
+               region: str | None = None):
     if provider == "sarvam":
         kw = _tts_kwargs(cfg)
         if not use_config_model:
@@ -1388,6 +1418,10 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool):
             voice=((cfg.tts_voice if use_config_model else None)
                    or tts_defaults.SONIOX_VOICE),
             sample_rate=_TTS_NATIVE_RATE["soniox"],
+            # The region this campaign's key belongs to. On 23 Sep 2026 the
+            # US region was stalling mid-sentence from here and the India one
+            # was not - see migration 058 and gpu-server/BENCHMARKS.md.
+            websocket_url=f"wss://{_soniox_host('tts-rt', region)}/tts-websocket",
         )
     raise ValueError(f"unknown TTS provider '{provider}'")
 
@@ -1416,26 +1450,30 @@ def _fallback_provider(layer: str, configured: str | None, primary: str,
     return configured
 
 
-def _stt_stack(cfg, vad, keys: dict):
-    primary = _build_stt(cfg.stt_provider, cfg, keys[cfg.stt_provider], True)
+def _stt_stack(cfg, vad, keys: dict, regions: dict | None = None):
+    regions = regions or {}
+    primary = _build_stt(cfg.stt_provider, cfg, keys[cfg.stt_provider], True,
+                         regions.get(cfg.stt_provider))
     fb = _fallback_provider("stt", cfg.stt_fallback_provider, cfg.stt_provider, keys)
     if not fb:
         return primary
     # vad is required: gpt-4o-mini-transcribe is not a streaming STT, so without
     # a VAD to chunk the audio it has nothing to send.
     return lk_stt.FallbackAdapter(
-        [primary, _build_stt(fb, cfg, keys[fb], False)],
+        [primary, _build_stt(fb, cfg, keys[fb], False, regions.get(fb))],
         vad=vad, attempt_timeout=ATTEMPT_TIMEOUT)
 
 
-def _tts_stack(cfg, keys: dict):
-    primary = _build_tts(cfg.tts_provider, cfg, keys[cfg.tts_provider], True)
+def _tts_stack(cfg, keys: dict, regions: dict | None = None):
+    regions = regions or {}
+    primary = _build_tts(cfg.tts_provider, cfg, keys[cfg.tts_provider], True,
+                         regions.get(cfg.tts_provider))
     fb = _fallback_provider("tts", cfg.tts_fallback_provider, cfg.tts_provider, keys)
     if not fb:
         return primary
     # Note there is no attempt_timeout on the TTS adapter - unlike STT and LLM.
     return lk_tts.FallbackAdapter(
-        [primary, _build_tts(fb, cfg, keys[fb], False)],
+        [primary, _build_tts(fb, cfg, keys[fb], False, regions.get(fb))],
         sample_rate=_TTS_NATIVE_RATE.get(cfg.tts_provider, 24000))
 
 
@@ -1526,6 +1564,11 @@ async def _end_room(room_name: str) -> None:
 
 # Where each provider's plugin sends its requests. Used only to open the
 # connection early - see _warm_providers.
+#
+# Region-blind on purpose, and it has to be: this runs at process start, before
+# any job has a campaign, and the region belongs to a campaign's key. What it
+# costs a call on another region is one connection setup on the first request -
+# the same as before any of this existed.
 _PROVIDER_HOSTS = {
     "sarvam": "https://api.sarvam.ai",
     "openai": "https://api.openai.com",
@@ -1871,8 +1914,13 @@ async def entrypoint(ctx: JobContext):
     # utterance - the caller falls through to a human, which is the same
     # treatment a disabled campaign gets, and for the same reason.
     keys: dict[str, str] = {}
+    # Which region each of those keys belongs to. Read beside the keys and from
+    # the same rows, because a key and a host that disagree are a 401 at connect
+    # and a call that never speaks - see store.load_provider_regions.
+    regions: dict[str, str | None] = {}
     if cfg.campaign_id is not None:
         keys = await store.load_provider_keys(cfg.campaign_id)
+        regions = await store.load_provider_regions(cfg.campaign_id)
         # Whichever providers THIS campaign actually uses - not a fixed set.
         #
         # openai used to be unconditional here because the LLM ran on it. Since
@@ -2016,9 +2064,9 @@ async def entrypoint(ctx: JobContext):
     vad = ctx.proc.userdata["vad"]
     # Held rather than passed inline: the greeting cache renders through this
     # same stack, so a campaign's fallback provider applies there too.
-    tts_stack = _tts_stack(cfg, keys)
+    tts_stack = _tts_stack(cfg, keys, regions)
     session = AgentSession(
-        stt=_stt_stack(cfg, vad, keys),
+        stt=_stt_stack(cfg, vad, keys, regions),
         llm=_llm_stack(cfg, keys),
         tts=tts_stack,
         vad=vad,

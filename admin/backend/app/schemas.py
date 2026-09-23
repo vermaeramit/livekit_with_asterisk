@@ -1619,6 +1619,11 @@ class ProviderKeySet(BaseModel):
     # that rejects a valid new-style key is worse than one that lets a typo
     # through - the live check against the provider catches the typo anyway.
     key: str = Field(min_length=8, max_length=512)
+    # Which of the provider's regions this key was issued in. Soniox only
+    # today; NULL for everything else, and for a Soniox key on the default
+    # host. A key works in its own region alone, so this is part of the key,
+    # not a preference - see migration 058.
+    region: Literal["us", "eu", "jp", "in"] | None = None
 
 
 class ProviderKeyOut(BaseModel):
@@ -1627,6 +1632,7 @@ class ProviderKeyOut(BaseModel):
     source: str
     hint: str | None
     updated_at: datetime | None
+    region: str | None = None
 
 
 class ProviderKeyWritten(BaseModel):
