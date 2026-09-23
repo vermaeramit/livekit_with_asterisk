@@ -5504,6 +5504,42 @@ text still arriving when the voice starts - and the wait p50 should fall from
 2558 ms.
 
 ---
+## Soniox, settled: three machines, two networks (23 Sep 2026)
+
+`soniox-probe.py` takes the project out of the question - one websocket, one key
+in a file, the same stall measurement - so it can run anywhere. Sampled every
+few seconds, one 7-second sentence at a time.
+
+**On the office network, the same minutes:**
+
+| | laptop | .243 | .244 |
+|---|---|---|---|
+| bad samples | **8 of 10** | 3 of 10 | 5 of 10 |
+| worst | 26.6 s | 18.1 s | 37.8 s |
+
+**On a phone hotspot,** minutes later, same laptop: **3 of 7** bad, worst 15.5 s.
+
+Two things follow.
+
+**It is not this office.** A mobile network, a different ISP, a different route
+to Cloudflare - same stalling. The IT firewall change is cleared, and so are the
+VMs: the laptop runs no agent, no livekit, no project code at all.
+
+**It is not a shared link either.** The bad spells do not line up between
+machines. At 11:57:59 the laptop stalled 25.9 s while .243, twenty seconds later,
+was perfectly clean. A congested hop would take all three down together. This
+looks like something per-connection on the far side - queueing or capacity at
+Soniox - rather than anything on the way there.
+
+With the earlier measurements (no TCP retransmissions, 0% loss to the Cloudflare
+edge, MTU 1500 end to end, CPU idle, and the same stalls with no call, no LiveKit
+and no agent involved), **the cause is Soniox's service.**
+
+What that leaves us: a report to Soniox with these numbers, and a decision about
+what a caller hears while it is happening - a second provider on standby, or
+switching a call to the fallback TTS when its stream stalls.
+
+---
 ---
 
 ## ⏭️ Next
