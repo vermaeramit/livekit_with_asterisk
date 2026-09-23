@@ -66,7 +66,28 @@ When the ask does go in, two things matter besides the count:
 A starting point, to be replaced by measurement: 16 vCPU and 48 GB for TTS
 alone; 32 and 64 if STT moves here too.
 
-### The candidates, and the bar
+### Streaming candidates — what we are actually trying
+
+Latency is the point of this box, so the shortlist is models that start speaking
+early, not models that sound best in a studio. Two of them expose an
+**OpenAI-compatible `/v1/audio/speech`**, and livekit's OpenAI TTS plugin takes a
+`base_url` — so integrating either is a branch in `_build_tts` and a voice list
+in the console. No new plugin.
+
+| Model | Size | Hindi | Licence | Speed | Server |
+|---|---|---|---|---|---|
+| **Kokoro** | 82M | 4 voices, graded C by its own authors | Apache 2.0 | RTF ~0.03 | Kokoro-FastAPI, **OpenAI-compatible** |
+| **Chatterbox Multilingual v3** | 0.5B | yes, among 25 languages | **MIT** | Turbo ~75 ms, ~6× real time | Chatterbox-TTS-Server, **OpenAI-compatible** |
+| Magpie-TTS Multilingual | 357M | added in the v2602 checkpoint | NVIDIA Open Model (commercial OK) | built for voice agents | Riva / NIM — more work |
+| Orpheus | 3B | multilingual preview | Apache 2.0 | ~130 ms TTFB | community FastAPI |
+| NeuTTS Air | 0.5B | **English only** | — | — | ruled out |
+
+Trying **Kokoro and Chatterbox together**, because they integrate the same way:
+the small one sets the latency floor, the larger one is the better bet on Hindi.
+Note Chatterbox embeds a **PerTh watermark** in every output - harmless on a
+phone line, but a fact to know before shipping it.
+
+### The non-streaming candidates, and the bar
 
 The bar is not quality first. It is **audio faster than real time, continuously,
 under load** - the same bar the vendors are failing this week. Quality decides
