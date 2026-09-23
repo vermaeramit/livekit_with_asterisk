@@ -49,6 +49,44 @@ is not good enough at four concurrent calls. Whatever we try here gets measured
 the same way the vendors were — first audio, and stalls under load — before it
 goes anywhere near a caller.
 
+## Where we start
+
+Decided 23 Sep 2026: **start on the 8 vCPU it has**, with one stream, and ask IT
+for more only once a measurement says how much. One stream is enough to learn
+what a stream costs; the rest is multiplication and a check for where it breaks.
+
+When the ask does go in, two things matter besides the count:
+
+- **Topology.** It is configured as 8 sockets × 1 core. That is a bad VMware
+  layout - every vCPU looks like its own socket and both the scheduler and NUMA
+  make worse decisions for it. Ask for **1 socket × N cores**.
+- **RAM.** 23 GiB against 48 GB of VRAM is lopsided; a model has to pass through
+  host memory to reach the card. 48 GB would balance it.
+
+A starting point, to be replaced by measurement: 16 vCPU and 48 GB for TTS
+alone; 32 and 64 if STT moves here too.
+
+### The candidates, and the bar
+
+The bar is not quality first. It is **audio faster than real time, continuously,
+under load** - the same bar the vendors are failing this week. Quality decides
+between the models that clear it.
+
+| Model | Hindi | Licence | Streams? |
+|---|---|---|---|
+| **IndicF5** (AI4Bharat) | 11 Indian languages, 1417 h of Indian speech | to verify | renders a whole utterance |
+| **Indic Parler-TTS** (AI4Bharat) | 20+ Indic | Apache 2.0 | autoregressive, slow |
+| **Orpheus** | Hindi in the multilingual preview | Apache 2.0 | yes |
+| **Magpie-TTS** (NVIDIA) | 9 languages incl. Hindi, 357M | NVIDIA Open Model, commercial use allowed | yes |
+
+Licences are the first gate and are **not yet confirmed** - IndicF5's in
+particular. A model we cannot ship is not a candidate however good it sounds.
+
+First test: **IndicF5** for the quality bar, against the same Hindi sentences
+`tts-bench` uses, so it can be compared with Sarvam and Soniox by ear; and
+**Orpheus or Magpie** for streaming and speed. Measured the same way the vendors
+were - first audio, then stalls at 1, 2, 4 and 8 concurrent streams.
+
 ## Open questions
 
 - Which layer first: TTS (the one failing), STT, or the LLM?
