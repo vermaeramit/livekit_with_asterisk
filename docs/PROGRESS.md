@@ -5422,6 +5422,43 @@ Also seen on 627, and not changed here: turn 8 gave the date as
 when the campaign's "Tell the agent the date and time" is on.
 
 ---
+## The network to Soniox, measured (23 Sep 2026)
+
+The dialler team had run one command in MobaXterm and seen a network settings
+popup. Root's history has it: **`nmtui`**. What it wrote is
+`/etc/sysconfig/network-scripts/ifcfg-ens33`, last changed **18 Sep 12:05**, and
+the box rebooted **21 Sep 15:48** - so any change in it took full effect two days
+before the voice complaints. The file holds an address, gateway and `DNS1`; no
+MTU, no routing policy.
+
+Measured on .243, all of it read-only:
+
+| | |
+|---|---|
+| MTU | not set in ifcfg, interface at 1500, and `ping -M do -s 1472` reaches Soniox in 4.1-4.7 ms. **Not an MTU problem.** |
+| Route | one NIC, one gateway (10.130.23.1); Soniox and Sarvam leave by the same one |
+| Local firewall | `firewalld` and `nftables` both **inactive** on this box |
+| NIC | 814 RX drops in 4.5 M packets (0.018%), none on TX |
+
+**tts-rt.soniox.com is 104.18.22.191 - Cloudflare** (AS13335), not Soniox's own
+machines. The certificate reading "Google Trust Services" is what Cloudflare
+issues today. So the path is: us → Cloudflare edge in Delhi (≈4 ms) → Cloudflare's
+network → Soniox. Only the first leg is visible from here.
+
+A baseline from a good window (the bench stalled 0.1 s over 50.9 s of audio):
+
+- the TCP socket to the edge showed **no `retrans` and no `lost` field at all**
+  over 2,900 segments in, rtt 2.2-8 ms, `pmtu 1500`, `Recv-Q 0` throughout,
+  delivery rate up to 23 Mbps against the 0.4 Mbps Soniox needs
+- `mtr`: **0.0% loss at the destination** over 30 packets, via Spectranet and
+  Extreme-IX Delhi. A middle hop read 70%, which is ICMP rate limiting - the two
+  hops after it were 0%.
+
+The same command during a bad spell is what remains, and it is now step 5 of the
+Debug page's "The voice breaks". Same numbers then would clear the network
+entirely; `retrans` or real loss would move the conversation to the ISP.
+
+---
 ---
 
 ## ⏭️ Next

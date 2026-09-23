@@ -369,6 +369,32 @@ asterisk -rx "iax2 show peers"`}</Cmd>
           <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a
   cd /srv/aivoice && /opt/aivoice/agent/.venv/bin/python server-configs/tts-bench.py default )`}</Cmd>
         </Step>
+        <Step
+          n={5}
+          title="While it is stalling: the connection itself, and the path"
+          good={
+            <>
+              Run this <em>during</em> a bad spell — it only answers then. No <code>retrans</code> or{' '}
+              <code>lost</code> on the socket and 0% at the last mtr hop while the bench stalls puts the
+              fault beyond the provider's edge, with the provider. Either appearing puts it on the path,
+              and that is a conversation with the ISP.
+            </>
+          }
+        >
+          <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a; cd /srv/aivoice
+/opt/aivoice/agent/.venv/bin/python server-configs/tts-bench.py default --providers soniox --runs 2 &
+BENCH=$!
+IP=$(getent ahostsv4 tts-rt.soniox.com | awk '{print $1; exit}')
+for i in $(seq 1 20); do date +%T; ss -tin "dst $IP" | tail -2; sleep 3; done
+mtr -rwzc 30 "$IP" | tail -8
+wait $BENCH )`}</Cmd>
+          <p className="text-2xs leading-relaxed text-muted-foreground">
+            A clean window to compare against, measured 23 Sep 2026 while Soniox was behaving: 2,900
+            segments in with no <code>retrans</code> field at all, rtt 2.2–8 ms, <code>pmtu 1500</code>,{' '}
+            <code>Recv-Q 0</code> throughout, and 0.0% loss at the destination. A middle hop showing heavy
+            loss is ICMP rate limiting, not loss, when the hops after it are clean.
+          </p>
+        </Step>
       </Section>
 
       <Section
