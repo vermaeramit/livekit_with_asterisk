@@ -330,6 +330,29 @@ def _audio_output_state(session) -> str:
     return "unknown"
 
 
+async def _danda_to_stop(text):
+    """End Hindi sentences in a way the sentence splitters understand.
+
+    THE ~1 SECOND NOBODY COULD ACCOUNT FOR. Across 46 measured turns the caller
+    waited 2558 ms at the median while turn detection, the model's first token
+    and the TTS's first audio came to 1596 ms between them.
+
+    livekit's splitters end a sentence on [.!?。！？] and neither knows the
+    Devanagari danda. Measured on .243, both of them - the basic one Sarvam
+    falls back to and the blingfire one Soniox uses - return ONE sentence for a
+    three-sentence Hindi answer. So a plugin has nothing complete to send until
+    the model has written the entire reply, and the caller waits for all of it
+    rather than for the first sentence. Every TTS_STREAM line shows it: the
+    first audio arrives 100-500 ms AFTER the text finished, never during.
+
+    A full stop is the same instruction to a TTS as a danda, so this only
+    changes where the splitter cuts. The audio branch only - the transcript
+    keeps the danda, as it keeps the markers stripped above it.
+    """
+    async for chunk in text:
+        yield chunk.replace("।", ".").replace("॥", ".")
+
+
 def _wait_and_timeline(agent, role: str, m: dict) -> tuple[int | None, list | None]:
     """-> (the caller's wait for this speech in ms, what filled it) or (None, None).
 
@@ -905,7 +928,8 @@ class KBAgent(Agent):
         """
         markers = self._markers()
         if not markers:
-            async for frame in Agent.default.tts_node(self, text, model_settings):
+            async for frame in Agent.default.tts_node(self, _danda_to_stop(text),
+                                                      model_settings):
                 yield frame
             return
 
@@ -942,7 +966,8 @@ class KBAgent(Agent):
             if held:
                 yield held
 
-        async for frame in Agent.default.tts_node(self, filtered(), model_settings):
+        async for frame in Agent.default.tts_node(self, _danda_to_stop(filtered()),
+                                                  model_settings):
             yield frame
 
     # ────────────────────────── knowledge ──────────────────────────

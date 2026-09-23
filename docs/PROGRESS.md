@@ -5459,6 +5459,51 @@ Debug page's "The voice breaks". Same numbers then would clear the network
 entirely; `retrans` or real loss would move the conversation to the ISP.
 
 ---
+## The second nobody could account for: the danda (23 Sep 2026)
+
+46 turns with a measured wait:
+
+| | |
+|---|---|
+| caller waited, p50 | **2558 ms** |
+| p90 | 5774 ms |
+| turn detection, p50 | 354 ms |
+| model's first token, p50 | 998 ms |
+| TTS's first audio, p50 | 244 ms |
+
+The three parts come to 1596 ms. **About 960 ms was in neither.**
+
+Every `TTS_STREAM` line had already said where: `text_complete` was always
+negative - between −100 ms and −500 ms - so the first audio never arrived while
+the model was still writing. It arrived after the whole answer was written.
+
+livekit's sentence splitters end a sentence on `[.!?。！？]`. Neither knows the
+Devanagari danda `।`. Run on .243 against a three-sentence Hindi answer:
+
+```
+basic    : 1 sentence(s)     <- what Sarvam falls back to
+blingfire: 1 sentence(s)     <- what Soniox uses by default
+```
+
+Both return **one** sentence, so **both providers** have nothing complete to send
+until the model finishes. The caller waits for the entire reply rather than for
+its first sentence - the missing second at the median, and the bulk of the 5.7 s
+p90 on long answers.
+
+Fixed where the markers are already stripped, in `tts_node`: `।` and `॥` become a
+full stop on the way to the TTS. A full stop is the same instruction to a speech
+engine, so only the splitter's view changes. The audio branch only - the
+transcript keeps the danda, exactly as it keeps the `[EOC]` markers that are
+never spoken.
+
+Checked by feeding the transform a model's answer in four chunks, one of them
+ending mid-sentence with the danda at the chunk edge: one sentence became three.
+
+To be confirmed on the next calls: `text_complete` should turn **positive** - the
+text still arriving when the voice starts - and the wait p50 should fall from
+2558 ms.
+
+---
 ---
 
 ## ⏭️ Next
