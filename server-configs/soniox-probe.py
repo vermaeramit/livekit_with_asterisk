@@ -2,6 +2,7 @@
 
     python soniox-probe.py                 # key from %USERPROFILE%\\soniox.key or ~/soniox.key
     python soniox-probe.py --key-file some.key --runs 3
+    python soniox-probe.py --region in     # the India region, with an India key
 
 Why this exists, when tts-bench.py already measures the same thing: the bench
 needs the agent's config, keys and virtualenv, so it only runs on the two
@@ -39,7 +40,16 @@ import uuid
 
 import aiohttp
 
-WEBSOCKET_URL = "wss://tts-rt.soniox.com/tts-websocket"
+# Soniox runs the same API in four regions, and a key belongs to exactly one of
+# them: a project picks its region at creation and gets region-specific keys.
+# So the region here and the key file have to agree - a US key on the India
+# host is a 401, not a slow answer.
+REGIONS = ("us", "eu", "jp", "in")
+
+
+def websocket_url(region: str) -> str:
+    host = "tts-rt.soniox.com" if region == "us" else f"tts-rt.{region}.soniox.com"
+    return f"wss://{host}/tts-websocket"
 
 # What the calls run: the plugin's defaults for this project.
 MODEL = "tts-rt-v2"
@@ -127,17 +137,22 @@ async def main() -> None:
     # for four sentences a minute. The long one is where stalls show.
     ap.add_argument("--quick", action="store_true",
                     help="one long sentence only - for repeated sampling")
+    ap.add_argument("--region", choices=REGIONS, default="us",
+                    help="which Soniox region to speak to - the key must have "
+                         "been created in that region's project")
     args = ap.parse_args()
     texts = [TEXTS[2]] if args.quick else TEXTS
+    url = websocket_url(args.region)
 
     key = read_key(args.key_file)
-    print(f"{MODEL} / {VOICE} / {LANGUAGE} / {SAMPLE_RATE} Hz    {time.strftime('%H:%M:%S')}")
+    print(f"{MODEL} / {VOICE} / {LANGUAGE} / {SAMPLE_RATE} Hz    "
+          f"{args.region.upper()}    {time.strftime('%H:%M:%S')}")
 
     total_audio = total_stalled = 0.0
     async with aiohttp.ClientSession() as session:
         # One connection for every synthesis, which is what a call does: the
         # plugin shares one websocket across a TTS's streams.
-        async with session.ws_connect(WEBSOCKET_URL) as ws:
+        async with session.ws_connect(url) as ws:
             for _ in range(args.runs):
                 for text in texts:
                     r = await say(ws, key, text)
