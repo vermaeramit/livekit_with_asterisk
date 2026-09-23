@@ -112,7 +112,7 @@ def line(provider: str, mode: str, text: str, r: dict) -> str:
             f"stalls {r['stalls']:>2}  stalled {r['stalled']:4.1f}s  worst {r['worst_ms']:>5}ms")
 
 
-async def bench(provider: str, cfg, keys: dict, runs: int) -> None:
+async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False) -> None:
     import voice_agent
 
     if provider == cfg.tts_provider:
@@ -140,6 +140,17 @@ async def bench(provider: str, cfg, keys: dict, runs: int) -> None:
     print("(the first line includes opening the connection)")
     total_audio = total_stalled = 0.0
     try:
+        if quick:
+            # One long sentence, alone, nothing else: for sampling over time
+            # without paying for the whole set every minute.
+            for _ in range(runs):
+                r = await measure(target, TEXTS[2])
+                total_audio += r["audio"]
+                total_stalled += r["stalled"]
+                print(line(provider, "quick", TEXTS[2], r))
+            print(f"{provider} total: {total_audio:.1f}s of audio, "
+                  f"{total_stalled:.1f}s stalled")
+            return
         for _ in range(runs):
             for text in TEXTS:
                 r = await measure(target, text)
@@ -186,6 +197,8 @@ async def main() -> None:
     ap.add_argument("campaign", help="agent_config name, e.g. default")
     ap.add_argument("--providers", default="soniox,sarvam")
     ap.add_argument("--runs", type=int, default=2)
+    ap.add_argument("--quick", action="store_true",
+                    help="one long sentence only - for repeated sampling")
     # A call asks Soniox for 24 kHz PCM - 384 kbps - and the phone line keeps
     # 8 kHz of it. Asking for less is the test that separates the two remaining
     # suspects: fewer stalls at a lower rate means the bytes are the problem,
@@ -213,7 +226,7 @@ async def main() -> None:
                 print(f"{provider}: not a TTS this bench knows - skipped")
                 continue
             try:
-                await bench(provider, cfg, keys, args.runs)
+                await bench(provider, cfg, keys, args.runs, args.quick)
             except Exception as e:
                 # The message only. A provider's error text can echo the request,
                 # and the request carries the key.

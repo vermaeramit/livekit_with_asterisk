@@ -123,7 +123,12 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--key-file", default=os.path.join(home, "soniox.key"))
     ap.add_argument("--runs", type=int, default=2)
+    # One long sentence instead of four, for watching over time without paying
+    # for four sentences a minute. The long one is where stalls show.
+    ap.add_argument("--quick", action="store_true",
+                    help="one long sentence only - for repeated sampling")
     args = ap.parse_args()
+    texts = [TEXTS[2]] if args.quick else TEXTS
 
     key = read_key(args.key_file)
     print(f"{MODEL} / {VOICE} / {LANGUAGE} / {SAMPLE_RATE} Hz    {time.strftime('%H:%M:%S')}")
@@ -134,7 +139,7 @@ async def main() -> None:
         # plugin shares one websocket across a TTS's streams.
         async with session.ws_connect(WEBSOCKET_URL) as ws:
             for _ in range(args.runs):
-                for text in TEXTS:
+                for text in texts:
                     r = await say(ws, key, text)
                     total_audio += r["audio"]
                     total_stalled += r["stalled"]
