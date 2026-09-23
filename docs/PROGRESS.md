@@ -5613,8 +5613,118 @@ setup on a call's first request, which is what it was before the warm-up existed
 The Debug page's stall-window command now reads the host out of the database
 rather than assuming the US one.
 
+## What a caller waits for, now that the voice is fixed (23 Sep 2026)
+
+Call 646 on .243, the first call on the Soniox India region. Thirteen agent
+turns, and the four numbers each one records:
+
+| | typical | worst |
+|---|---|---|
+| turn detection (`eou`, includes stt) | **353 ms**, on 9 of 12 turns | 1500 ms, twice |
+| the model's first token | **678-1600 ms** | 2494 ms |
+| Soniox's first audio | **181-218 ms** | 363 ms |
+| the caller's wait | 1308-1554 ms | 4678 ms |
+
+**The voice is no longer the problem.** 19 of 20 utterances had no stall at all
+and the twentieth had one of 162 ms, which is inaudible on a phone line. The
+remaining latency is the model's.
+
+### The cheap fixes were already in
+
+Checked before proposing anything:
+
+- **The prompt cache is hitting** - 1152 of 1353 tokens on a mid-call turn, and
+  the gap is only the new turn's text.
+- **The prompt is small** - 1.1k to 2k tokens.
+- **preemptive_generation is on**, and visibly works: on seq 9 the parts add up
+  to 1859 ms and the caller waited 1361.
+
+So nothing was left to tune. What remained was the model itself - and that is
+where a second measurement changed the question.
+
+### Half of the model's time is distance, not thinking
+
+`llm-net.py` asks OpenAI for four tokens and reads back their own
+`openai-processing-ms` header, so wall clock minus their number is everything in
+between. From .243:
+
+```
+api.openai.com -> 162.159.140.245, 172.66.0.243    (Cloudflare)
+tcp connect 5.1 ms     tls handshake 15.7 ms
+smallest possible   wall 816 ms   their side 366 ms   network 450 ms   8 tok
+campaign prompt     wall 882 ms   their side 463 ms   network 419 ms   6151 tok
+```
+
+**The same shape as Soniox.** The door is 5 ms away and the work is not. The
+smallest possible request - eight tokens in, one out, no data to speak of -
+still pays 450 ms, so this is distance rather than volume, and the 6151-token
+prompt paying the same confirms it.
+
+Said carefully: 450 ms is about double a typical India-US round trip, so some of
+it is likely an edge-to-origin hop or time in front of their API server that
+their own clock does not count. Distance is a large part of it; that all 450 ms
+would come back from an in-country endpoint is **not** proven.
+
+### What was found and not taken
+
+- **OpenAI's India data residency** (Oct 2025) covers storage at rest, not where
+  inference runs, so it would not move this. Their own help page returned 403 to
+  us; this is from the announcement, unverified at the source.
+- **AWS Bedrock now serves OpenAI models inside India** - Mumbai (ap-south-1)
+  and Hyderabad (ap-south-2), through an OpenAI-compatible endpoint at
+  `bedrock-runtime.ap-south-1.amazonaws.com/openai/v1`. `_build_llm` already
+  takes a base_url, so the wiring is small. It is a different model and AWS
+  auth, and it was **parked**: the campaign stays on gpt-4.1-mini.
+- Decided instead to **cover the wait rather than shorten it**, with the reply
+  fillers this system already has per campaign.
+
+### A measurement that was lying
+
+`llm_ttft` on a turn was the ttft of a generation nobody heard. preemptive
+generation starts the model on a partial transcript; a caller who speaks in
+pieces gets one generation per piece and all but the last are cancelled. Seq 19:
+**four speeches created in three seconds, three thrown away** - and the handler
+kept the FIRST LLMMetrics it saw. The row read llm_ttft=2494 against a wait of
+4678, with 1.6 s that nothing on it could account for.
+
+`LLMMetrics.cancelled` had been there all along. Cancelled generations are now
+skipped for timing and counted as `llm_dropped` on the turn's log line; their
+tokens are still counted, because they were billed.
+
+### Where the text meets the voice
+
+Confirmed in the plugin on .243: the Soniox plugin buffers input into complete
+sentences with `tokenize.blingfire.SentenceTokenizer`, and takes a `tokenizer=`
+parameter. So text reaches the TTS **one sentence at a time** - not token by
+token, and not the whole answer. The danda fix is what makes a Hindi answer more
+than one sentence, and call 646 shows it working: `text_complete` is now
+POSITIVE on the long answers (+1393, +410, +212 ms), meaning audio started while
+the model was still writing. Before that fix it was always negative.
+
+Levers left, with honest sizes, against a 1400 ms wait:
+
+| | saves | costs |
+|---|---|---|
+| a custom tokenizer, pushing clauses rather than sentences | ~100-300 ms | may sound choppy; has to be judged by ear |
+| `PREEMPTIVE_TTS=1` | ~190 ms, sometimes more | pays to synthesise speech that gets thrown away |
+| `MIN_ENDPOINTING` 0.25 -> 0.15 | ~100 ms | cuts off callers who pause to breathe |
+
+None of them touches the ~550 ms that is OpenAI's own work, wherever it runs.
+
+---
+---
+
 ## ⏭️ Next
 
+- **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
+  4 have `region` NULL. Before moving them, one question has no answer yet:
+  whose Soniox account each key belongs to. Soniox opened India for OUR
+  organization; a client's own account has to ask for its own.
+- **Production (.244) has none of this.** It is still on v0.12.0.
+- **An in-country language model, when the model is next revisited.** AWS
+  Bedrock serves OpenAI models from Mumbai and Hyderabad behind an
+  OpenAI-compatible endpoint, and ~450 ms of every answer is currently distance.
+  Parked on purpose - the campaign stays on gpt-4.1-mini.
 - **More TTS providers, one at a time** - decided 23 Sep 2026, after three days
   in which Soniox stalled on every machine and network we could measure from.
   One provider is one outage away from silence, and the current fallback only
