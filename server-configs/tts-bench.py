@@ -249,9 +249,21 @@ async def main() -> None:
                 await bench(provider, cfg, keys, args.runs, args.quick,
                             regions)
             except Exception as e:
-                # The message only. A provider's error text can echo the request,
-                # and the request carries the key.
-                print(f"{provider}: FAILED - {type(e).__name__}")
+                # The name only, by default: a provider's error text can echo
+                # the request, and the request carries the key.
+                #
+                # An APIStatusError is the exception: its status code and
+                # message are the SERVER's reply, not a copy of what was sent.
+                # Printing just the name cost a round trip on 24 Sep 2026 -
+                # "openai: FAILED - APIStatusError" says nothing about whether
+                # the account is out of credit or the parameter is wrong, and
+                # those need opposite answers.
+                detail = ""
+                code = getattr(e, "status_code", None)
+                msg = getattr(e, "message", None)
+                if code or msg:
+                    detail = f" - {code or ''} {str(msg or '')[:160]}".rstrip()
+                print(f"{provider}: FAILED - {type(e).__name__}{detail}")
     await store.close()
 
 
