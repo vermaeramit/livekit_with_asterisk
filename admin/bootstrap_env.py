@@ -78,6 +78,17 @@ def main() -> int:
         print("note: OPENAI_API_KEY not found in the source env - "
               "PDF upload will report that ingestion is not configured")
 
+    # Our own text-to-speech, for the voice list and the preview button. The
+    # agent reads the same variable from the same file; copied here rather than
+    # written twice, because this file is REGENERATED - a line added to it by
+    # hand disappears on the next run, and the symptom is a voice dropdown that
+    # silently offers nothing.
+    if src.get("KOKORO_URL"):
+        lines.append(f"KOKORO_URL={src['KOKORO_URL']}")
+    else:
+        print("note: KOKORO_URL not found in the source env - the console will "
+              "not be able to list or preview voices from our own server")
+
     # trailing newline is not cosmetic - without it a later `echo >> .env` glues
     # itself onto the last value (we have been bitten by exactly this before)
     TARGET.write_text("\n".join(lines) + "\n")

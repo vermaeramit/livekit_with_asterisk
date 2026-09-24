@@ -152,6 +152,16 @@ const VOICES: Record<string, { value: string; label: string }[]> = {
   openai: [
     'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer',
   ].map((v) => ({ value: v, label: v })),
+  // Fallback only - the real list is read from the box, which serves 72 and
+  // can gain more without a release. These are the four Hindi ones, so a
+  // campaign can still be configured when the box cannot be reached, which is
+  // exactly when the dropdown would otherwise be empty and say nothing.
+  kokoro: [
+    { value: 'hf_alpha', label: 'hf_alpha — Hindi, female (measured fastest)' },
+    { value: 'hf_beta', label: 'hf_beta — Hindi, female' },
+    { value: 'hm_omega', label: 'hm_omega — Hindi, male' },
+    { value: 'hm_psi', label: 'hm_psi — Hindi, male' },
+  ],
 }
 
 // Soniox does not list Odia among its 60+ languages; Sarvam does. A campaign on
