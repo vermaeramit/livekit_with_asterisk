@@ -148,6 +148,45 @@ Not yet confirmed: GPU utilisation during the 40-call run. The aggregate rate
 and the idle CPU both point at serialisation inside the server, but `nvidia-smi
 dmon` was not running alongside, so that is inference rather than measurement.
 
+## Which languages it actually speaks - 24 Sep 2026
+
+Kokoro serves **72 voices in 9 languages**, read from the box itself:
+
+| | | | |
+|---|---|---|---|
+| American English | 33 | Spanish | 3 |
+| British English | 13 | Portuguese (BR) | 3 |
+| Mandarin | 8 | Italian | 2 |
+| Japanese | 5 | French | 1 |
+| **Hindi** | **4** - `hf_alpha`, `hf_beta`, `hm_omega`, `hm_psi` | | |
+
+No other Indian language is listed. Kokoro grades its own Hindi voices **C**,
+against **A** for `af_heart` - which matters less than it reads on an 8 kHz
+phone line, where six live calls were accepted by ear.
+
+### Other Indian scripts: eight work, two do not
+
+Tried after other Indian languages were tested by ear and sounded right.
+`tools/probe-kokoro-languages.py`, one sentence in nine scripts through
+`hf_alpha`, seconds of audio per character against Hindi:
+
+| | | | |
+|---|---|---|---|
+| Marathi | 109% | Punjabi | 94% |
+| Kannada | 112% | Tamil | 76% |
+| Bengali | 105% | **Telugu** | **720%** |
+| Gujarati | 102% | **Odia** | **1308%** |
+| Malayalam | 96% | | |
+
+So the phonemiser reads more than Devanagari. But **Telugu and Odia are not
+speech**: 22 s and 40 s of audio for a one-line sentence. Every one of the ten
+returned **HTTP 200** - nothing in the response says which two are broken.
+
+Two limits on what this proves. Plausible length is not correct pronunciation,
+and the voice is Hindi either way, so another language gets a Hindi accent.
+Both are for a speaker of the language to judge, which is why the probe keeps
+its wav files.
+
 ## Still to measure
 
 - **Chatterbox Multilingual v3** on the same sentences, for a quality comparison
