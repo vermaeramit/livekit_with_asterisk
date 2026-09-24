@@ -74,6 +74,13 @@ KNOWN = {
     # Ours, on the GPU box. hf_alpha is the Hindi voice that measured fastest
     # to first audio and was accepted by ear - see gpu-server/BENCHMARKS.md.
     "kokoro": ("kokoro", "hf_alpha"),
+    # The voice is ignored - see tts_defaults.OPENAI_IGNORES_VOICE - and is
+    # here only because this table is (model, voice). Added 24 Sep 2026 to
+    # answer a question about the PLUGIN rather than about OpenAI: kokoro goes
+    # through the same livekit-plugins-openai code, and when that produced no
+    # audio frames the first thing worth knowing was whether it does so against
+    # the vendor it was written for.
+    "openai": ("gpt-4o-mini-tts", "ash"),
 }
 
 # Providers with no account, and so no key to look for - the same set the agent
