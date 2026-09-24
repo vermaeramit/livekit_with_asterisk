@@ -62,6 +62,43 @@ async def raw(url: str, fmt: str) -> None:
         await client.close()
 
 
+def _watch_emitter() -> dict:
+    """Count what the plugin hands the emitter, from inside.
+
+    Everything readable from outside agrees: the SDK gets 108 KB, Kokoro logs
+    every attempt as 200, the mime type is recognised as raw PCM, request_id
+    being empty is only a warning, and the framework calls end_input() and
+    join() itself. And pushed_duration() is still 0.
+
+    So the question is no longer what the server sent. It is whether push() is
+    reached at all, and with how much - which nothing outside the emitter can
+    answer.
+    """
+    from livekit.agents.tts import tts as lk_tts
+
+    seen = {"initialize": 0, "push": 0, "bytes": 0, "flush": 0}
+    E = lk_tts.AudioEmitter
+    orig_init, orig_push, orig_flush = E.initialize, E.push, E.flush
+
+    def initialize(self, **kw):
+        seen["initialize"] += 1
+        seen["args"] = {k: kw.get(k) for k in
+                        ("sample_rate", "num_channels", "mime_type", "stream")}
+        return orig_init(self, **kw)
+
+    def push(self, data):
+        seen["push"] += 1
+        seen["bytes"] += len(data)
+        return orig_push(self, data)
+
+    def flush(self):
+        seen["flush"] += 1
+        return orig_flush(self)
+
+    E.initialize, E.push, E.flush = initialize, push, flush
+    return seen
+
+
 async def through_plugin() -> None:
     """The object a call actually speaks through."""
     import dataclasses
@@ -76,6 +113,7 @@ async def through_plugin() -> None:
     print(f"  plugin   streaming={tts.capabilities.streaming} "
           f"sample_rate={tts.sample_rate} "
           f"response_format={getattr(tts._opts, 'response_format', '?')}")
+    seen = _watch_emitter()
     try:
         frames = 0
         samples = 0
@@ -88,6 +126,11 @@ async def through_plugin() -> None:
     except Exception:
         print("  plugin   FAILED")
         traceback.print_exc()
+    finally:
+        print(f"  emitter  initialize x{seen['initialize']}  "
+              f"push x{seen['push']} ({seen['bytes']} bytes)  "
+              f"flush x{seen['flush']}")
+        print(f"  emitter  initialize args: {seen.get('args')}")
 
 
 async def main() -> None:
