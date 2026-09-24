@@ -5776,6 +5776,71 @@ something a CHECK can say.
 ---
 ---
 
+## Six calls on our own voice (24 Sep 2026)
+
+Campaign `default-test` on .243, tts_provider `kokoro`. Calls 648-653.
+
+| | |
+|---|---|
+| TTS first audio | **96-212 ms**, average 115-165 per call |
+| Stalls | **none**, across every utterance of all six calls |
+| Concurrency | three calls at once at 13:08, on workers 3, 4 and 6 |
+
+The voice is settled. What the numbers now show is what was hiding behind it.
+
+### Turn detection is the biggest single cost
+
+Call 652, seventeen turns: `eou_ms` was the full **1500 ms ceiling on eight of
+them**. A typical turn now breaks down as turn detection 1500, the model ~750,
+the voice ~180 - and the caller waited ~1700, so preemptive generation is
+already absorbing part of it.
+
+`MAX_ENDPOINTING` is not the obvious fix. The ceiling exists so a caller who
+pauses for breath is not cut off, and the earlier 4.0 s value froze calls for
+four seconds. The question worth answering first is why the detector is unsure
+so often on this campaign's callers, which is a different investigation.
+
+### The two long waits were a measurement limit, not silence
+
+seq 19 waited 18,491 ms and seq 31 waited 10,798 ms, both with **`eou_ms = 0`**.
+That is the shape already recorded for call 627: a caller speaking in two
+pieces gets no end-of-utterance from livekit, and the wait is measured from the
+FIRST piece - so it counts the time the caller was still talking.
+
+`llm_dropped` appeared nowhere in the logs, and that fix was deployed before
+these calls. So preemption churn was not the cause this time.
+
+### What actually broke: the language model, again
+
+Call 650 ended `error`:
+
+```
+LLMError: label='livekit.plugins.openai.llm.LLM'
+error=APITimeoutError('Request timed out.')  recoverable=True
+```
+
+`recoverable=True`, and nothing to recover to: the campaign has no LLM fallback,
+so there was no second leg in the chain. This is the same direction as the 450 ms
+of pure distance measured on 23 Sep - a round trip that usually costs half the
+answer's time, and once did not come back at all.
+
+### Fallbacks: deliberately off, for now
+
+`default-test` has no fallback on any of the three layers. Asked on 24 Sep 2026
+and declined for the moment. Recorded here so it reads as a decision rather than
+an oversight, along with what it costs:
+
+- **TTS** - the GPU box is ours and nobody watches it at 2 a.m. If it stops, the
+  calls go silent rather than slow. A Soniox India key is already on this
+  campaign, so this one is a dropdown away whenever it is wanted.
+- **LLM** - what ended call 650. It needs an OpenRouter key, because the schema
+  requires a fallback to name a DIFFERENT provider and openai is the only other
+  one wired for language models.
+- **STT** - no key question, just unset.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
