@@ -110,9 +110,9 @@ async def through_plugin() -> None:
     pcfg = dataclasses.replace(cfg, tts_provider="kokoro",
                                tts_model="kokoro", tts_voice="hf_alpha")
     tts = voice_agent._build_tts("kokoro", pcfg, "", True)
-    print(f"  plugin   streaming={tts.capabilities.streaming} "
-          f"sample_rate={tts.sample_rate} "
-          f"response_format={getattr(tts._opts, 'response_format', '?')}")
+    print(f"  tts      {type(tts).__module__}.{type(tts).__name__} "
+          f"streaming={tts.capabilities.streaming} "
+          f"sample_rate={tts.sample_rate}")
     seen = _watch_emitter()
     try:
         frames = 0
@@ -121,10 +121,10 @@ async def through_plugin() -> None:
         async for ev in stream:
             frames += 1
             samples += ev.frame.samples_per_channel
-        print(f"  plugin   {frames} frames, "
+        print(f"  tts      {frames} frames, "
               f"{samples / (tts.sample_rate or 24000):.2f}s of audio")
     except Exception:
-        print("  plugin   FAILED")
+        print("  tts      FAILED")
         traceback.print_exc()
     finally:
         print(f"  emitter  initialize x{seen['initialize']}  "
@@ -143,8 +143,15 @@ async def main() -> None:
     await raw(url, "pcm")
     await raw(url, "mp3")
 
-    print("\nthrough the plugin a call uses:")
-    await through_plugin()
+    print("\nthrough the TTS a call uses:")
+    # Our client takes its aiohttp session from livekit's job context, exactly
+    # as the Sarvam plugin does. A call has one; a script does not, and without
+    # this the failure is a RuntimeError from http_session() that says nothing
+    # about the audio. tts-bench opens the same context for the same reason.
+    from livekit.agents.utils import http_context
+
+    async with http_context.open():
+        await through_plugin()
 
 
 if __name__ == "__main__":
