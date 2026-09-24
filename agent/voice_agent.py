@@ -42,6 +42,7 @@ from livekit.plugins import openai, sarvam, silero, soniox
 
 import greeting_cache
 import hours
+import kokoro_tts
 import prompt as prompt_mod
 import tools as tools_mod
 import providers as providers_mod
@@ -1414,11 +1415,9 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
                  or tts_defaults.OPENAI_MODEL)
         return openai.TTS(model=model, api_key=key)
     if provider == "kokoro":
-        # Ours, on the GPU box. Kokoro-FastAPI speaks OpenAI's own wire format,
-        # so the plugin that already exists is the whole integration - the only
-        # things that change are where it points and that there is nobody to
-        # authenticate to. ~200 ms to first audio and RTF 0.026 on the LAN, see
-        # gpu-server/BENCHMARKS.md.
+        # Ours, on the GPU box - and spoken to by our own client rather than
+        # livekit's OpenAI plugin, which receives the audio and hands the
+        # emitter zero bytes. The evidence is in kokoro_tts.py's docstring.
         #
         # No default URL, deliberately. A hardcoded address is what sent
         # production's calls to the development box for two days (REPLICA.md),
@@ -1428,26 +1427,12 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
             raise ValueError(
                 "tts_provider is 'kokoro' but KOKORO_URL is not set on this "
                 "server - it has no default, see migration 059")
-        return openai.TTS(
+        return kokoro_tts.TTS(
+            base_url=KOKORO_URL,
             model=((cfg.tts_model if use_config_model else None)
                    or tts_defaults.KOKORO_MODEL),
             voice=((cfg.tts_voice if use_config_model else None)
                    or tts_defaults.KOKORO_VOICE),
-            base_url=KOKORO_URL,
-            # The plugin requires one and the server ignores it. Written out
-            # rather than passed as an empty string, which the SDK rejects
-            # before any request is made.
-            api_key="not-needed",
-            # Raw samples, not mp3 - which is the plugin's default and what it
-            # asked Kokoro for on the first attempt. That produced a healthy
-            # 200 with 30 KB of audio/mpeg and then "no audio frames were
-            # pushed": the bytes arrived and nothing decoded them.
-            #
-            # Worth doing even if mp3 had worked. This server is on our own LAN
-            # at 24 kHz, which is exactly the rate the plugin assembles frames
-            # at, so encoding to mp3 and decoding it back is CPU spent on both
-            # machines to arrive at the samples we already had.
-            response_format="pcm",
         )
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
