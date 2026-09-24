@@ -1438,6 +1438,16 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
             # rather than passed as an empty string, which the SDK rejects
             # before any request is made.
             api_key="not-needed",
+            # Raw samples, not mp3 - which is the plugin's default and what it
+            # asked Kokoro for on the first attempt. That produced a healthy
+            # 200 with 30 KB of audio/mpeg and then "no audio frames were
+            # pushed": the bytes arrived and nothing decoded them.
+            #
+            # Worth doing even if mp3 had worked. This server is on our own LAN
+            # at 24 kHz, which is exactly the rate the plugin assembles frames
+            # at, so encoding to mp3 and decoding it back is CPU spent on both
+            # machines to arrive at the samples we already had.
+            response_format="pcm",
         )
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
