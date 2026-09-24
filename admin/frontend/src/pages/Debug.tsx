@@ -6,10 +6,13 @@ import {
   Check,
   ChevronRight,
   Copy,
+  Cpu,
+  Gauge,
   PhoneMissed,
   RotateCcw,
   Search,
   Send,
+  Server,
   TriangleAlert,
   Unplug,
 } from 'lucide-react'
@@ -180,8 +183,202 @@ function CallIdField({ value, onChange }: { value: string; onChange: (v: string)
   )
 }
 
+/**
+ * The GPU box is a DIFFERENT MACHINE, and that is why this is a tab rather
+ * than another section.
+ *
+ * Everything else on this page runs on the call server as root. These run on
+ * 10.130.9.248 as `gpu`, which is in the docker group and needs no sudo. In
+ * one list the two would eventually be run on the wrong box, and a restart on
+ * the wrong box drops calls.
+ */
+function GpuTab() {
+  return (
+    <>
+      <Warn>
+        These run on the <strong>GPU box, 10.130.9.248</strong>, signed in as <code>gpu</code> — not
+        on this server. Its prompt looks different (<code>gpu@gpu:~$</code>), which is easy to miss
+        at 2am, so check <code>hostname -I</code> first.
+      </Warn>
+
+      <Section
+        icon={Activity}
+        title="Is our own voice up?"
+        when="Start here. A campaign set to our own server has no voice if this box is down."
+        defaultOpen
+      >
+        <Step
+          n={1}
+          title="Container, GPU, and whether the model finished loading"
+          good={
+            <>
+              <code>kokoro</code> <code>Up</code>, the card named, and <code>http 200</code>. VRAM
+              around <code>1000 MiB</code> for Kokoro alone — much less means the model is still
+              loading, and the API answers before it is ready.
+            </>
+          }
+        >
+          <Cmd>{String.raw`docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
+nvidia-smi --query-gpu=name,utilization.gpu,memory.used --format=csv
+curl -s -o /dev/null -w 'voices http %{http_code}\n' http://127.0.0.1:8880/v1/audio/voices`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="Make it speak, and count the bytes"
+          good={
+            <>
+              <code>http 200</code> and tens of thousands of bytes. A 200 with <code>0 bytes</code>{' '}
+              is a model that loaded and is not synthesising — nothing else here would show that.
+            </>
+          }
+        >
+          <Cmd>{String.raw`curl -s -o /tmp/say.pcm -w 'http %{http_code}  bytes %{size_download}\n' \
+  -X POST http://127.0.0.1:8880/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"kokoro","voice":"hf_alpha","input":"namaste, aap kaise hain","response_format":"pcm"}'`}</Cmd>
+        </Step>
+        <Step
+          n={3}
+          title="From the call server, not from the box"
+          good={
+            <>
+              <code>200</code>. Failing here while step 1 passes is the route or the firewall — the
+              box answers <code>10.130.0.0/16</code> only, by its own rule.
+            </>
+          }
+        >
+          <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a
+  echo "KOKORO_URL=$KOKORO_URL"
+  curl -s -o /dev/null -w 'from this server: %{http_code}\n' "$KOKORO_URL/audio/voices" )`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={Gauge}
+        title="Watch it during a call"
+        when="What one call costs the box, and whether the CPU or the GPU gives out first."
+      >
+        <Step
+          n={1}
+          title="The GPU, continuously"
+          good={
+            <>
+              <code>sm</code> is how busy the GPU is and <code>fb</code> is its memory. Use this
+              rather than <code>watch</code>: a sentence renders in 200–400 ms and a once-a-second
+              snapshot misses most of them.
+            </>
+          }
+        >
+          <Cmd>{String.raw`nvidia-smi dmon -s um -d 1`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="The container's CPU"
+          good={
+            <>
+              This box has <strong>8 vCPU</strong> and <code>docker stats</code> counts one core as
+              100%, so <code>800%</code> is the whole machine. The GPU is 48 GB and the CPU is not —
+              if anything runs out under load, expect it to be this.
+            </>
+          }
+        >
+          <Cmd>{String.raw`docker stats kokoro`}</Cmd>
+        </Step>
+        <Step
+          n={3}
+          title="Both, logged to a file"
+          good={
+            <>
+              Start it before the call and <code>Ctrl+C</code> after. The log stays in{' '}
+              <code>/tmp</code> for reading afterwards.
+            </>
+          }
+        >
+          <Cmd>{String.raw`( echo "time      gpu%  gpu_mem  kokoro_cpu  kokoro_mem"
+  while true; do
+    g=$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits | tr -d ',')
+    k=$(docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' kokoro)
+    printf '%s  %s  %s\n' "$(date +%T)" "$g" "$k"
+  done ) | tee /tmp/kokoro-load.log`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={RotateCcw}
+        title="Restart it, or bring it back after a reboot"
+        when="It stopped answering, or the box was rebooted."
+      >
+        <Warn>
+          A restart cuts off any call speaking on our own voice. A campaign with a fallback provider
+          carries on; one without goes silent.
+        </Warn>
+        <Step
+          n={1}
+          title="Restart the voice"
+          good={<>back to <code>Up</code> within a few seconds — the model is already on disk.</>}
+        >
+          <Cmd>{String.raw`( cd /srv/gpu-stack && docker compose restart kokoro
+  sleep 10
+  docker ps --format '{{.Names}}\t{{.Status}}' )`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="After a reboot, check the two things that do not survive one by themselves"
+          good={
+            <>
+              the CDI file present and the LAN rule <code>active</code>. <code>/var/run</code> is
+              tmpfs, so the GPU spec was written to <code>/etc/cdi</code> to survive a reboot; and
+              Docker publishes ports by writing its own iptables rules, straight past ufw, so a
+              separate unit keeps 8880 away from anything outside <code>10.130.0.0/16</code>.
+            </>
+          }
+        >
+          <Cmd>{String.raw`ls -l /etc/cdi/nvidia.yaml
+systemctl is-active docker-lan-only
+sudo iptables -L DOCKER-USER -n --line-numbers | head -5
+ufw status | head -8`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={Search}
+        title="Logs and disk"
+        when="It answered but the audio was wrong, or the box is filling up."
+      >
+        <Step
+          n={1}
+          title="What it has been asked for"
+          good={
+            <>
+              one <code>200 OK</code> line per SENTENCE, not per answer — a dozen lines for one
+              reply is normal.
+            </>
+          }
+        >
+          <Cmd>{String.raw`docker logs kokoro --since 10m 2>&1 | tail -30`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="Models and free space"
+          good={
+            <>
+              models live under <code>/opt/models</code> so rebuilding an image does not re-download
+              gigabytes. Container logs are capped at 50 MB × 3 each.
+            </>
+          }
+        >
+          <Cmd>{String.raw`df -h /
+du -sh /opt/models/* 2>/dev/null
+docker system df`}</Cmd>
+        </Step>
+      </Section>
+    </>
+  )
+}
+
 export function Debug() {
   const [callId, setCallId] = useState('')
+  const [tab, setTab] = useState<'server' | 'gpu'>('server')
   const id = callId || '<call-id>'
 
   return (
@@ -191,6 +388,40 @@ export function Debug() {
         description="When something breaks: what to check, in order. Copy a command and run it on the server over SSH — this page never runs anything itself."
       />
 
+      {/* Two machines, two sets of commands. Split because they are run in
+          different SSH sessions on different hosts, and the one thing this
+          page must never do is make it easy to run a command on the wrong
+          box. */}
+      <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
+        {([
+          { key: 'server', label: 'Call server', icon: Server },
+          { key: 'gpu', label: 'GPU box', icon: Cpu },
+        ] as const).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            aria-pressed={tab === key}
+            className={cn(
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              tab === key
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            )}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+            <span className="text-2xs font-normal opacity-70">
+              {key === 'server' ? ENV_LABEL[APP_ENV] : '10.130.9.248'}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {tab === 'gpu' && <GpuTab />}
+
+      {tab === 'server' && (
+        <>
       <Warn>
         This console is on <strong>{ENV_LABEL[APP_ENV]}</strong>. Both servers show the same{' '}
         <code>[root@localhost ~]#</code> prompt, so run <code>hostname -I</code> before anything that
@@ -599,6 +830,8 @@ cd /srv/aivoice && server-configs/deploy.sh vX.Y.Z     # production`}</Cmd>
           </li>
         </ul>
       </Card>
+        </>
+      )}
     </div>
   )
 }
