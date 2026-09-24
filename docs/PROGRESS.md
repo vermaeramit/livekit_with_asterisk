@@ -5714,6 +5714,68 @@ None of them touches the ~550 ms that is OpenAI's own work, wherever it runs.
 ---
 ---
 
+## A voice of our own, wired in (24 Sep 2026)
+
+Kokoro on the GPU box became a provider a campaign can choose. Migration 059.
+
+The integration itself is small - Kokoro-FastAPI speaks OpenAI's wire format and
+livekit's OpenAI TTS plugin takes a `base_url`, so it is a branch in `_build_tts`
+and a name in a dropdown. Everything worth writing down is what surrounded it.
+
+### It has no key, and this system required one
+
+Every provider until now was somebody else's account. `provider_keys` held the
+credential, `required_for_campaign` refused to enable a campaign without it, and
+the agent declined the call. None of that has anywhere to go for a box we own.
+
+So `kokoro` is deliberately NOT in `provider_keys_provider_chk` and not in
+`PROVIDERS` - a key row for it would be a fiction, and the console's key page
+offers what can actually be set. A `KEYLESS` set now exists in four places that
+each had their own reason to demand a credential: the agent's pre-call check,
+its fallback check, `required_for_campaign`, and the queue-message render. The
+bench has one too.
+
+### What was read rather than assumed
+
+Out of the plugin installed on .243, because passing a value it validates would
+fail at the first utterance and nowhere earlier:
+
+| | |
+|---|---|
+| `voice: TTSVoices \| str` | any string - `hf_alpha` passes |
+| `base_url`, `api_key` | both present |
+| `TTSCapabilities(streaming=False)` | wrapped in a StreamAdapter, so each sentence is its own request |
+| `SAMPLE_RATE = 24000` | assumed by the plugin, served by Kokoro. A mismatch would not error - it would sound slow and deep |
+
+One thing is still unknown and deliberately left to measurement: which
+`response_format` the plugin asks for, and whether Kokoro serves it. Three more
+greps would guess at it; `tts-bench default --providers kokoro` runs the exact
+code path a call runs and answers it outright. kokoro was added to the bench for
+that.
+
+### Two decisions worth keeping
+
+**The URL is an environment variable with no default.** `KOKORO_URL`, per
+server. REPLICA.md records two days of production calls landing on the
+development box because an address was hardcoded, and a LAN address is exactly
+the kind that differs between machines. Unset, the campaign fails with a message
+naming the variable rather than reaching the wrong box.
+
+**The rate is zero, and that is a price rather than a gap.** A call whose
+provider has no rate makes the whole total half true. What the box costs is a
+monthly VM bill, which belongs wherever the VM is accounted for and not on a
+per-call line.
+
+### The new failure mode, said out loud
+
+Every provider before this had somebody else's staff watching it. This one does
+not, and nobody restarts it at 2 a.m. The console warns when a campaign's voice
+is our own server and no fallback is set. The database cannot: "should" is not
+something a CHECK can say.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and

@@ -108,8 +108,45 @@ First test: **IndicF5** for the quality bar, against the same Hindi sentences
 **Orpheus or Magpie** for streaming and speed. Measured the same way the vendors
 were - first audio, then stalls at 1, 2, 4 and 8 concurrent streams.
 
+## How the agent reaches it
+
+Wired on 24 Sep 2026, migration 059. Kokoro-FastAPI speaks OpenAI's own wire
+format and livekit's OpenAI TTS plugin takes a `base_url`, so the integration is
+a branch in `_build_tts` and a name in a dropdown. No new plugin, no new
+protocol, nothing to keep in step when Kokoro releases.
+
+Read out of the installed plugin on .243 rather than assumed:
+
+| | |
+|---|---|
+| `voice: TTSVoices \| str` | any string, so `hf_alpha` passes - no allow-list to fight |
+| `base_url`, `api_key` | both parameters exist |
+| `TTSCapabilities(streaming=False)` | livekit wraps it in a StreamAdapter, so each SENTENCE is its own HTTP request - and each pays only the ~200 ms measured above |
+| `SAMPLE_RATE = 24000` | the plugin assumes it rather than asking, and Kokoro serves 24 kHz. A mismatch here would not error - it would just sound slow and deep |
+
+**It has no key, and that is the part that was structurally new.** Every provider
+before this was somebody else's account, and the system refused to enable a
+campaign without a credential for it. There is no account for a box we own, so
+`kokoro` is deliberately absent from `provider_keys` - a key row for it would be
+a fiction - and `KEYLESS` in the agent, the console and the bench all skip it.
+
+**Where it lives is an environment variable with no default.** `KOKORO_URL` on
+each server, e.g. `http://10.130.9.248:8880/v1`. No fallback address: a
+hardcoded one already sent production's calls to the development box for two
+days (`docs/REPLICA.md`), and a LAN address is exactly the kind that differs
+between machines. Unset, a campaign configured for it fails with a message
+naming the variable.
+
+**A fallback is not optional here, in practice.** Every other provider has
+somebody else's staff watching it. This box has none, and nobody restarts it at
+2 a.m. The console warns when a campaign's voice is our own server and no
+fallback is set; the database cannot, because "should" is not something a CHECK
+can say.
+
 ## Open questions
 
+- Who restarts this box at 2 a.m.? Still unanswered, and now it matters: a
+  campaign can be pointed at it.
 - Which layer first: TTS (the one failing), STT, or the LLM?
 - Which Hindi TTS, and how does it sound next to Sarvam and Soniox on the same
   sentences? Licence matters as much as quality.

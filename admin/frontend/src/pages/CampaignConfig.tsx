@@ -85,6 +85,18 @@ const PROVIDERS = [
   { value: 'soniox', label: 'Soniox' },
 ]
 
+// Text-to-speech has one the others do not: Kokoro runs on our own GPU box.
+// Separate list because it only speaks — offering it for speech-to-text would
+// let somebody save a row the database refuses, and the failure would land on
+// the save rather than on the dropdown.
+const TTS_PROVIDERS = [
+  ...PROVIDERS,
+  { value: 'kokoro', label: 'Our own server' },
+]
+
+// Providers with no account behind them, so no key to ask a client for.
+const KEYLESS = ['kokoro']
+
 // Only models and speakers known to exist are listed. Every one of these fails
 // at call time rather than on save if it is wrong, so the list is the safe path
 // and "Custom…" is the escape hatch for anything the provider adds later.
@@ -108,6 +120,10 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
   // -preview alias are deliberately absent: Soniox removes them on 31 Aug 2026,
   // and a fallback list is exactly where a dead model would go unnoticed.
   soniox: [{ value: 'tts-rt-v2', label: 'tts-rt-v2' }],
+  // One model, and the server names it. Only reached if the box cannot be
+  // read, in which case the voice list is empty too and the campaign should
+  // not be saved on it anyway.
+  kokoro: [{ value: 'kokoro', label: 'kokoro — ~200ms measured on the LAN' }],
 }
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
@@ -763,6 +779,18 @@ export function CampaignConfig() {
                 </Note>
               )}
 
+            {/* Every other provider is somebody else's service, with somebody
+                else's staff watching it. This one is a machine of ours, and
+                nobody restarts it at 2am. A fallback is the difference between
+                a slower call and a silent one. */}
+            {value.tts_provider === 'kokoro' && !value.tts_fallback_provider && (
+              <Note tone="warn">
+                This campaign speaks on our own server and has no fallback. If
+                that box stops answering, these calls have no voice at all —
+                pick a fallback provider below.
+              </Note>
+            )}
+
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField
                 label="Speech-to-text provider"
@@ -844,7 +872,7 @@ export function CampaignConfig() {
                   set('tts_voice', null)
                   if (value.tts_fallback_provider === v) set('tts_fallback_provider', null)
                 }}
-                options={PROVIDERS}
+                options={TTS_PROVIDERS}
                 hint="Whose voice this campaign speaks with."
               />
               <SelectField
@@ -853,7 +881,7 @@ export function CampaignConfig() {
                 onChange={(v) => set('tts_fallback_provider', v || null)}
                 options={[
                   { value: '', label: 'No fallback' },
-                  ...PROVIDERS.filter((p) => p.value !== value.tts_provider),
+                  ...TTS_PROVIDERS.filter((p) => p.value !== value.tts_provider),
                 ]}
                 hint="This chain carried every call the day Sarvam ran out of credits."
               />
@@ -1215,7 +1243,8 @@ export function CampaignConfig() {
             <ProviderKeys
               scope="campaign"
               id={campaignId}
-              inUse={[...new Set([value.stt_provider, value.tts_provider, 'openai'])]}
+              inUse={[...new Set([value.stt_provider, value.tts_provider, 'openai'])]
+                .filter((p) => !KEYLESS.includes(p))}
             />
           </CardBody>
         </Card>

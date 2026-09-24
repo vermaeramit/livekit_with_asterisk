@@ -33,6 +33,13 @@ Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 REGIONS = ("us", "eu", "jp", "in")
 REGIONAL = ("soniox",)
 
+# Providers with no account behind them, and so no key and no row in this
+# table. Kokoro runs on our own GPU box; asking a client for a credential to
+# our hardware would mean storing a fiction and refusing to enable a campaign
+# without it. Deliberately not in PROVIDERS - the console's key page offers
+# what can actually be set - and mirrored by KEYLESS in the agent.
+KEYLESS = ("kokoro",)
+
 
 def soniox_host(kind: str, region: str | None) -> str:
     """-> the hostname for one Soniox service in one region.
@@ -464,7 +471,10 @@ async def required_for_campaign(campaign_id: int) -> set[str]:
     )
     if row is None:
         return {"openai"}
-    return {row["stt_provider"], row["tts_provider"], "openai"}
+    # KEYLESS removed last, not skipped above: a campaign on our own TTS still
+    # needs its STT and openai keys, and only the provider that has no account
+    # drops out.
+    return {row["stt_provider"], row["tts_provider"], "openai"} - set(KEYLESS)
 
 
 async def missing_for_campaign(campaign_id: int) -> list[str]:

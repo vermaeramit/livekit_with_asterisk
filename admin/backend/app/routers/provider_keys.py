@@ -32,7 +32,21 @@ editor = require_perm("provider_keys.write")
 
 
 def _check_provider(provider: str) -> str:
+    """For the endpoints that SET a key. Deliberately strict.
+
+    kokoro is not in PROVIDERS and must not be: there is no account behind our
+    own GPU box, so "set a key for kokoro" is a request to store a fiction.
+    """
     if provider not in pk.PROVIDERS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            f"unknown provider '{provider}'")
+    return provider
+
+
+def _check_voice_provider(provider: str) -> str:
+    """For previewing a voice and listing voices, where a keyless provider is
+    a perfectly ordinary choice - it just speaks on hardware we own."""
+    if provider not in pk.PROVIDERS and provider not in pk.KEYLESS:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             f"unknown provider '{provider}'")
     return provider
@@ -185,7 +199,32 @@ _RETIRING = {"tts-rt-v1": "Soniox removes this on 31 Aug 2026",
 # depends on the region the key belongs to, so the URL cannot be a constant -
 # a US host asked with an India key answers 401, and this endpoint would report
 # that as "could not read the soniox catalogue" with no hint of the real cause.
-_HAS_CATALOG = ("soniox",)
+_HAS_CATALOG = ("soniox", "kokoro")
+
+
+def _fetch_kokoro_voices(url: str) -> list[str]:
+    """-> the voice names our own server is serving right now.
+
+    Read from the box rather than listed here for the reason the Soniox
+    catalogue is read from Soniox: a literal goes stale and nobody notices
+    until a call fails. This one can change without a release - a voice pack
+    added to /opt/models on the GPU box appears here on the next page load.
+    """
+    req = urllib.request.Request(f"{url.rstrip('/')}/audio/voices")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = json.loads(r.read().decode("utf-8", "replace"))
+    # The server has answered with both shapes across versions: a bare list,
+    # and {"voices": [...]}. Neither is worth a 500.
+    voices = data.get("voices") if isinstance(data, dict) else data
+    return [v for v in (voices or []) if isinstance(v, str)]
+
+
+# What the prefixes mean, from Kokoro's own naming: first letter the language,
+# second the speaker's gender. Only the ones this system has a use for are
+# named; anything else is shown as it comes.
+_KOKORO_LANG = {"hf": "Hindi, female", "hm": "Hindi, male",
+                "af": "English (US), female", "am": "English (US), male",
+                "bf": "English (UK), female", "bm": "English (UK), male"}
 
 # Opening the campaign form should not hit Soniox every time, and the list
 # changes about as often as they ship a model.
@@ -221,7 +260,7 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     seventy clicks while somebody makes up their mind, and the second click on
     the same voice should not be a second charge.
     """
-    _check_provider(body.provider)
+    _check_voice_provider(body.provider)
     tenant_id = await assert_campaign_visible(user, campaign_id)
     _require_crypto()
 
@@ -240,7 +279,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
                         headers={"Cache-Control": "no-store"})
 
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
-    if not keys.get(body.provider):
+    # Our own box has no key to be missing - see pk.KEYLESS.
+    if body.provider not in pk.KEYLESS and not keys.get(body.provider):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"no {body.provider} key on this campaign or client - a preview is "
@@ -248,7 +288,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
 
     synth = {"soniox": ttspreview.soniox,
              "sarvam": ttspreview.sarvam,
-             "openai": ttspreview.openai}.get(body.provider)
+             "openai": ttspreview.openai,
+             "kokoro": ttspreview.kokoro}.get(body.provider)
     if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
@@ -259,7 +300,7 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     regional = {"region": region} if body.provider in pk.REGIONAL else {}
     try:
         audio = await synth(
-            keys[body.provider], model=body.model, voice=body.voice,
+            keys.get(body.provider, ""), model=body.model, voice=body.voice,
             language=body.language, text=text, speed=body.speed, **regional)
     except ttspreview.PreviewError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
@@ -401,8 +442,12 @@ async def llm_catalog(campaign_id: int, provider: str,
             response_model=TtsCatalog)
 async def tts_catalog(campaign_id: int, provider: str,
                       user: CurrentUser = Depends(active_user)):
-    """Models and voices the campaign's own key can actually use."""
-    _check_provider(provider)
+    """Models and voices this campaign can actually use.
+
+    For the vendors that is what their key can reach; for kokoro it is what our
+    own box is serving, which needs no key at all.
+    """
+    _check_voice_provider(provider)
     if provider not in _HAS_CATALOG:
         # Sarvam publishes no such endpoint; its speakers are documented only.
         # Empty rather than 404, so the console can ask unconditionally and fall
@@ -410,6 +455,37 @@ async def tts_catalog(campaign_id: int, provider: str,
         return TtsCatalog(provider=provider, models=[])
 
     tenant_id = await assert_campaign_visible(user, campaign_id)
+
+    if provider == "kokoro":
+        # Ours. No key, no region, no tenant in the answer - the box serves the
+        # same voices to every campaign, so this is cached by nothing but the
+        # provider name.
+        url = ttspreview.kokoro_url()
+        if not url:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "KOKORO_URL is not set on this server, so the voice list "
+                "cannot be read from our own text-to-speech")
+        hit = _cache.get("kokoro")
+        if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+            return hit[1]
+        try:
+            names = await asyncio.to_thread(_fetch_kokoro_voices, url)
+        except Exception as e:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                f"could not reach our own text-to-speech: "
+                                f"{type(e).__name__}")
+        # Hindi first: this is a Hindi calling system, and 68 of the 72 voices
+        # are not. They are still listed - a campaign may want English - but
+        # they do not come before the four that will actually be used.
+        names.sort(key=lambda v: (not v.startswith(("hf_", "hm_")), v))
+        out = TtsCatalog(provider=provider, models=[
+            TtsModel(id="kokoro", name="Kokoro (our own server)", voices=[
+                TtsVoice(id=v, description=_KOKORO_LANG.get(v[:2]))
+                for v in names])])
+        _cache["kokoro"] = (time.monotonic(), out)
+        return out
+
     _require_crypto()
 
     regions = await pk.resolve_regions(tenant_id=tenant_id,

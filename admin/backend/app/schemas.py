@@ -25,6 +25,13 @@ Role = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$",
 # migration 011. All three move together or a save fails at the database.
 Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 
+# TTS has one more than the rest: kokoro runs on our own GPU box and has no
+# account, so it is a voice a campaign can choose but never a key anyone sets.
+# Separate rather than added to Provider, because allowing it for stt_provider
+# or llm_provider would let the console save a row the database then refuses -
+# the failure would land on a save, not on a dropdown. Migration 059.
+TtsProvider = Literal["openai", "sarvam", "soniox", "kokoro"]
+
 # 12 characters is the floor everywhere a password is set, so the rule cannot be
 # bypassed by picking a different endpoint.
 Password = Annotated[str, Field(min_length=12, max_length=200)]
@@ -747,9 +754,9 @@ class AgentConfigUpdate(BaseModel):
                                              max_length=400)
 
     stt_provider: Provider | None = None
-    tts_provider: Provider | None = None
+    tts_provider: TtsProvider | None = None
     stt_fallback_provider: Provider | None = None
-    tts_fallback_provider: Provider | None = None
+    tts_fallback_provider: TtsProvider | None = None
 
     @field_validator("recording_disclosure")
     @classmethod

@@ -63,8 +63,10 @@ _EXT = {8000: "sln", 16000: "sln16", 24000: "sln24"}
 _MIN_BYTES = 16000
 
 # What each provider is asked for. Soniox and Sarvam both do 8 kHz; OpenAI's
-# pcm is fixed at 24 kHz and there is no parameter for it.
-_RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000}
+# pcm is fixed at 24 kHz and there is no parameter for it, and Kokoro on our
+# own box serves 24 kHz with no parameter either. The rate that comes back is
+# checked rather than trusted - see _strip_header.
+_RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000, "kokoro": 24000}
 
 
 class RenderError(Exception):
@@ -152,6 +154,11 @@ async def _synthesise(provider: str, api_key: str, model: str | None,
                 api_key, model=model or "", voice=voice or "",
                 language=language, text=text,
                 codec="wav", sample_rate=want)
+        elif provider == "kokoro":
+            # Same wire format as OpenAI, different address and no account.
+            data = await ttspreview.kokoro(
+                api_key, model=model or "", voice=voice or "",
+                language=language, text=text, response_format="pcm")
         else:
             data = await ttspreview.openai(
                 api_key, model=model or "", voice=voice or "",

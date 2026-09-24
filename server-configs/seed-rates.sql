@@ -69,7 +69,16 @@ INSERT INTO provider_rates (provider, model, kind, unit, price, currency, note) 
     -- No model named: Sarvam prices the service, not the model. Add a
     -- model-specific row if that stops being true - it wins over this one.
     ('sarvam', NULL,           'stt_seconds',    'per_hour',    30.00,   'INR', 'sarvam docs, 29 Aug 2026 - Rs 30/hour'),
-    ('sarvam', NULL,           'tts_characters', 'per_million', 3000.00, 'INR', 'sarvam docs, 29 Aug 2026 - Rs 30 per 10K characters')
+    ('sarvam', NULL,           'tts_characters', 'per_million', 3000.00, 'INR', 'sarvam docs, 29 Aug 2026 - Rs 30 per 10K characters'),
+
+    -- Kokoro, 24 Sep 2026. Zero, and it is a real price rather than a missing
+    -- one: it runs on a GPU box we already pay for, and nothing is billed per
+    -- second of speech. The row has to exist anyway - a call whose provider has
+    -- no rate makes the whole total half true, which is worse than a zero that
+    -- is correct. What this box costs is a monthly VM bill, and that belongs
+    -- wherever the VM is accounted for, not on a per-call line.
+    ('kokoro', NULL,           'tts_seconds', 'per_hour',       0.00,    'USD', 'self-hosted on the GPU box - no per-second charge, 24 Sep 2026'),
+    ('kokoro', NULL,           'tts_characters', 'per_million',  0.00,    'USD', 'self-hosted on the GPU box - no per-character charge, 24 Sep 2026')
 
 ON CONFLICT (provider, coalesce(model, ''), kind) DO UPDATE
     SET unit = EXCLUDED.unit,

@@ -59,6 +59,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import urllib.error
 import urllib.request
 import uuid
@@ -226,7 +227,8 @@ async def sarvam(api_key: str, *, model: str, voice: str, language: str,
 
 async def openai(api_key: str, *, model: str, voice: str, language: str,
                  text: str, speed: float = 1.0,
-                 response_format: str = _FORMAT) -> bytes:
+                 response_format: str = _FORMAT,
+                 base_url: str | None = None) -> bytes:
     """-> mp3 bytes, or raw PCM when asked for it.
 
     OpenAI's "pcm" is documented as 24 kHz, 16-bit, mono, little-endian, with
@@ -243,7 +245,11 @@ async def openai(api_key: str, *, model: str, voice: str, language: str,
     """
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=api_key)
+    # base_url points this at something other than OpenAI. Kokoro on our own
+    # GPU box serves the same wire format, so the preview a campaign owner
+    # hears comes from the same code path a call uses - see kokoro() below.
+    client = AsyncOpenAI(api_key=api_key,
+                         **({"base_url": base_url} if base_url else {}))
     audio = bytearray()
     try:
         async with client.audio.speech.with_streaming_response.create(
@@ -265,3 +271,39 @@ async def openai(api_key: str, *, model: str, voice: str, language: str,
     if not audio:
         raise PreviewError("the provider produced no audio")
     return bytes(audio)
+
+
+def kokoro_url() -> str:
+    """-> where our own text-to-speech answers, or "" if this server has not
+    been told.
+
+    No default, for the reason migration 059 gives: a LAN address differs
+    between servers and a hardcoded one already sent production's calls to the
+    development box for two days. The agent reads the same variable.
+    """
+    return os.getenv("KOKORO_URL", "").strip()
+
+
+async def kokoro(api_key: str, *, model: str, voice: str, language: str,
+                 text: str, speed: float = 1.0,
+                 response_format: str = _FORMAT,
+                 sample_rate: int | None = None) -> bytes:
+    """Our own TTS, through the OpenAI path it already speaks.
+
+    `api_key` is accepted and ignored so this has the same signature as the
+    other three and the dispatch above needs no special case. There is nobody
+    to authenticate to: the box is on the LAN, reachable only from 10.130.0.0/16
+    by its own firewall.
+
+    sample_rate is accepted and ignored too - Kokoro serves 24 kHz and offers no
+    way to ask for another. The hold-message render passes one to every provider
+    and checks what came back, which catches this rather than trusting it.
+    """
+    url = kokoro_url()
+    if not url:
+        raise PreviewError(
+            "KOKORO_URL is not set on this server, so our own voice cannot be "
+            "previewed here")
+    return await openai(api_key or "not-needed", model=model, voice=voice,
+                        language=language, text=text, speed=speed,
+                        response_format=response_format, base_url=url)

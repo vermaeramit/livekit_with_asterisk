@@ -71,7 +71,15 @@ TEXTS = [
 KNOWN = {
     "soniox": ("tts-rt-v2", "Kavya"),
     "sarvam": ("bulbul:v3", "kavya"),
+    # Ours, on the GPU box. hf_alpha is the Hindi voice that measured fastest
+    # to first audio and was accepted by ear - see gpu-server/BENCHMARKS.md.
+    "kokoro": ("kokoro", "hf_alpha"),
 }
+
+# Providers with no account, and so no key to look for - the same set the agent
+# and the console keep. Without this the bench would skip our own box for want
+# of a credential that cannot exist.
+KEYLESS = ("kokoro",)
 
 
 async def measure(tts, text: str) -> dict:
@@ -121,7 +129,7 @@ async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
     else:
         model, voice = KNOWN[provider]
         pcfg = dataclasses.replace(cfg, tts_provider=provider, tts_model=model, tts_voice=voice)
-    if provider not in keys:
+    if provider not in keys and provider not in KEYLESS:
         print(f"{provider}: no key for this campaign - skipped")
         return
 
@@ -129,7 +137,7 @@ async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
 
     # The key's own region, or the bench measures a host this campaign
     # never speaks to - which is the one thing a bench must not do.
-    tts = voice_agent._build_tts(provider, pcfg, keys[provider], True,
+    tts = voice_agent._build_tts(provider, pcfg, keys.get(provider, ""), True,
                                  (regions or {}).get(provider))
     target = tts
     if not tts.capabilities.streaming:

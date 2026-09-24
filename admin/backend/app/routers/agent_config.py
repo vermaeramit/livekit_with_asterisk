@@ -359,7 +359,8 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
     regions = await pk.resolve_regions(tenant_id=tenant_id,
                                        campaign_id=campaign_id)
-    if not keys.get(provider):
+    # A provider we host ourselves has no key to be missing - see pk.KEYLESS.
+    if provider not in pk.KEYLESS and not keys.get(provider):
         return [f"There is no {provider} key on this campaign, so the queue "
                 f"message could not be synthesised and will not play."]
 
@@ -371,7 +372,7 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
         else:
             try:
                 path = await holdaudio.render(
-                    provider=provider, api_key=keys[provider],
+                    provider=provider, api_key=keys.get(provider, ""),
                     model=cfg.get("tts_model"), voice=cfg.get("tts_voice"),
                     language=cfg["language"], text=text,
                     region=regions.get(provider))

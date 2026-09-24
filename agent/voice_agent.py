@@ -92,6 +92,21 @@ STT_FINAL_CEILING = float(os.getenv("STT_FINAL_CEILING_MS", "2000")) / 1000
 # this is a flag: one day on, then read tts_ttfb and the Soniox bill together.
 PREEMPTIVE_TTS = os.getenv("PREEMPTIVE_TTS", "0") == "1"
 
+# Where our own text-to-speech answers, e.g. http://10.130.9.248:8880/v1.
+#
+# No default on purpose. Every other provider is at a name that means the same
+# thing from anywhere; this is a LAN address that differs between servers, and a
+# hardcoded one already cost this project two days of production calls landing
+# on the development box (REPLICA.md). Unset and configured means a clear error
+# naming this variable, which is better than reaching the wrong machine.
+KOKORO_URL = os.getenv("KOKORO_URL", "").strip()
+
+# Providers with no account behind them. Every other one is somebody else's
+# service and cannot be used without a key; this one is a box we own, and
+# demanding a credential for it would mean inventing a fiction to store. Both
+# the key check at the start of a call and the fallback check read this.
+KEYLESS = ("kokoro",)
+
 # How long Silero waits, after the caller stops making sound, before saying the
 # speech has ended. Nothing downstream can start until it does.
 #
@@ -1262,7 +1277,9 @@ ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
 # What each provider emits natively. The TTS FallbackAdapter resamples anything
 # that does not match the rate it is given, so this is set from the PRIMARY -
 # the common path then never resamples, and only a firing fallback pays for it.
-_TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000}
+_TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000,
+                    # Kokoro's own output rate, and what its server reports.
+                    "kokoro": 24000}
 
 
 # Conservative, and ours rather than Soniox's - their published limit is not
@@ -1396,6 +1413,32 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
         model = ((cfg.tts_model if use_config_model else None)
                  or tts_defaults.OPENAI_MODEL)
         return openai.TTS(model=model, api_key=key)
+    if provider == "kokoro":
+        # Ours, on the GPU box. Kokoro-FastAPI speaks OpenAI's own wire format,
+        # so the plugin that already exists is the whole integration - the only
+        # things that change are where it points and that there is nobody to
+        # authenticate to. ~200 ms to first audio and RTF 0.026 on the LAN, see
+        # gpu-server/BENCHMARKS.md.
+        #
+        # No default URL, deliberately. A hardcoded address is what sent
+        # production's calls to the development box for two days (REPLICA.md),
+        # and a LAN address is exactly the kind that differs between servers.
+        # Failing here names the variable; guessing would find the wrong box.
+        if not KOKORO_URL:
+            raise ValueError(
+                "tts_provider is 'kokoro' but KOKORO_URL is not set on this "
+                "server - it has no default, see migration 059")
+        return openai.TTS(
+            model=((cfg.tts_model if use_config_model else None)
+                   or tts_defaults.KOKORO_MODEL),
+            voice=((cfg.tts_voice if use_config_model else None)
+                   or tts_defaults.KOKORO_VOICE),
+            base_url=KOKORO_URL,
+            # The plugin requires one and the server ignores it. Written out
+            # rather than passed as an empty string, which the SDK rejects
+            # before any request is made.
+            api_key="not-needed",
+        )
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
         # Soniox one when Soniox is. The console validates that pairing; here we
@@ -1443,7 +1486,7 @@ def _fallback_provider(layer: str, configured: str | None, primary: str,
         logger.warning("%s fallback equals the primary (%s) - ignoring",
                        layer, primary)
         return None
-    if not keys.get(configured):
+    if configured not in KEYLESS and not keys.get(configured):
         logger.warning("%s fallback '%s' has no key for this campaign - "
                        "running on %s alone", layer, configured, primary)
         return None
@@ -1466,14 +1509,15 @@ def _stt_stack(cfg, vad, keys: dict, regions: dict | None = None):
 
 def _tts_stack(cfg, keys: dict, regions: dict | None = None):
     regions = regions or {}
-    primary = _build_tts(cfg.tts_provider, cfg, keys[cfg.tts_provider], True,
-                         regions.get(cfg.tts_provider))
+    # .get, not [], since kokoro has no key to look up - see KEYLESS.
+    primary = _build_tts(cfg.tts_provider, cfg, keys.get(cfg.tts_provider, ""),
+                         True, regions.get(cfg.tts_provider))
     fb = _fallback_provider("tts", cfg.tts_fallback_provider, cfg.tts_provider, keys)
     if not fb:
         return primary
     # Note there is no attempt_timeout on the TTS adapter - unlike STT and LLM.
     return lk_tts.FallbackAdapter(
-        [primary, _build_tts(fb, cfg, keys[fb], False, regions.get(fb))],
+        [primary, _build_tts(fb, cfg, keys.get(fb, ""), False, regions.get(fb))],
         sample_rate=_TTS_NATIVE_RATE.get(cfg.tts_provider, 24000))
 
 
@@ -1935,6 +1979,10 @@ async def entrypoint(ctx: JobContext):
         needed = {cfg.stt_provider, cfg.tts_provider, cfg.llm_provider or "openai"}
         if cfg.kb_enabled:
             needed.add("openai")
+        # A provider we host ourselves has no account and no key. Leaving it in
+        # here would decline every call on a campaign whose voice is our own
+        # box, for want of a credential that cannot exist.
+        needed -= set(KEYLESS)
         missing = sorted(p for p in needed if not keys.get(p))
         if missing:
             logger.warning("DECLINED call to %s: campaign %s has no %s key",

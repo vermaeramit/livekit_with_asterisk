@@ -28,6 +28,17 @@ SONIOX_VOICE = "Priya"
 SARVAM_MODEL = "bulbul:v3"
 OPENAI_MODEL = "gpt-4o-mini-tts"
 
+# Kokoro, on our own GPU box. Four Hindi voices exist - hf_alpha, hf_beta,
+# hm_omega, hm_psi - and hf_alpha is the one that measured fastest to first
+# audio (216 ms) and was accepted by ear on Hindi with English product names
+# and a rupee figure in it. All four are graded C by Kokoro's own authors,
+# which turned out not to matter on a phone line.
+#
+# The model name is "kokoro" because that is what its server calls it; unlike
+# the vendors there is no second model to drift onto, and no removal date.
+KOKORO_MODEL = "kokoro"
+KOKORO_VOICE = "hf_alpha"
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than
