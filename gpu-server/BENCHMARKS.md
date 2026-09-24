@@ -71,6 +71,45 @@ files were `hf_alpha`, `hf_beta`, `hm_omega`, `hm_psi` - the four Hindi voices,
 all graded C by Kokoro's own authors, which turned out not to matter on a phone
 line.
 
+## Kokoro through the agent's own code - 24 Sep 2026
+
+The numbers above were taken from a laptop with a plain HTTP client. These were
+taken on **.243**, through `tts-bench`, which builds the TTS with
+`voice_agent._build_tts` - the same object a call speaks through, with the
+StreamAdapter and the emitter in the path.
+
+| | first audio | stalls |
+|---|---|---|
+| one at a time | **95-180 ms** | 0 |
+| two at once | **111-201 ms** | 0 |
+| the campaign's greeting, cold | 289 ms, then 106 ms | 0 |
+
+53.5 s of audio, **0.0 s stalled**. A seven-second sentence is fully rendered in
+0.4 s of wall time - RTF around 0.05 - and two at once barely moves it, which
+matches the laptop's "~200 ms plus 75 ms per request in flight".
+
+Against Soniox on the India region, measured on call 646 the day before:
+**181-218 ms**. Kokoro is a little faster, on hardware we own, at no per-minute
+cost.
+
+One failure, and it belongs to the campaign rather than to Kokoro: the
+recording disclosure on `default` is the single character `.`, and Kokoro
+produces no audio for it - correctly, there is nothing to say. Sarvam already
+refuses the same string. A real call sends the greeting and disclosure JOINED,
+and that rendered in 106 ms.
+
+### What it took to get there
+
+The obvious route - livekit's OpenAI TTS plugin pointed at Kokoro with a
+`base_url` - does not work, and the symptom blames the wrong thing. It reports
+"no audio frames were pushed" while curl gets 87,916 bytes, the OpenAI SDK
+alone gets 108,566 in three chunks, and Kokoro logs every attempt as 200 OK.
+Instrumenting the emitter settled it: `initialize x4, flush x4, push x0`. The
+plugin receives the audio and hands the emitter nothing.
+
+`agent/kokoro_tts.py` speaks to the box directly instead - the Sarvam plugin's
+shape with the Sarvam parts removed. One POST, raw PCM, push the chunks.
+
 ## Still to measure
 
 - **Chatterbox Multilingual v3** on the same sentences, for a quality comparison
