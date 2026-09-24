@@ -74,6 +74,17 @@ class TTS(tts.TTS):
             sample_rate=SAMPLE_RATE,
             num_channels=NUM_CHANNELS,
         )
+        # What this provider is CALLED, everywhere a name is recorded: the call
+        # row's tts_provider_used, the metrics label, the retry warnings.
+        #
+        # livekit's default is "<module>.<class>", which gave "kokoro_tts.TTS".
+        # The agent turns a label into a provider name by taking the third part
+        # of "livekit.plugins.<name>.tts.TTS" and keeping anything else as-is,
+        # so six calls were recorded as "kokoro_tts.TTS" - and costing looks a
+        # rate up BY THAT NAME. The seeded rate is under "kokoro", so those
+        # calls priced as though the provider were unknown.
+        self._label = "kokoro"
+
         if not base_url:
             raise ValueError("kokoro TTS needs a base_url - see KOKORO_URL")
         self._opts = _Options(base_url=base_url.rstrip("/"), model=model,
