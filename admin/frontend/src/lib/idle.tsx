@@ -69,6 +69,19 @@ export function useIdleTimeout(enabled: boolean, onTimeout: () => void) {
   useEffect(() => {
     if (!enabled) return
 
+    // A session that has just started is not idle.
+    //
+    // This ref outlives the signed-out gap - AuthProvider does not unmount, so
+    // the value survives - and while enabled is false NOTHING updates it: the
+    // listeners below are not attached, so typing a password on the login page
+    // is not activity. Without this line, signing in after an idle timeout
+    // re-enabled the timer with a timestamp from half an hour ago, the first
+    // tick one second later measured 30 minutes of idleness, and the user was
+    // signed straight back out - with no warning, because the warning window
+    // had long since passed. A hard reload fixed it by rebuilding the ref,
+    // which is exactly what made it look like a caching problem.
+    lastActivity.current = Date.now()
+
     // Passive: none of these handlers call preventDefault, and saying so keeps
     // scrolling off the main thread.
     const opts = { passive: true, capture: true } as const
