@@ -110,6 +110,44 @@ plugin receives the audio and hands the emitter nothing.
 `agent/kokoro_tts.py` speaks to the box directly instead - the Sarvam plugin's
 shape with the Sarvam parts removed. One POST, raw PCM, push the chunks.
 
+## How many calls it carries - 24 Sep 2026
+
+Measured from .243 with `kokoro-load.py`, which models CALLS rather than
+requests: each simulated call thinks for about ten seconds, then renders an
+answer of two or three sentences one at a time, as a real answer is rendered.
+Ninety seconds per level.
+
+| Calls | first p50 | p95 | worst | over 400 ms | **slower than real time** |
+|---|---|---|---|---|---|
+| 5 | 109 ms | 165 | 278 | 0 | **0** |
+| 10 | 120 ms | 308 | 350 | 0 | **0** |
+| 20 | 122 ms | 357 | 540 | 22 of 446 | **0** |
+| 40 | 234-239 ms | 693-809 | 1236-1267 | ~25% | **0** |
+
+The 40 row was run twice and agreed to within 6%.
+
+**Nothing was ever slower than real time, at any level.** The box's throughput
+was never the limit in this range; what grew was the time a request spent
+waiting behind another.
+
+### It is queueing, not working
+
+At 40 calls the box produced roughly 35-40x real time in aggregate - which is
+what a SINGLE stream produces on its own (RTF 0.026, about 38x). Requests are
+being served one at a time, very fast.
+
+The CPU says the same thing: **101% at peak, of 800% available**. One core of
+eight. And the GPU holds about 1 GB of 48.
+
+So the lever, if traffic ever needs more than this, is **more copies of Kokoro**
+- not more CPU, and not a bigger card. Four copies would be 4 GB of VRAM on a
+48 GB card. Neither is needed today: the call system's own capacity is 10
+concurrent calls, where this box is at 120 ms p50 with nothing over 400 ms.
+
+Not yet confirmed: GPU utilisation during the 40-call run. The aggregate rate
+and the idle CPU both point at serialisation inside the server, but `nvidia-smi
+dmon` was not running alongside, so that is inference rather than measurement.
+
 ## Still to measure
 
 - **Chatterbox Multilingual v3** on the same sentences, for a quality comparison

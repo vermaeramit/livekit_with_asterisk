@@ -126,8 +126,15 @@ async def level(url: str, voice: str, calls: int, seconds: int) -> None:
     # longer to make than it takes to say.
     behind = sum(1 for _, wall, audio in ok if audio and wall > audio)
     failed = len(rows) - len(ok)
+    # Audio produced against wall time held. Compared with a single stream's
+    # own figure it answers the question the latency columns cannot: whether
+    # the box is BUSY or merely queueing. One stream measured RTF 0.026, about
+    # 38x real time - if forty calls produce the same multiple, nothing is
+    # running in parallel and the latency is all waiting in line.
+    speed = sum(a for _, _, a in ok) / seconds
     print(f"{calls:>6} {len(rows):>10} {int(p50):>9}ms {int(p95):>7}ms "
-          f"{int(firsts[-1]):>7}ms {slow:>11} {behind:>13} {failed:>8}")
+          f"{int(firsts[-1]):>7}ms {slow:>11} {behind:>13} {failed:>8} "
+          f"{speed:>11.1f}x")
 
 
 async def main() -> None:
@@ -148,13 +155,18 @@ async def main() -> None:
           f"(a call answers every ~{THINK_S:.0f}s)\n")
     print(f"{'calls':>6} {'sentences':>10} {'first p50':>11} {'p95':>9} "
           f"{'worst':>9} {'over ' + str(SLOW_MS) + 'ms':>11} "
-          f"{'behind real':>13} {'failed':>8}")
+          f"{'behind real':>13} {'failed':>8} {'audio rate':>12}")
     for calls in levels:
         await level(args.url, args.voice, calls, args.seconds)
 
     print("\n'behind real' is the column that decides it: a sentence that took "
           "longer to render\nthan it takes to speak. Above zero, the box is "
           "the limit and every call behind it waits.")
+    print("\n'audio rate' is seconds of speech produced per second of wall "
+          "time. A single stream\nmanages about 38x on its own. If forty calls "
+          "produce the same multiple, nothing is\nrunning in parallel: the box "
+          "is queueing rather than working, and more copies of it\nwould help "
+          "where more CPU or a bigger card would not.")
 
 
 if __name__ == "__main__":
