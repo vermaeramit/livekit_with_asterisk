@@ -1512,15 +1512,21 @@ def _fallback_provider(layer: str, configured: str | None, primary: str,
 
 def _stt_stack(cfg, vad, keys: dict, regions: dict | None = None):
     regions = regions or {}
-    primary = _build_stt(cfg.stt_provider, cfg, keys[cfg.stt_provider], True,
-                         regions.get(cfg.stt_provider))
+    # .get, not [], since a KEYLESS provider has no key to look up. This was
+    # missed when kokoro went in: _tts_stack was fixed and this was not,
+    # because the only keyless provider then was a TTS. The first call on our
+    # own STT rang and rang - the job died on KeyError: 'qwen' before the agent
+    # could answer, and with no fallback configured there was nothing to catch
+    # it.
+    primary = _build_stt(cfg.stt_provider, cfg, keys.get(cfg.stt_provider, ""),
+                         True, regions.get(cfg.stt_provider))
     fb = _fallback_provider("stt", cfg.stt_fallback_provider, cfg.stt_provider, keys)
     if not fb:
         return primary
     # vad is required: gpt-4o-mini-transcribe is not a streaming STT, so without
     # a VAD to chunk the audio it has nothing to send.
     return lk_stt.FallbackAdapter(
-        [primary, _build_stt(fb, cfg, keys[fb], False, regions.get(fb))],
+        [primary, _build_stt(fb, cfg, keys.get(fb, ""), False, regions.get(fb))],
         vad=vad, attempt_timeout=ATTEMPT_TIMEOUT)
 
 
@@ -1575,6 +1581,11 @@ def _llm_stack(cfg, keys: dict):
     reason this is a visible setting rather than a silent default.
     """
     provider = cfg.llm_provider or "openai"
+    # keys[...] and not .get(): every LLM provider the schema allows needs a
+    # key, so a miss here is a bug worth raising rather than an auth error
+    # later. If a KEYLESS language model is ever added - one of ours, on the
+    # GPU box - this line becomes the same KeyError that stopped the first
+    # call on our own STT from being answered.
     primary = _build_llm(provider, cfg, keys[provider], cfg.llm_model)
     if not FALLBACK:
         return primary
