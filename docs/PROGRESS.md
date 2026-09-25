@@ -5841,6 +5841,85 @@ an oversight, along with what it costs:
 ---
 ---
 
+## Our own speech recognition, on a real call (25 Sep 2026)
+
+Qwen3-ASR 1.7B on the GPU box, served by vLLM behind OpenAI's
+`/v1/audio/transcriptions`, reached through `agent/qwen_stt.py`. Migration 060.
+Call 665 on `default-test`: 122 s, nine turns, `stt_provider_used = qwen`.
+
+It works. It is also slower than Soniox, and the reasons are not the ones the
+bench predicted.
+
+### What was measured before the call, and why it misled
+
+From .243, against synthetic 8 kHz Hindi:
+
+| audio | time |
+|---|---|
+| 0.5 s | 195 ms |
+| 1 s | 213 ms |
+| 2 s | 228 ms |
+| 12 s | 880-970 ms |
+
+A fixed ~185 ms plus ~20 ms per second. The conclusion drawn from it - "the
+tail chunk a call sends costs 200-230 ms" - was wrong, because a call does not
+send a tail chunk.
+
+### What the call actually showed
+
+| | Soniox, call 652 | **Qwen, call 665** |
+|---|---|---|
+| `stt_ms` | 0-193 ms | **521-978 ms** |
+| `llm_ttft` | 625-1052, median ~750 | **766-1988, median ~1300** |
+| `tts_ttfb` | 96-212 ms | 103-220 ms |
+| **`wait_ms` median** | **~1700 ms** | **~2100 ms** |
+
+**About 400 ms worse per turn**, and two separate mechanisms cause it.
+
+**1. livekit sends the whole utterance, not a chunk.** A non-streaming STT is
+wrapped in a StreamAdapter with the session's VAD, which waits for end of
+speech and then submits everything the caller said. Five to ten seconds of
+audio at 0.9 s per twelve is the `stt_ms` above. Soniox has been transcribing
+the whole time and has almost nothing left to do when the caller stops.
+
+**2. Preemptive generation quietly stopped working.** It starts the model
+before the turn is confirmed - on INTERIM transcripts, which a non-streaming
+STT never produces. The arithmetic shows it: on call 652 several turns had
+`wait_ms` BELOW eou + llm + tts, preemption winning; on 665, six of eight turns
+are above it.
+
+So the cost is doubled: the transcript arrives late, and the model can no
+longer start early.
+
+### Where it stands
+
+`default-test` is left on qwen - it works, and the campaign is a test one. The
+options, none taken yet:
+
+- **Leave STT with Soniox** and keep the box for TTS, where it won outright.
+- **Qwen's real streaming mode**, which vLLM supports over a websocket. That
+  returns interim transcripts and with them preemptive generation. A day or
+  two of work, and the only route by which this beats Soniox on latency.
+- **Judge it on accuracy instead.** On the synthetic corpus it transcribed
+  Hindi essentially word for word and kept the English words in Devanagari -
+  ईयर एंड, सजेशन, रिकमेंडेशन - which is the failure this system has scars
+  from. If it is clearly better than Soniox on real audio, 400 ms may be worth
+  paying. Nobody has compared the two on the same real call yet.
+
+### A bug this found, twice in the same shape
+
+The first call rang and never connected. `_stt_stack` still looked a keyless
+provider up with `keys[...]`: `KeyError: 'qwen'`, thrown before the agent could
+answer. `_tts_stack` had been fixed when kokoro went in and this had not,
+because the only keyless provider then was a TTS.
+
+With no fallback configured there was nothing to catch it, so the symptom was a
+phone ringing out - which says nothing about the cause. Worth remembering the
+next time a fallback looks optional.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
