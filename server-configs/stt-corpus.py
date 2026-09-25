@@ -42,6 +42,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+# Deprecated in 3.12 and gone in 3.13. The servers are on 3.12 and this is a
+# bench, not the call path, so it stays until one of them moves - at which
+# point `audioop-lts` is a drop-in, or ratecv's job is forty lines of filter
+# and decimation. Writing those forty lines today would be guessing at which
+# fix is needed.
 import audioop
 import json
 import os
@@ -71,15 +76,18 @@ async def caller_lines(config_name: str, limit: int, min_chars: int,
     nothing. The sentences worth testing are the ones carrying a product name,
     a quantity or a place.
     """
+    # length() is in the select list because it is in the ORDER BY and the
+    # query is DISTINCT - postgres refuses to sort a distinct result by an
+    # expression it did not return.
     rows = await (await store.pool()).fetch(
-        """SELECT DISTINCT t.text
+        """SELECT DISTINCT t.text, length(t.text) AS n
              FROM turns t
              JOIN calls c ON c.id = t.call_id
             WHERE c.config_name = $1
               AND t.role = 'user'
               AND t.text IS NOT NULL
               AND length(btrim(t.text)) BETWEEN $2 AND $3
-            ORDER BY length(t.text) DESC
+            ORDER BY n DESC
             LIMIT $4""",
         config_name, min_chars, max_chars, limit,
     )
