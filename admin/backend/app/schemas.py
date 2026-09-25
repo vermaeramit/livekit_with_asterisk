@@ -32,6 +32,11 @@ Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 # the failure would land on a save, not on a dropdown. Migration 059.
 TtsProvider = Literal["openai", "sarvam", "soniox", "kokoro"]
 
+# And speech-to-text has its own, for the same reason: qwen runs on our box and
+# only listens, so offering it as a TTS or an LLM would let the console save a
+# row the database refuses. Migration 060.
+SttProvider = Literal["openai", "sarvam", "soniox", "qwen"]
+
 # 12 characters is the floor everywhere a password is set, so the rule cannot be
 # bypassed by picking a different endpoint.
 Password = Annotated[str, Field(min_length=12, max_length=200)]
@@ -753,9 +758,9 @@ class AgentConfigUpdate(BaseModel):
     recording_disclosure: str | None = Field(default=None, min_length=1,
                                              max_length=400)
 
-    stt_provider: Provider | None = None
+    stt_provider: SttProvider | None = None
     tts_provider: TtsProvider | None = None
-    stt_fallback_provider: Provider | None = None
+    stt_fallback_provider: SttProvider | None = None
     tts_fallback_provider: TtsProvider | None = None
 
     @field_validator("recording_disclosure")

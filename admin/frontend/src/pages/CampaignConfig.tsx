@@ -94,8 +94,16 @@ const TTS_PROVIDERS = [
   { value: 'kokoro', label: 'Our own server' },
 ]
 
+// Speech-to-text has one of its own: Qwen3-ASR on our GPU box, which only
+// listens. Same reasoning as TTS_PROVIDERS - a provider offered for the wrong
+// layer is a row the database refuses on save.
+const STT_PROVIDERS = [
+  ...PROVIDERS,
+  { value: 'qwen', label: 'Our own server' },
+]
+
 // Providers with no account behind them, so no key to ask a client for.
-const KEYLESS = ['kokoro']
+const KEYLESS = ['kokoro', 'qwen']
 
 // Only models and speakers known to exist are listed. Every one of these fails
 // at call time rather than on save if it is wrong, so the list is the safe path
@@ -812,7 +820,7 @@ export function CampaignConfig() {
                   set('stt_model', null)
                   if (value.stt_fallback_provider === v) set('stt_fallback_provider', null)
                 }}
-                options={PROVIDERS}
+                options={STT_PROVIDERS}
                 hint="Whose speech recognition this campaign runs on. Billed to that provider's key."
               />
               <SelectField
@@ -821,7 +829,7 @@ export function CampaignConfig() {
                 onChange={(v) => set('stt_fallback_provider', v || null)}
                 options={[
                   { value: '', label: 'No fallback' },
-                  ...PROVIDERS.filter((p) => p.value !== value.stt_provider),
+                  ...STT_PROVIDERS.filter((p) => p.value !== value.stt_provider),
                 ]}
                 hint="Used only if the primary fails mid-call. Needs its own key, or it is skipped."
               />

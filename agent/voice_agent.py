@@ -44,6 +44,7 @@ import greeting_cache
 import hours
 import kokoro_tts
 import prompt as prompt_mod
+import qwen_stt
 import tools as tools_mod
 import providers as providers_mod
 import tts_defaults
@@ -102,11 +103,15 @@ PREEMPTIVE_TTS = os.getenv("PREEMPTIVE_TTS", "0") == "1"
 # naming this variable, which is better than reaching the wrong machine.
 KOKORO_URL = os.getenv("KOKORO_URL", "").strip()
 
+# Where our own speech recognition answers, e.g. http://10.130.9.248:8001/v1.
+# No default, for the same reason KOKORO_URL has none.
+QWEN_STT_URL = os.getenv("QWEN_STT_URL", "").strip()
+
 # Providers with no account behind them. Every other one is somebody else's
 # service and cannot be used without a key; this one is a box we own, and
 # demanding a credential for it would mean inventing a fiction to store. Both
 # the key check at the start of a call and the fallback check read this.
-KEYLESS = ("kokoro",)
+KEYLESS = ("kokoro", "qwen")
 
 # How long Silero waits, after the caller stops making sound, before saying the
 # speech has ended. Nothing downstream can start until it does.
@@ -1399,6 +1404,23 @@ def _build_stt(provider: str, cfg, key: str, use_config_model: bool,
         return soniox.STT(
             api_key=key, params=soniox.STTOptions(**opts),
             base_url=f"wss://{_soniox_host('stt-rt', region)}/transcribe-websocket",
+        )
+    if provider == "qwen":
+        # Ours, on the GPU box. Not streaming - livekit wraps it in a
+        # StreamAdapter with the session's VAD, so the transcript arrives once
+        # per utterance rather than as the caller speaks. See qwen_stt.py.
+        if not QWEN_STT_URL:
+            raise ValueError(
+                "stt_provider is 'qwen' but QWEN_STT_URL is not set on this "
+                "server - it has no default, see migration 060")
+        return qwen_stt.STT(
+            base_url=QWEN_STT_URL,
+            model=((cfg.stt_model if use_config_model else None)
+                   or tts_defaults.QWEN_STT_MODEL),
+            language=cfg.language,
+            # The campaign's vocabulary, as background text. Soniox takes the
+            # same list through its own `context` field - see _context_terms.
+            prompt=", ".join(_context_terms(cfg)) if use_config_model else None,
         )
     raise ValueError(f"unknown STT provider '{provider}'")
 

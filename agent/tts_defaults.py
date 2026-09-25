@@ -39,6 +39,15 @@ OPENAI_MODEL = "gpt-4o-mini-tts"
 KOKORO_MODEL = "kokoro"
 KOKORO_VOICE = "hf_alpha"
 
+# Speech recognition on the same box, served by vLLM. The name is whatever
+# --served-model-name says in /srv/gpu-stack/qwen-asr/docker-compose.yml; the
+# two have to agree or vLLM answers 404 for a model it is not serving.
+#
+# This file is named for TTS and now holds an STT default. Left here rather
+# than split because the console imports it and the reason for the file - one
+# place, so the console and the agent cannot disagree - applies just the same.
+QWEN_STT_MODEL = "qwen3-asr"
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than
