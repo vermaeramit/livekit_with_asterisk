@@ -6021,6 +6021,83 @@ Every one was a place that assumed a provider has an account:
 ---
 ---
 
+## A call with nothing bought in, and a prompt fix that did not work (26 Sep 2026)
+
+Call 669 on campaign 7: `qwen` listening, `qwen-llm` thinking, `kokoro`
+speaking. Every layer on our own hardware for the first time. Nothing broke,
+not one stall, and the caller waited longer than on any configuration before
+it.
+
+| Call | STT | LLM | TTS | wait median |
+|---|---|---|---|---|
+| 652 | Soniox | OpenAI | Kokoro | **~1700 ms** |
+| 665 | ours | OpenAI | Kokoro | ~2100 ms |
+| 668 | Soniox | ours | Kokoro | ~2800 ms |
+| **669** | **ours** | **ours** | Kokoro | **~3800 ms** |
+
+Each swap added, and the two added together. A turn breaks down as ~700 ms of
+turn detection, ~700 ms of our STT transcribing the whole utterance, ~250 ms to
+the model's first token - which is excellent - and then **two more seconds
+before anything is audible**.
+
+### The prompt fix, and why it failed
+
+The plan was to shorten answers. Checking first: the prompt ALREADY says
+*"Always return a short, concise, voice-friendly answer"* and *"Keep responses
+usually within 1-3 sentences"*, and the answers are not long - 86-203
+characters on 669 against 11-235 on OpenAI's 652. **The earlier claim that Qwen
+was verbose came from one outlier in one call and was wrong.**
+
+So the instruction added was narrower, aimed at first audio rather than total
+length:
+
+    * **The first sentence must be very short - under 10 words.** Put all
+      detail in the sentences after it.
+
+Call 670, after it: `first_audio` median **2573 ms against 2288 ms** before. No
+improvement, slightly worse, within noise. The model ignored it - the first
+sentences in the log run *"मुझे आपकी समस्या के बारे में थोड़ी जानका…"*, which is
+not ten words.
+
+### What the failure showed instead
+
+Two turns on 670 have a NEGATIVE `text_complete`:
+
+```
+first_audio=3945ms   text_complete=-241ms   audio=10.0s
+first_audio=2325ms   text_complete=-235ms   audio=4.1s
+```
+
+The whole answer was written before any audio started. That only happens if the
+answer contains **no sentence break at all** - one long clause-joined sentence -
+and our TTS waits for a complete sentence. One sentence means waiting for the
+whole reply: 3.7 s of writing at ~23 tokens/s before the caller hears a word.
+
+So the lever is not in the prompt. It is the **sentence tokenizer**: livekit
+splits on `.` `!` `?`, and Hindi answers of this shape give it nothing to split
+on until the end. Splitting on clause boundaries - commas - would start the
+voice after *"ठीक है आमित जी,"* instead of after the entire answer.
+
+That lever was noted on 24 Sep with an estimate of **100-300 ms**. These numbers
+say **1.5-2.5 s**, because the question is no longer shaving a delay but ending
+a wait for the whole reply. It sits in `kokoro_tts.py`, about half an hour of
+work, and is **not done**: left here deliberately on 26 Sep.
+
+### Where campaign 7 stands
+
+All three layers ours, no fallback on any of them. It works, it costs nothing
+per minute, and it is about twice as slow for the caller as the vendors were.
+Three known causes, in the order they are worth fixing:
+
+1. **Clause-level splitting** - the biggest, and in our code.
+2. **Decode speed** - ~23 tokens/s for a 4-bit 32B. An MoE with 3B active
+   decodes several times faster and would shorten every sentence's wait.
+3. **The STT** - ~700 ms, and it also disables preemptive generation, which
+   needs interim transcripts. Streaming mode, or Soniox.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
