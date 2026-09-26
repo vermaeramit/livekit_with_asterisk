@@ -6098,6 +6098,57 @@ Three known causes, in the order they are worth fixing:
 ---
 ---
 
+## Breaking at a comma, and what it was worth (26 Sep 2026)
+
+Done the same afternoon it was written down as not done. `ClauseTokenizer`
+splits on clause boundaries as well as sentence ends, and kokoro is wrapped in
+a `StreamAdapter` with it rather than with livekit's blingfire default.
+
+Call 671, campaign 7, everything still on our own hardware:
+
+| | 670 | **671** |
+|---|---|---|
+| `first_audio` median | 2573 ms | **1245 ms** |
+| `wait_ms` median | ~3550 ms | **~2456 ms** |
+| stalls | 0 | 0 |
+
+**1.3 s off the first audio, 1.1 s off the caller's wait.** The estimate written
+the hour before was 1.5-2.5 s, so it came in under - worth recording, because
+the estimate before THAT was 100-300 ms and this is the second time the same
+lever has been mis-sized in opposite directions.
+
+`text_complete` is now positive on every utterance (+276 to +4282 ms), where two
+turns on 670 were negative. The voice starts while the model is still writing,
+which is the whole point.
+
+And the voice was judged fine by ear, which was the open risk: each clause is a
+separate synthesis, so a short one could have landed with the falling tone of a
+finished sentence. `min_len` is the dial if that ever changes - 14 today, and
+14 rather than 16 because "ठीक है अमित जी," is fifteen code points, not the
+twenty it looks like. Devanagari matras are separate characters and a threshold
+picked by eye holds back more than intended.
+
+### Where the self-hosted stack now stands
+
+| Call | Stack | wait median |
+|---|---|---|
+| 652 | all vendors | ~1700 ms |
+| 669 | all ours | ~3800 ms |
+| 670 | + a prompt line that did nothing | ~3550 ms |
+| **671** | **+ clause splitting** | **~2456 ms** |
+
+The gap to the vendors is down from 2100 ms to about 750 ms, and the remaining
+750 is in two known places:
+
+- **`stt_ms` 482-1105 ms.** Ours transcribes the whole utterance after the VAD
+  says stop; Soniox was 0-267 because it had been transcribing all along. It
+  also costs preemptive generation, which needs interim transcripts.
+- **`eou` at the 1500 ms ceiling on three turns of seven.** Turn detection, not
+  the stack.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
