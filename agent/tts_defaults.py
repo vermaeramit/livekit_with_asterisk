@@ -48,6 +48,17 @@ KOKORO_VOICE = "hf_alpha"
 # place, so the console and the agent cannot disagree - applies just the same.
 QWEN_STT_MODEL = "qwen3-asr"
 
+# And the language model on the same box, also served by vLLM on its own port.
+# Measured on campaign `default` - 26,000 characters of prompt, a knowledge
+# base index and six tools - against gpt-4.1-mini on the same prompt:
+#
+#     qwen3-32b      cold  456 ms   warm 106 ms   spread   6 ms
+#     gpt-4.1-mini   cold 3298 ms   warm 700 ms   spread 322 ms
+#
+# The spread is the number that matters: gpt-4.1-mini was chosen for variance
+# in the first place, after one 6286 ms turn ended a call.
+QWEN_LLM_MODEL = "qwen3-32b"
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than

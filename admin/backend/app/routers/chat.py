@@ -252,7 +252,8 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
     # not need.
     providers = kblib.agent_module("providers")
     llm_provider = getattr(cfg, "llm_provider", None) or "openai"
-    if not keys.get(llm_provider):
+    # A model on our own box has no account - see providers.KEYLESS_LLM.
+    if llm_provider not in providers.KEYLESS_LLM and not keys.get(llm_provider):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"this campaign has no {llm_provider} key - a test turn is a real "
@@ -268,8 +269,10 @@ async def chat_turn(campaign_id: int, body: ChatTurnIn,
             await queue.put(event)
 
         task = asyncio.create_task(
-            chat.reply(cfg, history, keys[llm_provider], tool_specs, on_event,
-                       base_url=providers.llm_base_url(llm_provider)))
+            chat.reply(cfg, history, keys.get(llm_provider, ""), tool_specs,
+                       on_event,
+                       base_url=providers.llm_base_url(llm_provider),
+                       extra_body=providers.llm_extra_body(llm_provider)))
 
         try:
             # The queue drains as the model produces, so words appear while it

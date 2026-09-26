@@ -122,7 +122,8 @@ class Reply:
 
 async def reply(cfg, history: list[dict], api_key: str,
                 tool_specs: list[dict] | None = None, emit=None,
-                base_url: str | None = None) -> Reply:
+                base_url: str | None = None,
+                extra_body: dict | None = None) -> Reply:
     """One assistant turn, streamed.
 
     `history` is [{"role": "user"|"assistant", "content": str}, ...] and is
@@ -181,6 +182,11 @@ async def reply(cfg, history: list[dict], api_key: str,
                 messages=messages,
                 tools=schemas or None,
                 stream=True,
+                # Fields the SDK has no argument for - today, turning off
+                # Qwen3's thinking mode. providers.llm_extra_body decides;
+                # the agent sends the same thing through the plugin, so the
+                # tester and a call behave alike.
+                **({"extra_body": extra_body} if extra_body else {}),
                 # Without this the usage block never arrives on a streamed
                 # response, and the tester would show a cost of zero.
                 stream_options={"include_usage": True},

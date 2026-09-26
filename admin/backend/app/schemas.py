@@ -37,6 +37,10 @@ TtsProvider = Literal["openai", "sarvam", "soniox", "kokoro"]
 # row the database refuses. Migration 060.
 SttProvider = Literal["openai", "sarvam", "soniox", "qwen"]
 
+# And the language model has its own, for the third time and the same reason:
+# qwen-llm is Qwen3-32B on our GPU box and only writes. Migration 061.
+LlmProvider = Literal["openai", "openrouter", "qwen-llm"]
+
 # 12 characters is the floor everywhere a password is set, so the rule cannot be
 # bypassed by picking a different endpoint.
 Password = Annotated[str, Field(min_length=12, max_length=200)]
@@ -532,11 +536,11 @@ class AgentConfigUpdate(BaseModel):
         return v
 
     stt_model: str | None = Field(default=None, max_length=80)
-    llm_provider: Provider | None = None
+    llm_provider: LlmProvider | None = None
     # 80 was enough when every model was "gpt-4.1-mini". A gateway prefixes the
     # vendor - "google/gemma-4-26b-a4b-it" - so the names got longer.
     llm_model: str | None = Field(default=None, min_length=1, max_length=120)
-    llm_fallback_provider: Provider | None = None
+    llm_fallback_provider: LlmProvider | None = None
     llm_fallback_model: str | None = Field(default=None, max_length=120)
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     tts_model: str | None = Field(default=None, max_length=80)

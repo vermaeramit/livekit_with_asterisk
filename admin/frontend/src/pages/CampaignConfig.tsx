@@ -72,11 +72,13 @@ const LLM_MODELS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
 ]
 
-// Only two, because only two speak a language model. OpenRouter is here for
-// what it fronts rather than for itself: one key, and every model it carries.
+// OpenRouter is here for what it fronts rather than for itself: one key, and
+// every model it carries. "Our own server" is Qwen3-32B on the GPU box - no
+// key, no per-token cost, and 5 ms away instead of 450.
 const LLM_PROVIDERS = [
   { value: 'openai', label: 'OpenAI — direct' },
   { value: 'openrouter', label: 'OpenRouter — gateway to many models' },
+  { value: 'qwen-llm', label: 'Our own server' },
 ]
 
 const PROVIDERS = [
@@ -456,7 +458,9 @@ export function CampaignConfig() {
     queryKey: ['llm-catalog', campaignId, value.llm_provider],
     queryFn: () =>
       api<LlmCatalog>(`/campaigns/${campaignId}/llm-catalog/${value.llm_provider}`),
-    enabled: Boolean(value.llm_provider),
+    // Not for our own server: it serves one model and the catalogue endpoint
+    // only knows providers that have a key.
+    enabled: Boolean(value.llm_provider) && value.llm_provider !== 'qwen-llm',
     staleTime: 10 * 60 * 1000,
     // A missing key answers 409 and that is not worth retrying - the console
     // falls back to its static list and says why.
@@ -991,6 +995,14 @@ export function CampaignConfig() {
                       : 'Live from OpenAI. gpt-4.1-mini was chosen for variance, not average — it cut spread from 800ms to 85ms.'
                   }
                 />
+              ) : value.llm_provider === 'qwen-llm' ? (
+                <SelectField
+                  label="Language model"
+                  value={value.llm_model}
+                  onChange={(v) => set('llm_model', v)}
+                  options={[{ value: 'qwen3-32b', label: 'qwen3-32b — measured warm 106ms, spread 6ms' }]}
+                  hint="Whatever --served-model-name says on the box. The two must agree or the server answers 404 for a model it is not serving."
+                />
               ) : value.llm_provider === 'openrouter' ? (
                 <TextField
                   label="Model"
@@ -1011,9 +1023,17 @@ export function CampaignConfig() {
               )}
             </div>
 
-            {value.llm_provider !== 'openai' && (
+            {value.llm_provider === 'qwen-llm' && !value.llm_fallback_provider && (
               <Note tone="warn">
-                Prompt caching is OpenAI&rsquo;s own and does not travel. Measured on
+                This campaign thinks on our own server and has no fallback. If that
+                box stops answering, these calls have no answers at all — pick a
+                fallback provider above.
+              </Note>
+            )}
+
+            {value.llm_provider === 'openrouter' && (
+              <Note tone="warn">
+                Prompt caching is OpenAI&rsquo;s own and does not travel to a gateway. Measured on
                 this system over 30 days: <strong>90.8% of prompt tokens are served
                 from cache</strong>, and a cached token is about a tenth of the price
                 and <strong>393&nbsp;ms faster</strong> to first token (1198&nbsp;ms

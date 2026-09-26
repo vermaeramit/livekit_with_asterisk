@@ -111,7 +111,7 @@ QWEN_STT_URL = os.getenv("QWEN_STT_URL", "").strip()
 # service and cannot be used without a key; this one is a box we own, and
 # demanding a credential for it would mean inventing a fiction to store. Both
 # the key check at the start of a call and the fallback check read this.
-KEYLESS = ("kokoro", "qwen")
+KEYLESS = ("kokoro", "qwen", "qwen-llm")
 
 # How long Silero waits, after the caller stops making sound, before saying the
 # speech has ended. Nothing downstream can start until it does.
@@ -1551,9 +1551,16 @@ def _build_llm(provider: str, cfg, key: str, model: str):
     gateway the name is the routing: a campaign on gpt-4.1-mini falling back to
     OpenRouter wants "openai/gpt-4.1-mini" there, which is not the same string.
     """
-    kw = {"model": model, "temperature": cfg.llm_temperature, "api_key": key}
-    if provider in providers_mod.LLM_BASE_URL:
-        kw["base_url"] = providers_mod.LLM_BASE_URL[provider]
+    kw = {"model": model, "temperature": cfg.llm_temperature,
+          # The SDK rejects an empty string before it sends anything, and a
+          # box of ours has nobody to authenticate to.
+          "api_key": key or "not-needed"}
+    base_url = providers_mod.llm_base_url(provider)
+    extra_body = providers_mod.llm_extra_body(provider)
+    if extra_body:
+        kw["extra_body"] = extra_body
+    if base_url:
+        kw["base_url"] = base_url
     else:
         # prompt_cache_key is OpenAI's own parameter and means nothing to a
         # gateway. Sent anyway it is at best ignored and at worst a 400.
@@ -1581,12 +1588,10 @@ def _llm_stack(cfg, keys: dict):
     reason this is a visible setting rather than a silent default.
     """
     provider = cfg.llm_provider or "openai"
-    # keys[...] and not .get(): every LLM provider the schema allows needs a
-    # key, so a miss here is a bug worth raising rather than an auth error
-    # later. If a KEYLESS language model is ever added - one of ours, on the
-    # GPU box - this line becomes the same KeyError that stopped the first
-    # call on our own STT from being answered.
-    primary = _build_llm(provider, cfg, keys[provider], cfg.llm_model)
+    # .get, because a language model on our own box has no account and no key.
+    # This line carried a comment saying it would become a KeyError the day a
+    # keyless LLM was added; that day was the next one.
+    primary = _build_llm(provider, cfg, keys.get(provider, ""), cfg.llm_model)
     if not FALLBACK:
         return primary
 
@@ -1611,7 +1616,7 @@ def _llm_stack(cfg, keys: dict):
         return primary
 
     return lk_llm.FallbackAdapter(
-        [primary, _build_llm(fb, cfg, keys[fb], fb_model)],
+        [primary, _build_llm(fb, cfg, keys.get(fb, ""), fb_model)],
         attempt_timeout=ATTEMPT_TIMEOUT)
 
 

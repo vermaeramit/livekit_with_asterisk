@@ -38,7 +38,7 @@ REGIONAL = ("soniox",)
 # our hardware would mean storing a fiction and refusing to enable a campaign
 # without it. Deliberately not in PROVIDERS - the console's key page offers
 # what can actually be set - and mirrored by KEYLESS in the agent.
-KEYLESS = ("kokoro", "qwen")
+KEYLESS = ("kokoro", "qwen", "qwen-llm")
 
 
 def soniox_host(kind: str, region: str | None) -> str:
