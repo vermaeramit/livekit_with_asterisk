@@ -43,6 +43,9 @@ class AgentConfig:
     tts_model: Optional[str]
     tts_fallback_provider: Optional[str]
     tts_voice: Optional[str]
+    # How fast the voice speaks, 0.5-2.0. Migration 062. Sarvam takes it as
+    # `pace` and everyone else as `speed`; _build_tts does the translating.
+    tts_speed: float
     allow_interrupt: bool
     max_turns: int
     max_duration_sec: int

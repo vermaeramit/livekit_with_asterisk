@@ -951,9 +951,11 @@ export function CampaignConfig() {
                 allowEmpty
                 emptyLabel="Provider default"
                 hint={
-                  liveVoices.length
-                    ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
-                    : 'A voice the chosen model does not have fails before the call is answered, not on save.'
+                  value.tts_provider === 'kokoro'
+                    ? `${liveVoices.length || 'The'} voices, read from the box. Two can be mixed — choose Custom… and type hf_alpha(2)+hm_omega(1), where the numbers are weights.`
+                    : liveVoices.length
+                      ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
+                      : 'A voice the chosen model does not have fails before the call is answered, not on save.'
                 }
               />
             </div>
@@ -961,7 +963,8 @@ export function CampaignConfig() {
             {/* Directly under the voice picker, because it is the answer to
                 the question that picker raises: seventy names tell you
                 nothing about how any of them sound. */}
-            <VoicePreview value={value} campaignId={campaignId} />
+            <VoicePreview value={value} campaignId={campaignId}
+                          onSpeedChange={(v) => set('tts_speed', v)} />
 
             <div className="grid gap-5 sm:grid-cols-2">
               <SelectField

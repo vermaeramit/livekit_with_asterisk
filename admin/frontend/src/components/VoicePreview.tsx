@@ -142,12 +142,20 @@ export function SpeakButton({
  * Campaign-scoped because the KEY is: the audio is synthesised for real, on
  * this campaign's own provider key, and billed to it exactly as its calls are.
  */
-export function VoicePreview({ value, campaignId }: { value: AgentConfig; campaignId: number }) {
+export function VoicePreview({ value, campaignId, onSpeedChange }: {
+  value: AgentConfig
+  campaignId: number
+  // The slider used to be a preview control whose result was thrown away -
+  // the panel invited somebody to find a speed they liked and then forgot it.
+  // It now edits the campaign's own tts_speed, so what is heard here is what
+  // a caller gets.
+  onSpeedChange: (speed: number) => void
+}) {
   // The greeting, because that is the line a caller actually hears first - the
   // voice should be judged on the words it will really say, not on a sample
   // sentence chosen by us.
   const [text, setText] = useState(value.greeting || 'Namaste, main aapki kya madad kar sakti hoon?')
-  const [speed, setSpeed] = useState(1)
+  const speed = value.tts_speed ?? 1
   const { play, stop, playing, missing } = useSpeak(campaignId, value)
 
   return (
@@ -184,7 +192,7 @@ export function VoicePreview({ value, campaignId }: { value: AgentConfig; campai
             max={1.3}
             step={0.05}
             value={speed}
-            onChange={(e) => setSpeed(Number(e.target.value))}
+            onChange={(e) => onSpeedChange(Number(e.target.value))}
             className="w-40 accent-primary"
           />
         </div>
@@ -216,11 +224,9 @@ export function VoicePreview({ value, campaignId }: { value: AgentConfig; campai
         </span>
       </div>
 
-      {/* The speed here is a preview control, not a campaign setting. Saying so
-          prevents somebody tuning it, liking it, and wondering why calls sound
-          the same. */}
       <p className="text-2xs text-muted-foreground">
-        Speed applies to this preview only — it is not saved with the campaign.
+        Speed is saved with the campaign — what you hear here is what a caller gets.
+        A little slower often sounds less synthetic on a phone line.
       </p>
     </div>
   )

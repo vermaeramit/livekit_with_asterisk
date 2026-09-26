@@ -208,9 +208,27 @@ def _stt_kwargs(cfg):
     return kw
 
 
+def _tts_speed(cfg) -> float:
+    """The campaign's speaking rate, or 1.0.
+
+    getattr rather than cfg.tts_speed, like prompt_datetime and the fallback
+    fields above: a column added to agent_config and not to the dataclass in
+    store.py reaches here as an AttributeError, and an AttributeError in here
+    kills the call at 0 s. A missing speed should mean the provider's own,
+    which is what 1.0 is.
+    """
+    try:
+        return float(getattr(cfg, "tts_speed", None) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _tts_kwargs(cfg):
     kw = {"target_language_code": cfg.language,
-          "model": cfg.tts_model or tts_defaults.SARVAM_MODEL}
+          "model": cfg.tts_model or tts_defaults.SARVAM_MODEL,
+          # Sarvam's name for speed. Same column, same meaning - see
+          # migration 062.
+          "pace": _tts_speed(cfg)}
     # SARVAM_TTS_VOICE removed for the same reason as SARVAM_STT_MODEL above:
     # an env var that beats the console is a console that can lie.
     voice = cfg.tts_voice
@@ -1436,7 +1454,7 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
     if provider == "openai":
         model = ((cfg.tts_model if use_config_model else None)
                  or tts_defaults.OPENAI_MODEL)
-        return openai.TTS(model=model, api_key=key)
+        return openai.TTS(model=model, api_key=key, speed=_tts_speed(cfg))
     if provider == "kokoro":
         # Ours, on the GPU box - and spoken to by our own client rather than
         # livekit's OpenAI plugin, which receives the audio and hands the
@@ -1464,6 +1482,7 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
                        or tts_defaults.KOKORO_MODEL),
                 voice=((cfg.tts_voice if use_config_model else None)
                        or tts_defaults.KOKORO_VOICE),
+                speed=_tts_speed(cfg),
             ),
             sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
         )
@@ -1489,6 +1508,7 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
             voice=((cfg.tts_voice if use_config_model else None)
                    or tts_defaults.SONIOX_VOICE),
             sample_rate=_TTS_NATIVE_RATE["soniox"],
+            speed=_tts_speed(cfg),
             # The region this campaign's key belongs to. On 23 Sep 2026 the
             # US region was stalling mid-sentence from here and the India one
             # was not - see migration 058 and gpu-server/BENCHMARKS.md.

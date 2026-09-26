@@ -762,6 +762,10 @@ class AgentConfigUpdate(BaseModel):
     recording_disclosure: str | None = Field(default=None, min_length=1,
                                              max_length=400)
 
+    # How fast the voice speaks. The same bounds as the CHECK in migration
+    # 062, so a bad value is a readable 422 rather than a database error.
+    tts_speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
     stt_provider: SttProvider | None = None
     tts_provider: TtsProvider | None = None
     stt_fallback_provider: SttProvider | None = None

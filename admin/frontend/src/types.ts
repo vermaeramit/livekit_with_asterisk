@@ -301,6 +301,7 @@ export interface AgentConfig {
   llm_temperature: number
   tts_model: string | null
   tts_voice: string | null
+  tts_speed: number
   allow_interrupt: boolean
 
   kb_enabled: boolean

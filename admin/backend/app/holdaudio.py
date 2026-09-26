@@ -93,7 +93,7 @@ def play_path(name: str) -> str:
 
 async def render(*, provider: str, api_key: str, model: str | None,
                  voice: str | None, language: str, text: str,
-                 region: str | None = None) -> str:
+                 region: str | None = None, speed: float = 1.0) -> str:
     """Synthesise, write, and return the path to store. Idempotent.
 
     Nothing is spent when the same words in the same voice are saved again: the
@@ -102,7 +102,7 @@ async def render(*, provider: str, api_key: str, model: str | None,
     if provider not in _RATE:
         raise RenderError(f"no hold-message support for provider '{provider}'")
 
-    name = basename(text, provider, model, voice)
+    name = basename(text, provider, model, voice, speed)
     target = WRITE_DIR / f"{name}.{_EXT[_RATE[provider]]}"
     if target.exists() and target.stat().st_size >= _MIN_BYTES:
         return play_path(name)
@@ -111,7 +111,7 @@ async def render(*, provider: str, api_key: str, model: str | None,
     # renders the audio, not what the audio says. The same words in the same
     # voice from the India region are the same message.
     pcm, rate = await _synthesise(provider, api_key, model, voice, language,
-                                  text, region)
+                                  text, region, speed)
 
     if rate not in _EXT:
         raise RenderError(
@@ -139,29 +139,30 @@ async def render(*, provider: str, api_key: str, model: str | None,
 
 
 async def _synthesise(provider: str, api_key: str, model: str | None,
-                      voice: str | None, language: str,
-                      text: str, region: str | None = None) -> tuple[bytes, int]:
+                      voice: str | None, language: str, text: str,
+                      region: str | None = None,
+                      speed: float = 1.0) -> tuple[bytes, int]:
     """-> (raw signed 16-bit PCM, sample rate)."""
     want = _RATE[provider]
     try:
         if provider == "soniox":
             data = await ttspreview.soniox(
-                api_key, model=model or "", voice=voice or "",
+                api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text,
                 audio_format="pcm_s16le", sample_rate=want, region=region)
         elif provider == "sarvam":
             data = await ttspreview.sarvam(
-                api_key, model=model or "", voice=voice or "",
+                api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text,
                 codec="wav", sample_rate=want)
         elif provider == "kokoro":
             # Same wire format as OpenAI, different address and no account.
             data = await ttspreview.kokoro(
-                api_key, model=model or "", voice=voice or "",
+                api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text, response_format="pcm")
         else:
             data = await ttspreview.openai(
-                api_key, model=model or "", voice=voice or "",
+                api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text, response_format="pcm")
     except ttspreview.PreviewError as e:
         raise RenderError(str(e)) from e

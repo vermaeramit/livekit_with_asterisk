@@ -33,7 +33,8 @@ FIELDS = (
     "stt_provider", "stt_model", "stt_fallback_provider",
     "llm_provider", "llm_model", "llm_temperature",
     "llm_fallback_provider", "llm_fallback_model",
-    "tts_provider", "tts_model", "tts_voice", "tts_fallback_provider",
+    "tts_provider", "tts_model", "tts_voice", "tts_speed",
+    "tts_fallback_provider",
     "allow_interrupt",
     "kb_enabled", "kb_top_k", "kb_min_score", "kb_inline_max_tokens", "kb_summary",
     "kb_filler_enabled", "kb_filler_message",
@@ -375,7 +376,8 @@ async def _render_queue_audio(campaign_id: int, tenant_id: int | None,
                     provider=provider, api_key=keys.get(provider, ""),
                     model=cfg.get("tts_model"), voice=cfg.get("tts_voice"),
                     language=cfg["language"], text=text,
-                    region=regions.get(provider))
+                    region=regions.get(provider),
+                    speed=float(cfg.get("tts_speed") or 1.0))
             except holdaudio.RenderError as e:
                 path = None
                 problems.append(f"The {label} could not be synthesised: {e}")
