@@ -120,6 +120,15 @@ async def transcribe(stt, path: str, pace: float) -> str:
     """-> everything the recogniser finally decided was said."""
     from livekit.agents import stt as lk_stt
 
+    if not stt.capabilities.streaming:
+        # A non-streaming recogniser has no stream() - a call gets one only
+        # because livekit wraps it in a StreamAdapter with the session's VAD.
+        # Here the wrapping would be theatre: every file in the corpus is
+        # exactly one utterance, which is what the VAD would have cut out of a
+        # call anyway. So ask it the one question it can answer.
+        ev = await stt.recognize([f for f, _ in frames(path)])
+        return ev.alternatives[0].text.strip() if ev.alternatives else ""
+
     stream = stt.stream()
     said: list[str] = []
 
