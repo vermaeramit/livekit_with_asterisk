@@ -967,7 +967,17 @@ export function CampaignConfig() {
               <SelectField
                 label="Language model provider"
                 value={value.llm_provider}
-                onChange={(v) => set('llm_provider', v)}
+                onChange={(v) => {
+                  set('llm_provider', v)
+                  // The model name belongs to the provider. Switching to our
+                  // own server and leaving gpt-4.1-mini in the field sends a
+                  // name that box has never heard of, and the 404 says the
+                  // model does not exist rather than that it is the wrong
+                  // provider's. The speech-to-text and voice pickers have
+                  // cleared their model on this event since they were
+                  // written; this one did not.
+                  if (v === 'qwen-llm') set('llm_model', 'qwen3-32b')
+                }}
                 options={LLM_PROVIDERS}
                 hint="Its key is set on the API keys tab, per campaign or per client."
               />
