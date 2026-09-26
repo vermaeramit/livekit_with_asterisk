@@ -32,6 +32,14 @@ Two things worth keeping in mind from that list:
   8 vCPU is what audio resampling, HTTP serving and every other per-request cost
   has to share. For voice work the CPU is the likelier bottleneck, and it is the
   one that cannot be fixed by choosing a smaller model.
+
+  **This was wrong, and the measurements said so within three days.** At forty
+  concurrent calls Kokoro used 101% of the 800% available - one core of eight.
+  What ran out was RAM: 23 GiB, with 3 GiB already in swap carrying only the LLM
+  and the TTS. Raised to 48 GiB on 26 Sep 2026, after which swap is zero and 30
+  GiB is page cache - which is what makes a restart two minutes rather than
+  twenty, since 26 GB of model weights sit on disk. The prediction was
+  reasonable and it was still a guess; the CPU ask never needed to be made.
 - **Docker already exposes the GPU through CDI**, so a container gets it with
   `--device nvidia.com/gpu=all`; no legacy `--gpus` runtime setup needed.
 
@@ -107,6 +115,47 @@ First test: **IndicF5** for the quality bar, against the same Hindi sentences
 `tts-bench` uses, so it can be compared with Sarvam and Soniox by ear; and
 **Orpheus or Magpie** for streaming and speed. Measured the same way the vendors
 were - first audio, then stalls at 1, 2, 4 and 8 concurrent streams.
+
+## What runs on it - 26 Sep 2026
+
+All three layers of a call, at once, for the first time. Each is its own compose
+project under `/srv/gpu-stack/`.
+
+| Service | Port | Model | VRAM | In the call path? |
+|---|---|---|---|---|
+| **kokoro** | 8880 | Kokoro-FastAPI | ~2 GB | **yes** - campaign 7's voice |
+| **qwen-asr** | 8001 | Qwen3-ASR 1.7B, vLLM | ~7 GB | no - available, nothing points at it |
+| **qwen-llm** | 8002 | Qwen3-32B-AWQ, vLLM | ~36 GB | **yes** - campaign 7's model |
+
+**47.4 of 49.1 GB committed - 1.7 GB free.** vLLM takes its budget at startup
+and does not grow, so this is stable rather than precarious, but there is no
+room for a fourth thing without shrinking a third. The dial is the LLM's
+`--gpu-memory-utilization`: 0.75 today, of which 14.8 GB is KV cache, and that
+KV cache is what decides how many calls can be in flight (about 8-9
+conversations at this campaign's ~7k-token prompt).
+
+RAM is 48 GB since 26 Sep, and that was the real fix - see the note below. CPU
+sits near idle with all three loaded.
+
+### `--max-model-len` is the setting that bites
+
+Both vLLM services refused to start until it was set, and both times the error
+blamed memory rather than the setting:
+
+    LLM  default 65536  ->  wanted 7.0 GiB of KV cache before serving anything
+    ASR  set to 16384   ->  wanted 1.75 GiB with 0.43 GiB available
+
+vLLM reserves KV cache for the FULL declared context whether a request uses it
+or not. A call's prompt is 1-2k tokens plus the knowledge base; an utterance is
+a few seconds of audio. So the LLM runs at 16384 and the ASR at 4096, and both
+start in about three minutes - a minute of weights, a minute of `torch.compile`,
+half a minute of CUDA graph capture.
+
+### Removed
+
+**Chatterbox** ran from 23 to 26 Sep holding ~5 GB of VRAM, having lost every
+measurement against Kokoro on the day it was installed. `docker compose stop`
+was used instead of `down`, so it came back on the next reboot. It is gone.
 
 ## How the agent reaches it
 
