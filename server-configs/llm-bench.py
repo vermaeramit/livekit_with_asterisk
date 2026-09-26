@@ -66,7 +66,8 @@ HISTORY = [
 
 
 async def one(client: AsyncOpenAI, model: str, cfg, messages: list[dict],
-              schemas: list[dict], cache_key: str | None) -> tuple[int, int, int, int]:
+              schemas: list[dict], cache_key: str | None,
+              no_thinking: bool = False) -> tuple[int, int, int, int]:
     """-> (ttft ms, total ms, prompt tokens, cached tokens).
 
     Streamed, because the first token is what a caller waits for and the last
@@ -77,6 +78,11 @@ async def one(client: AsyncOpenAI, model: str, cfg, messages: list[dict],
     kw = {}
     if cache_key:
         kw["prompt_cache_key"] = cache_key
+    if no_thinking:
+        # Qwen3 reasons before it answers, and on the first test it spent all
+        # 120 tokens thinking in English and never reached the reply. Fine in
+        # a chat window; on a call the caller is listening to silence.
+        kw["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     t0 = time.monotonic()
     first = None
     prompt_tokens = cached = 0
@@ -100,13 +106,17 @@ async def one(client: AsyncOpenAI, model: str, cfg, messages: list[dict],
 
 
 async def bench(model: str, cfg, keys: dict, provider: str, runs: int,
-                messages: list[dict], schemas: list[dict]) -> None:
+                messages: list[dict], schemas: list[dict],
+                base_url: str = "", no_thinking: bool = False) -> None:
     key = keys.get(provider)
-    if not key:
+    if not key and not base_url:
         print(f"{model:<28} no {provider} key on this campaign - skipped")
         return
+    # A server of ours has no account to authenticate to, and the SDK refuses
+    # an empty string before it sends anything.
+    key = key or "not-needed"
 
-    base_url = providers_mod.llm_base_url(provider)
+    base_url = base_url or providers_mod.llm_base_url(provider)
     # prompt_cache_key is OpenAI's own and means nothing to a gateway - the
     # agent makes the same distinction in _build_llm.
     cache_key = None if base_url else cfg.name
@@ -115,7 +125,8 @@ async def bench(model: str, cfg, keys: dict, provider: str, runs: int,
     rows = []
     try:
         for i in range(runs + 1):
-            r = await one(client, model, cfg, messages, schemas, cache_key)
+            r = await one(client, model, cfg, messages, schemas, cache_key,
+                          no_thinking)
             rows.append(r)
             # Not a rate limit dodge: back to back calls are not what a call
             # does, and OpenAI's cache is happier with a gap than without one.
@@ -144,6 +155,12 @@ async def main() -> None:
                     help="openai or openrouter; default is the campaign's own")
     ap.add_argument("--runs", type=int, default=5,
                     help="warm runs per model, after one cold run")
+    ap.add_argument("--base-url", default="",
+                    help="an OpenAI-compatible server of our own, e.g. "
+                         "http://10.130.9.248:8002/v1 - no key is sent")
+    ap.add_argument("--no-thinking", action="store_true",
+                    help="Qwen3 and friends reason before answering; on a call "
+                         "that is silence the caller hears")
     ap.add_argument("--no-tools", action="store_true",
                     help="leave the campaign's tools out - they cost prompt "
                          "tokens, so this is a different question")
@@ -183,7 +200,8 @@ async def main() -> None:
     print(f"prompt {len(instructions)} chars, kb {kb_mode} ({kb_tokens} tok), "
           f"{len(schemas)} tools, {args.runs} warm runs each\n")
     for model in models:
-        await bench(model, cfg, keys, provider, args.runs, messages, schemas)
+        await bench(model, cfg, keys, provider, args.runs, messages, schemas,
+                    args.base_url, args.no_thinking)
 
 
 if __name__ == "__main__":
