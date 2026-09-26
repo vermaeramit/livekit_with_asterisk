@@ -144,7 +144,11 @@ async def reply(cfg, history: list[dict], api_key: str,
     # The campaign's own language model. The tester and the widget both ran
     # this on keys["openai"] whatever the campaign was set to, which made them
     # a test of something other than the thing being tested.
-    client = AsyncOpenAI(api_key=api_key,
+    # `or "not-needed"`: a model on our own box has no account, and the SDK
+    # raises "Missing credentials" on an empty string before it sends
+    # anything - which reads as a configuration mistake rather than as the
+    # absence of one.
+    client = AsyncOpenAI(api_key=api_key or "not-needed",
                          **({"base_url": base_url} if base_url else {}))
     steps: list[Step] = []
     first_token_ms = 0

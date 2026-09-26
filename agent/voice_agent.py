@@ -1894,6 +1894,7 @@ async def _queue_postback(store, cfg, call_id: int, keys: dict,
             turns=turns, fields=fields,
             api_key=keys.get(llm_provider, ""),
             base_url=providers_mod.llm_base_url(llm_provider),
+            extra_body=providers_mod.llm_extra_body(llm_provider),
             tool_calls=tool_calls, model=cfg.llm_model)
 
         # Fields the dialler already told us, republished under the names the

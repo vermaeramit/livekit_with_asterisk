@@ -248,7 +248,8 @@ def tool_text(tool_calls: list[dict], limit: int = 6000) -> str:
 async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
                   tool_calls: list[dict] | None = None,
                   model: str = "gpt-4.1-mini",
-                  base_url: str | None = None) -> dict:
+                  base_url: str | None = None,
+                  extra_body: dict | None = None) -> dict:
     """-> {field: value}, or {} when there is nothing to extract.
 
     Failure is not raised. A call whose extraction fails should still deliver
@@ -285,10 +286,18 @@ async def extract(*, turns: list[dict], fields: list[dict], api_key: str,
         # base_url, because this runs on the CAMPAIGN'S language model, not
         # on OpenAI by definition. A campaign on a gateway has a gateway key
         # and a model name only that gateway knows.
-        client = AsyncOpenAI(api_key=api_key,
+        # `or "not-needed"`: a model on our own box has no account, and the
+        # SDK raises "Missing credentials" on an empty string before it sends
+        # anything. This runs AFTER the call, so the failure would be a
+        # postback that never reaches the customer's system - silent, and
+        # exactly the shape of the bug the comment above describes.
+        client = AsyncOpenAI(api_key=api_key or "not-needed",
                              **({"base_url": base_url} if base_url else {}))
         resp = await asyncio.wait_for(client.chat.completions.create(
             model=model,
+            # Whatever this provider needs and the SDK has no argument for -
+            # today, Qwen3's thinking mode off. See providers.llm_extra_body.
+            **({"extra_body": extra_body} if extra_body else {}),
             # Deterministic: the same conversation must produce the same record
             # twice, or re-running an extraction becomes a coin toss.
             temperature=0,
