@@ -5920,6 +5920,107 @@ next time a fallback looks optional.
 ---
 ---
 
+## A language model of our own, and what it taught about the last one (26 Sep 2026)
+
+Qwen3-32B-AWQ on the GPU box under vLLM 0.30, reached through the OpenAI plugin
+with a base_url. Migration 061, provider `qwen-llm`. Call 668 ran on it:
+Soniox listening, our box thinking, our box speaking.
+
+### The bench, and then the call
+
+Against the `default` campaign's real prompt - 26,000 characters, a knowledge
+base index, six tool declarations - beside gpt-4.1-mini on the same prompt:
+
+| | cold | warm p50 | spread |
+|---|---|---|---|
+| **qwen3-32b** | **456 ms** | **106 ms** | **6 ms** |
+| gpt-4.1-mini | 3298 ms | 700 ms | 322 ms |
+
+Call 668 held it: `llm_ttft` 113-317 ms after the first turn, against 625-1988
+on OpenAI. The spread matters most - gpt-4.1-mini was chosen for variance after
+a single 6286 ms turn ended a call, and this is 6 ms.
+
+**And the caller waited LONGER.** `wait_ms` 1644-3688, median ~2800, against
+~1700 before. The four recorded numbers did not add up to it: seq 12 was
+353 + 187 + 101 = 641 ms of eou, model and voice against a 3688 ms wait.
+
+### Time to first TOKEN is the wrong measurement
+
+`TTS_STREAM` found the missing seconds:
+
+| first_audio | text_complete | answer |
+|---|---|---|
+| 137 ms | +442 ms | 5.0 s |
+| 1559 ms | +1638 ms | 12.9 s |
+| 2778 ms | +2718 ms | 15.4 s |
+| **3221 ms** | **+5398 ms** | **23.7 s** |
+
+The first token arrived in 187 ms and the first SENTENCE took 3.2 s, because a
+sentence tokenizer sits between the model and the voice - half a sentence
+cannot be spoken. So what decides when a caller hears anything is **decode
+speed**, not TTFT.
+
+Decode measured from these lines: a 23.7 s answer is roughly 200 tokens written
+in 8.6 s - about **23 tokens/s**, which is what a 4-bit 32B does on an A6000.
+OpenAI is two to three times faster at it.
+
+| | ours | OpenAI |
+|---|---|---|
+| first token | **113-317 ms** | 625-1988 ms |
+| tokens/s | ~23 | 2-3x faster |
+| **first audio** | 137-3221 ms | 385-736 ms |
+
+So it wins the measurement everyone quotes and loses the one that reaches the
+caller. Two fixes, both worth doing:
+
+- **The prompt.** A 23.7-second answer is a speech, not a reply. Shorter
+  answers shorten the first sentence too.
+- **The architecture.** A Mixture-of-Experts - 30B total, 3B active - decodes
+  several times faster for the same size. For this system that matters more
+  than a better benchmark score, and it is the next thing to try.
+
+### RAM was the constraint, not CPU
+
+`gpu-server/README.md` predicted on day one that the 8 vCPU would give out
+first. It was wrong, and the measurements say so plainly:
+
+| | |
+|---|---|
+| CPU | 101% of 800% at forty concurrent calls - one core of eight |
+| GPU | 37.5 of 49 GB with the LLM and TTS both loaded |
+| **RAM** | **23 GB, and 3 GB already in swap with two services** |
+
+Raised to 48 GB on 26 Sep. Swap is now zero, 25 GB of page cache - which is
+what makes a restart two minutes rather than twenty, since 22 GB of weights sit
+on disk. The VM is still 8 sockets x 1 core; that remains a bad VMware layout
+and remains not worth a reboot of its own while one core is doing the work.
+
+Chatterbox was finally removed. It had been running since 23 Sep, holding ~5 GB
+of VRAM, losing on every measurement, and quietly coming back on every reboot -
+`stop` is not `down`.
+
+### Four bugs, all the same shape
+
+Every one was a place that assumed a provider has an account:
+
+1. `_stt_stack` looked a keyless provider up with `keys[...]` - `KeyError:
+   'qwen'`, thrown before the agent could answer. The phone rang out, which
+   says nothing about the cause. `_tts_stack` had been fixed and this had not.
+2. `chat.py` and the postback extractor built an OpenAI client with an empty
+   key, which the SDK rejects before sending anything. The postback one would
+   have failed after the call, silently, with no row and nothing missing in the
+   console.
+3. Switching the LLM provider left `gpt-4.1-mini` in the model field, and our
+   box answered a truthful 404 for a model it does not serve.
+4. The model dropdown showed `qwen3-32b` while the database held
+   `gpt-4.1-mini`. A `<select>` whose value matches no option displays the
+   first one and keeps the old value, so choosing what is already displayed
+   fires no event and Save has nothing to send. The live list above it has
+   carried the guard for this since it was written.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and
