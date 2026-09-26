@@ -1010,7 +1010,19 @@ export function CampaignConfig() {
                   label="Language model"
                   value={value.llm_model}
                   onChange={(v) => set('llm_model', v)}
-                  options={[{ value: 'qwen3-32b', label: 'qwen3-32b — measured warm 106ms, spread 6ms' }]}
+                  options={
+                    // The saved model first when it is not one of ours, the
+                    // same guard the live list above carries. A <select> whose
+                    // value matches no option DISPLAYS the first one while
+                    // holding the old value, and then choosing what is already
+                    // displayed fires no change event at all - the screen read
+                    // qwen3-32b, the database read gpt-4.1-mini, and Save had
+                    // nothing to send.
+                    value.llm_model && value.llm_model !== 'qwen3-32b'
+                      ? [{ value: value.llm_model, label: `${value.llm_model} (not on this server)` },
+                         { value: 'qwen3-32b', label: 'qwen3-32b — measured warm 106ms, spread 6ms' }]
+                      : [{ value: 'qwen3-32b', label: 'qwen3-32b — measured warm 106ms, spread 6ms' }]
+                  }
                   hint="Whatever --served-model-name says on the box. The two must agree or the server answers 404 for a model it is not serving."
                 />
               ) : value.llm_provider === 'openrouter' ? (
