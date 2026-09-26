@@ -17,7 +17,7 @@ import urllib.request
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
-from .. import ttspreview
+from .. import holdaudio, ttspreview
 from .. import audit, db, provider_keys as pk, secretlib
 from ..deps import (CurrentUser, active_user, assert_campaign_visible,
                     require_perm, tenant_scope)
@@ -272,10 +272,12 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
                                        campaign_id=campaign_id)
     region = regions.get(body.provider)
     cache_key = (f"{body.provider}:{region or 'us'}:{body.model}:{body.voice}:"
-                 f"{body.language}:{body.speed}:{tenant_id}:{hash(text)}")
+                 f"{body.language}:{body.speed}:{body.telephone}:"
+                 f"{tenant_id}:{hash(text)}")
+    media = "audio/wav" if body.telephone else "audio/mpeg"
     hit = _preview_cache.get(cache_key)
     if hit:
-        return Response(content=hit, media_type="audio/mpeg",
+        return Response(content=hit, media_type=media,
                         headers={"Cache-Control": "no-store"})
 
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
@@ -299,10 +301,20 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     # why the others are not handed an argument they do not understand.
     regional = {"region": region} if body.provider in pk.REGIONAL else {}
     try:
-        audio = await synth(
-            keys.get(body.provider, ""), model=body.model, voice=body.voice,
-            language=body.language, text=text, speed=body.speed, **regional)
+        if body.telephone:
+            # The hold-message path, because it already knows how to ask each
+            # provider for telephony PCM. See holdaudio.phone_preview.
+            audio = await holdaudio.phone_preview(
+                provider=body.provider, api_key=keys.get(body.provider, ""),
+                model=body.model, voice=body.voice, language=body.language,
+                text=text, speed=body.speed, **regional)
+        else:
+            audio = await synth(
+                keys.get(body.provider, ""), model=body.model, voice=body.voice,
+                language=body.language, text=text, speed=body.speed, **regional)
     except ttspreview.PreviewError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+    except holdaudio.RenderError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
 
     # Bounded, and crudely: this is a convenience cache in one process, not a
@@ -313,7 +325,7 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
             _preview_cache.pop(k, None)
     _preview_cache[cache_key] = audio
 
-    return Response(content=audio, media_type="audio/mpeg",
+    return Response(content=audio, media_type=media,
                     headers={"Cache-Control": "no-store"})
 
 

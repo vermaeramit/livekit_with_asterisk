@@ -6149,6 +6149,53 @@ The gap to the vendors is down from 2100 ms to about 750 ms, and the remaining
 ---
 ---
 
+## The voice a caller actually gets (26 Sep 2026)
+
+"Moti moti robotic si aawaj" on the phone, and crystal clear in the console.
+Both were true, and the reason is not the voice.
+
+**The trunk carries 8 kHz ulaw.** Everything above 4 kHz is gone before the
+caller hears a syllable - the sibilance in स, श and च, the breath, the air. The
+console plays Kokoro's 24 kHz output through a browser, so it was showing a
+recording no caller ever receives, and a voice chosen there was being chosen on
+the wrong evidence. Nothing was misconfigured: `ulaw` is already the best the
+trunk offers, and Kokoro has no pitch control to turn.
+
+So the levers that remain are the voice, the mix and the speed - and all three
+now live in the panel instead of in a constant.
+
+- **`tts_speed`** (migration 062, `agent_config.tts_speed REAL`, CHECK 0.5-2.0)
+  is a saved column, passed to Kokoro, to every preview, and into the
+  hold-message hash. The slider used to be a preview toy whose answer was
+  thrown away: somebody could find a speed they liked and the campaign would
+  keep the old one with nothing to show why.
+- **Voice mixing** - Kokoro can speak as two voices at once, weighted. Four
+  Hindi blends are prepended to the voice dropdown, because the box does not
+  list them (they are made on the spot from voices it does hold) and nothing
+  else would ever tell anybody they exist.
+- **A "Phone line" button** beside Play, which asks the provider for telephony
+  PCM the way the hold message does, resamples 24 kHz down with
+  `audioop.ratecv`, and hands back an 8 kHz WAV. Deliberately not upsampled
+  again: raising the rate would put the numbers back without the sound and make
+  it seem better than it is. The two buttons sit side by side because the
+  difference is only audible back to back.
+
+`audioop` is deprecated in 3.12 and gone in 3.13. The image is `python:3.12-slim`
+(checked, not assumed), so it is stdlib today; `audioop-lts` is the drop-in when
+the base image moves, and it cannot be added to requirements before then because
+it refuses to install on 3.12.
+
+### A break that existed for one commit
+
+`render()` was updated to put speed in the filename hash and `basename()` was
+not given the parameter - a `TypeError` on every hold-message save, in code that
+type-checks clean and only runs when somebody saves a queue message. Found by
+reading the call sites of a function I had just changed, which is the habit that
+catches this class and the only thing that does.
+
+---
+---
+
 ## ⏭️ Next
 
 - **The other campaigns are still on the US Soniox region.** Campaigns 1, 3 and

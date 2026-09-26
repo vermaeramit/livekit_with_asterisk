@@ -31,6 +31,10 @@ the host one. The database stores the path ASTERISK will use.
 """
 from __future__ import annotations
 
+# Deprecated in 3.12 and gone in 3.13; this image is 3.12-slim. Used only for
+# ratecv, which resamples properly rather than by dropping samples. When a
+# Python moves, `audioop-lts` is a drop-in.
+import audioop
 import hashlib
 import io
 import logging
@@ -74,10 +78,16 @@ class RenderError(Exception):
 
 
 def basename(text: str, provider: str, model: str | None,
-             voice: str | None) -> str:
-    """The file for this exact line in this exact voice."""
+             voice: str | None, speed: float = 1.0) -> str:
+    """The file for this exact line in this exact voice at this exact speed.
+
+    Speed belongs in the hash for the same reason the voice does: it changes
+    the audio. Leaving it out would keep playing the first render after
+    somebody had slowed the message down, with nothing to show why.
+    """
     return hashlib.sha256(
-        "\x00".join((text, provider, model or "", voice or "")).encode()
+        "\x00".join((text, provider, model or "", voice or "",
+                     f"{speed:.2f}")).encode()
     ).hexdigest()[:32]
 
 
@@ -200,3 +210,48 @@ def _strip_header(data: bytes, assumed_rate: int) -> tuple[bytes, int]:
         raise RenderError(f"the provider returned {channels}-channel audio")
 
     return pcm, rate
+
+
+# ── what the caller will actually hear ──────────────────────────────────────
+
+PHONE_RATE = 8000
+
+
+def as_wav(pcm: bytes, rate: int) -> bytes:
+    """Raw samples wrapped so a browser will play them."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+async def phone_preview(*, provider: str, api_key: str, model: str | None,
+                        voice: str | None, language: str, text: str,
+                        region: str | None = None,
+                        speed: float = 1.0) -> bytes:
+    """-> the line as a WAV at 8 kHz: what a caller hears, not what we make.
+
+    The console's voice preview plays 24 kHz audio in a browser, and a phone
+    call carries 8 kHz. Everything above 4 kHz is simply gone on the line - the
+    sibilance in स, श and च, the breath, the air that makes a voice sound
+    crystal clear. So a voice chosen in the preview is chosen on a recording
+    the caller will never receive, and the one that sounds best there may be
+    the one that loses most.
+
+    This is the same journey the audio makes: ask the provider for telephony
+    PCM exactly as the hold-message render does - Soniox and Sarvam give 8 kHz
+    directly, Kokoro and OpenAI give 24 and are resampled here - and hand back
+    the result rather than the original.
+
+    Deliberately NOT upsampled afterwards. Playing it at 8 kHz is what the
+    browser should do; raising the rate again would add back the numbers
+    without adding back the sound, and make it seem better than it is.
+    """
+    pcm, rate = await _synthesise(provider, api_key, model, voice, language,
+                                  text, region, speed)
+    if rate != PHONE_RATE:
+        pcm, _ = audioop.ratecv(pcm, 2, 1, rate, PHONE_RATE, None)
+    return as_wav(pcm, PHONE_RATE)

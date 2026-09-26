@@ -1570,6 +1570,10 @@ class TtsPreviewIn(BaseModel):
     # text-to-speech service.
     text: str = Field(min_length=1, max_length=400)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    # Render it the way the phone line does - 8 kHz, everything above 4 kHz
+    # gone - so a voice is judged on what a caller receives rather than on the
+    # 24 kHz recording only the console ever hears.
+    telephone: bool = False
 
 
 class TtsCatalog(BaseModel):

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Loader2, Play, Square } from 'lucide-react'
+import { Loader2, Phone, Play, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/primitives'
 import { useToast } from '@/components/ui/toast'
@@ -31,7 +31,13 @@ function useSpeak(campaignId: number, value: AgentConfig) {
   )
 
   const play = useMutation({
-    mutationFn: async ({ text, speed = 1 }: { text: string; speed?: number }) => {
+    mutationFn: async ({ text, speed = 1, telephone = false }: {
+      text: string
+      speed?: number
+      // Render it down to the 8 kHz a call carries instead of the 24 kHz the
+      // browser can play. See holdaudio.phone_preview.
+      telephone?: boolean
+    }) => {
       const url = await authedAudio(`/campaigns/${campaignId}/tts-preview`, {
         provider: value.tts_provider,
         model: value.tts_model,
@@ -39,6 +45,7 @@ function useSpeak(campaignId: number, value: AgentConfig) {
         language: value.language,
         text: text.slice(0, 400),
         speed,
+        telephone,
       })
       urls.current.push(url)
       return url
@@ -157,6 +164,8 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
   const [text, setText] = useState(value.greeting || 'Namaste, main aapki kya madad kar sakti hoon?')
   const speed = value.tts_speed ?? 1
   const { play, stop, playing, missing } = useSpeak(campaignId, value)
+  const blocked = missing || !text.trim() || play.isPending
+  const pending = play.isPending
 
   return (
     <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
@@ -203,18 +212,35 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
             Stop
           </Button>
         ) : (
-          <Button
-            size="sm"
-            onClick={() => play.mutate({ text, speed })}
-            disabled={missing || !text.trim() || play.isPending}
-          >
-            {play.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            Play
-          </Button>
+          <>
+            <Button
+              size="sm"
+              onClick={() => play.mutate({ text, speed })}
+              disabled={blocked || play.isPending}
+            >
+              {pending && !play.variables?.telephone ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              Play
+            </Button>
+            {/* Side by side on purpose. The difference between the two is the
+                whole point, and it is only audible back to back. */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => play.mutate({ text, speed, telephone: true })}
+              disabled={blocked || play.isPending}
+            >
+              {pending && play.variables?.telephone ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Phone className="h-3.5 w-3.5" />
+              )}
+              Phone line
+            </Button>
+          </>
         )}
 
         <span className="text-2xs text-muted-foreground">
@@ -227,6 +253,13 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
       <p className="text-2xs text-muted-foreground">
         Speed is saved with the campaign — what you hear here is what a caller gets.
         A little slower often sounds less synthetic on a phone line.
+      </p>
+      <p className="text-2xs leading-relaxed text-muted-foreground">
+        <span className="font-medium">Phone line</span> plays the same words at
+        8 kHz, which is all a call carries — everything above 4 kHz is gone on the
+        way to the caller, and that is most of what makes a voice sound crystal
+        clear here. It will sound duller, and closer to the truth. Judge the
+        voice, the mix and the speed on that one.
       </p>
     </div>
   )
