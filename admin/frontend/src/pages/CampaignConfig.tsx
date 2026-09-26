@@ -104,6 +104,20 @@ const STT_PROVIDERS = [
   { value: 'qwen', label: 'Our own server' },
 ]
 
+// Kokoro can speak as two voices at once - the weights in the brackets decide
+// how much of each. The box does not list these, because they are not voices
+// it holds; they are made on the spot from the ones it does. Offered here
+// because nothing else would ever tell anybody they exist.
+//
+// Only Hindi pairs: mixing a Hindi voice with an English one produces an
+// accent rather than a blend.
+const KOKORO_BLENDS = [
+  { value: 'hf_alpha(2)+hf_beta(1)', label: 'mix — two female voices' },
+  { value: 'hf_alpha(2)+hm_omega(1)', label: 'mix — female, with a male underneath' },
+  { value: 'hm_omega(2)+hf_alpha(1)', label: 'mix — male, with a female underneath' },
+  { value: 'hm_omega(2)+hm_psi(1)', label: 'mix — two male voices' },
+]
+
 // Providers with no account behind them, so no key to ask a client for.
 const KEYLESS = ['kokoro', 'qwen']
 
@@ -937,22 +951,26 @@ export function CampaignConfig() {
                 label="Voice"
                 value={value.tts_voice ?? ''}
                 onChange={(v) => set('tts_voice', v.trim() || null)}
-                options={
-                  liveVoices.length
+                options={[
+                  // Blends first: they are the ones nobody would think to ask
+                  // for, and on a phone line they are worth trying before the
+                  // seventy-two the box lists.
+                  ...(value.tts_provider === 'kokoro' ? KOKORO_BLENDS : []),
+                  ...(liveVoices.length
                     ? liveVoices.map((v) => ({
                         value: v.id,
                         label: [v.id, v.gender, v.description?.split(/[.,]/)[0]]
                           .filter(Boolean)
                           .join(' · '),
                       }))
-                    : VOICES[value.tts_provider] ?? []
-                }
+                    : VOICES[value.tts_provider] ?? []),
+                ]}
                 placeholder="voice name"
                 allowEmpty
                 emptyLabel="Provider default"
                 hint={
                   value.tts_provider === 'kokoro'
-                    ? `${liveVoices.length || 'The'} voices, read from the box. Two can be mixed — choose Custom… and type hf_alpha(2)+hm_omega(1), where the numbers are weights.`
+                    ? `${liveVoices.length || 'The'} voices, read from the box, and four mixes at the top. A mix is two voices at once — the numbers are weights, and Custom… takes any pair.`
                     : liveVoices.length
                       ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
                       : 'A voice the chosen model does not have fails before the call is answered, not on save.'
