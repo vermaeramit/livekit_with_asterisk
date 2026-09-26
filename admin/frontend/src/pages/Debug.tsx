@@ -191,6 +191,9 @@ function CallIdField({ value, onChange }: { value: string; onChange: (v: string)
  * 10.130.9.248 as `gpu`, which is in the docker group and needs no sudo. In
  * one list the two would eventually be run on the wrong box, and a restart on
  * the wrong box drops calls.
+ *
+ * Three services live there, each its own compose project under
+ * /srv/gpu-stack/. Every command below has been run on that box.
  */
 function GpuTab() {
   return (
@@ -203,69 +206,145 @@ function GpuTab() {
 
       <Section
         icon={Activity}
-        title="Is our own voice up?"
-        when="Start here. A campaign set to our own server has no voice if this box is down."
+        title="Are all three up?"
+        when="Start here. A campaign on our own voice or model has neither if this box is down."
         defaultOpen
       >
         <Step
           n={1}
-          title="Container, GPU, and whether the model finished loading"
+          title="Containers, endpoints, card and memory"
           good={
             <>
-              <code>kokoro</code> <code>Up</code>, the card named, and <code>http 200</code>. VRAM
-              around <code>1000 MiB</code> for Kokoro alone — much less means the model is still
-              loading, and the API answers before it is ready.
+              three containers <code>Up</code>, three <code>200</code>s, and around{' '}
+              <code>47000 MiB</code> of <code>49140</code> used — the card is meant to be nearly
+              full, because vLLM takes its budget at startup and never grows. RAM should show{' '}
+              <code>0B</code> of swap.
             </>
           }
         >
           <Cmd>{String.raw`docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
-nvidia-smi --query-gpu=name,utilization.gpu,memory.used --format=csv
-curl -s -o /dev/null -w 'voices http %{http_code}\n' http://127.0.0.1:8880/v1/audio/voices`}</Cmd>
+curl -s -o /dev/null -w 'kokoro    8880  %{http_code}\n' http://127.0.0.1:8880/v1/audio/voices
+curl -s -o /dev/null -w 'qwen-asr  8001  %{http_code}\n' http://127.0.0.1:8001/v1/models
+curl -s -o /dev/null -w 'qwen-llm  8002  %{http_code}\n' http://127.0.0.1:8002/v1/models
+nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv
+free -h | head -2`}</Cmd>
         </Step>
         <Step
           n={2}
-          title="Make it speak, and count the bytes"
+          title="A container that is Up but answers nothing is still loading"
           good={
             <>
-              <code>http 200</code> and tens of thousands of bytes. A 200 with <code>0 bytes</code>{' '}
-              is a model that loaded and is not synthesising — nothing else here would show that.
+              <code>200</code> within about three minutes of a start: a minute of weights, a minute
+              of <code>torch.compile</code>, half a minute capturing CUDA graphs. Longer than that
+              and it is not loading, it is crash-looping — see <em>When vLLM will not start</em>.
             </>
           }
         >
-          <Cmd>{String.raw`curl -s -o /tmp/say.pcm -w 'http %{http_code}  bytes %{size_download}\n' \
+          <Cmd>{String.raw`for i in $(seq 1 24); do code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8002/v1/models); echo "$(date +%T) http=$code"; [ "$code" = "200" ] && break; sleep 10; done`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={AudioLines}
+        title="Make each one actually work"
+        when="They answer /v1/models and the call still fails. A health check is not a synthesis."
+      >
+        <Step
+          n={1}
+          title="Speak — and count the bytes"
+          good={
+            <>
+              <code>200</code> with tens of thousands of bytes. A <code>200</code> with{' '}
+              <code>0 bytes</code> is a model that loaded and is not synthesising, which nothing
+              else here would show.
+            </>
+          }
+        >
+          <Cmd>{String.raw`curl -s -o /tmp/say.wav -w 'tts http %{http_code}  bytes %{size_download}\n' \
   -X POST http://127.0.0.1:8880/v1/audio/speech \
   -H 'Content-Type: application/json' \
-  -d '{"model":"kokoro","voice":"hf_alpha","input":"namaste, aap kaise hain","response_format":"pcm"}'`}</Cmd>
+  -d '{"model":"kokoro","voice":"hf_alpha","input":"नमस्ते, आप कैसे हैं","response_format":"wav"}'`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="Listen — to what we just said"
+          good={
+            <>
+              the same sentence back, in about <code>800 ms</code>. This feeds our own voice to our
+              own ears, so one command proves both and needs no audio file lying around.
+            </>
+          }
+        >
+          <Cmd>{String.raw`curl -s -w '\nstt %{time_total}s\n' \
+  -X POST http://127.0.0.1:8001/v1/audio/transcriptions \
+  -F file=@/tmp/say.wav -F model=qwen3-asr -F language=hi`}</Cmd>
         </Step>
         <Step
           n={3}
-          title="From the call server, not from the box"
+          title="Think — with thinking mode off"
           good={
             <>
-              <code>200</code>. Failing here while step 1 passes is the route or the firewall — the
-              box answers <code>10.130.0.0/16</code> only, by its own rule.
+              a short Hindi reply, no <code>&lt;think&gt;</code> anywhere. Qwen3 reasons before
+              answering unless told not to; asked a one-line question with it on, it spent all 120
+              tokens arguing with itself in English and never replied. The agent sends the same
+              switch on every call.
+            </>
+          }
+        >
+          <Cmd>{String.raw`curl -s -w '\nllm %{time_total}s\n' \
+  -X POST http://127.0.0.1:8002/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-32b","max_tokens":100,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"नमस्ते, एक लाइन में जवाब दीजिए।"}]}'`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={Unplug}
+        title="From the call server, not from the box"
+        when="Everything answers on the box and calls still fail."
+      >
+        <Step
+          n={1}
+          title="Does this server know where the box is, and can it reach it?"
+          good={
+            <>
+              three addresses printed and three <code>200</code>s. An address missing here is the
+              likeliest cause of all: the agent and the console read DIFFERENT env files, and a
+              variable added to one and not the other has broken this twice.
             </>
           }
         >
           <Cmd>{String.raw`( set -a; . /opt/aivoice/.env; set +a
-  echo "KOKORO_URL=$KOKORO_URL"
-  curl -s -o /dev/null -w 'from this server: %{http_code}\n' "$KOKORO_URL/audio/voices" )`}</Cmd>
+  echo "agent:   KOKORO_URL=$KOKORO_URL"
+  echo "agent:   QWEN_STT_URL=$QWEN_STT_URL"
+  echo "agent:   QWEN_LLM_URL=$QWEN_LLM_URL"
+  grep -hE '^(KOKORO_URL|QWEN_STT_URL|QWEN_LLM_URL)=' /srv/aivoice/admin/.env | sed 's/^/console: /'
+  curl -s -o /dev/null -w 'kokoro   %{http_code}\n' "$KOKORO_URL/audio/voices"
+  curl -s -o /dev/null -w 'qwen-asr %{http_code}\n' "$QWEN_STT_URL/models"
+  curl -s -o /dev/null -w 'qwen-llm %{http_code}\n' "$QWEN_LLM_URL/models" )`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="Which campaigns actually point at the box"
+          good={<>the providers a campaign uses. <code>kokoro</code>, <code>qwen</code> and <code>qwen-llm</code> are ours; the rest are vendors.</>}
+        >
+          <Cmd>{String.raw`docker exec postgres psql -U aivoice -d aivoice -c "SELECT campaign_id, name, stt_provider, llm_provider, llm_model, tts_provider, tts_voice, stt_fallback_provider, llm_fallback_provider, tts_fallback_provider FROM agent_config ORDER BY campaign_id;"`}</Cmd>
         </Step>
       </Section>
 
       <Section
         icon={Gauge}
         title="Watch it during a call"
-        when="What one call costs the box, and whether the CPU or the GPU gives out first."
+        when="What one call costs the box, and which of the three is the limit."
       >
         <Step
           n={1}
           title="The GPU, continuously"
           good={
             <>
-              <code>sm</code> is how busy the GPU is and <code>fb</code> is its memory. Use this
-              rather than <code>watch</code>: a sentence renders in 200–400 ms and a once-a-second
-              snapshot misses most of them.
+              <code>sm</code> is how busy the GPU is and <code>fb</code> its memory. Use this rather
+              than <code>watch</code>: a sentence renders in 200–400 ms and a once-a-second snapshot
+              misses most of them.
             </>
           }
         >
@@ -273,89 +352,138 @@ curl -s -o /dev/null -w 'voices http %{http_code}\n' http://127.0.0.1:8880/v1/au
         </Step>
         <Step
           n={2}
-          title="The container's CPU"
+          title="All three containers at once"
           good={
             <>
               This box has <strong>8 vCPU</strong> and <code>docker stats</code> counts one core as
-              100%, so <code>800%</code> is the whole machine. The GPU is 48 GB and the CPU is not —
-              if anything runs out under load, expect it to be this.
+              100%, so <code>800%</code> is the whole machine. Forty concurrent calls through Kokoro
+              reached 101% — one core. The CPU has never been the limit here.
             </>
           }
         >
-          <Cmd>{String.raw`docker stats kokoro`}</Cmd>
+          <Cmd>{String.raw`docker stats kokoro qwen-asr qwen-llm`}</Cmd>
         </Step>
         <Step
           n={3}
-          title="Both, logged to a file"
+          title="Logged to a file, to read after the call"
+          good={<>Start it before the call and <code>Ctrl+C</code> after.</>}
+        >
+          <Cmd>{String.raw`( echo "time      gpu%  gpu_mem  kokoro  qwen-asr  qwen-llm"
+  while true; do
+    g=$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits | tr -d ',')
+    c=$(docker stats --no-stream --format '{{.Name}} {{.CPUPerc}}' kokoro qwen-asr qwen-llm | awk '{printf "%s ", $2}')
+    printf '%s  %s  %s\n' "$(date +%T)" "$g" "$c"
+  done ) | tee /tmp/gpu-load.log`}</Cmd>
+        </Step>
+      </Section>
+
+      <Section
+        icon={TriangleAlert}
+        title="When vLLM will not start"
+        when="A container that says Up and then Restarting, over and over."
+      >
+        <Warn>
+          The error always blames memory and is usually <code>--max-model-len</code>. vLLM reserves
+          KV cache for the FULL declared context whether a request uses it or not. This cost two
+          hours across both services.
+        </Warn>
+        <Step
+          n={1}
+          title="Read the real exception, not the stack around it"
           good={
             <>
-              Start it before the call and <code>Ctrl+C</code> after. The log stays in{' '}
-              <code>/tmp</code> for reading afterwards.
+              the last lines carry the <code>ValueError</code>. The outer traceback says only
+              &ldquo;Engine core initialization failed&rdquo;, which is true and useless.
             </>
           }
         >
-          <Cmd>{String.raw`( echo "time      gpu%  gpu_mem  kokoro_cpu  kokoro_mem"
-  while true; do
-    g=$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits | tr -d ',')
-    k=$(docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' kokoro)
-    printf '%s  %s  %s\n' "$(date +%T)" "$g" "$k"
-  done ) | tee /tmp/kokoro-load.log`}</Cmd>
+          <Cmd>{String.raw`cd /srv/gpu-stack/qwen-llm && docker compose logs --no-color 2>&1 | grep -E "core.py:1366|ValueError|out of memory" | tail -8`}</Cmd>
+        </Step>
+        <Step
+          n={2}
+          title="What the settings are for"
+          good={
+            <>
+              <code>qwen-llm</code> runs <code>--max-model-len=16384</code> at{' '}
+              <code>--gpu-memory-utilization=0.75</code>; <code>qwen-asr</code> runs{' '}
+              <code>4096</code> at <code>0.22</code>. A call&rsquo;s prompt is 1–2k tokens plus the
+              knowledge base; an utterance is a few seconds of audio. The defaults — 65536 for the
+              LLM — reserve gigabytes for a context nothing here will ever send.
+            </>
+          }
+        >
+          <Cmd>{String.raw`grep -nE "model|max-model-len|gpu-memory" /srv/gpu-stack/qwen-llm/docker-compose.yml /srv/gpu-stack/qwen-asr/docker-compose.yml`}</Cmd>
         </Step>
       </Section>
 
       <Section
         icon={RotateCcw}
-        title="Restart it, or bring it back after a reboot"
-        when="It stopped answering, or the box was rebooted."
+        title="Restart one, or bring the box back after a reboot"
+        when="Something stopped answering, or the machine was rebooted."
       >
         <Warn>
-          A restart cuts off any call speaking on our own voice. A campaign with a fallback provider
-          carries on; one without goes silent.
+          A restart cuts off any call using that service. A campaign with a fallback provider
+          carries on; one without goes silent. Campaign 7 has no fallback on any layer.
         </Warn>
         <Step
           n={1}
-          title="Restart the voice"
-          good={<>back to <code>Up</code> within a few seconds — the model is already on disk.</>}
+          title="Restart just one"
+          good={<>back to <code>Up</code>, then about three minutes before vLLM answers. Kokoro is quicker — its model is tiny.</>}
         >
-          <Cmd>{String.raw`( cd /srv/gpu-stack && docker compose restart kokoro
-  sleep 10
-  docker ps --format '{{.Names}}\t{{.Status}}' )`}</Cmd>
+          <Cmd>{String.raw`( cd /srv/gpu-stack/qwen-llm && docker compose restart )   # or qwen-asr, or /srv/gpu-stack for kokoro
+sleep 20 && docker ps --format '{{.Names}}\t{{.Status}}'`}</Cmd>
         </Step>
         <Step
           n={2}
-          title="After a reboot, check the two things that do not survive one by themselves"
+          title="After a reboot, the two things that do not survive one by themselves"
           good={
             <>
               the CDI file present and the LAN rule <code>active</code>. <code>/var/run</code> is
-              tmpfs, so the GPU spec was written to <code>/etc/cdi</code> to survive a reboot; and
-              Docker publishes ports by writing its own iptables rules, straight past ufw, so a
-              separate unit keeps 8880 away from anything outside <code>10.130.0.0/16</code>.
+              tmpfs, so the GPU spec was written to <code>/etc/cdi</code> to survive; and Docker
+              publishes ports by writing its own iptables rules, straight past ufw, so a separate
+              unit keeps 8880, 8001 and 8002 away from anything outside{' '}
+              <code>10.130.0.0/16</code>.
             </>
           }
         >
           <Cmd>{String.raw`ls -l /etc/cdi/nvidia.yaml
 systemctl is-active docker-lan-only
 sudo iptables -L DOCKER-USER -n --line-numbers | head -5
-ufw status | head -8`}</Cmd>
+sudo ufw status | grep -E "8880|8001|8002"`}</Cmd>
+        </Step>
+        <Step
+          n={3}
+          title="Stop something for good"
+          good={
+            <>
+              <code>down</code>, not <code>stop</code>. Every service here has{' '}
+              <code>restart: unless-stopped</code>, and a stopped container comes back on the next
+              reboot — Chatterbox held 5 GB of VRAM for three days that way after it had already
+              lost.
+            </>
+          }
+        >
+          <Cmd>{String.raw`cd /srv/gpu-stack/qwen-asr && docker compose down`}</Cmd>
         </Step>
       </Section>
 
       <Section
         icon={Search}
         title="Logs and disk"
-        when="It answered but the audio was wrong, or the box is filling up."
+        when="It answered but the output was wrong, or the box is filling up."
       >
         <Step
           n={1}
-          title="What it has been asked for"
+          title="What each one has been asked for"
           good={
             <>
-              one <code>200 OK</code> line per SENTENCE, not per answer — a dozen lines for one
-              reply is normal.
+              Kokoro logs one <code>200 OK</code> per SENTENCE, not per answer — a dozen lines for
+              one reply is normal. vLLM logs throughput and queue depth instead.
             </>
           }
         >
-          <Cmd>{String.raw`docker logs kokoro --since 10m 2>&1 | tail -30`}</Cmd>
+          <Cmd>{String.raw`docker logs kokoro --since 10m 2>&1 | tail -20
+docker logs qwen-llm --since 10m 2>&1 | grep -E "Engine|Avg|throughput" | tail -10`}</Cmd>
         </Step>
         <Step
           n={2}
@@ -363,7 +491,8 @@ ufw status | head -8`}</Cmd>
           good={
             <>
               models live under <code>/opt/models</code> so rebuilding an image does not re-download
-              gigabytes. Container logs are capped at 50 MB × 3 each.
+              gigabytes — about 26 GB of weights sit there. Container logs are capped at 50 MB × 3
+              each.
             </>
           }
         >
