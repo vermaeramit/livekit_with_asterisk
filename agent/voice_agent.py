@@ -40,6 +40,7 @@ from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
 # Google auth stack, and this module is imported in every job process.
 from livekit.plugins import openai, sarvam, silero, soniox
 
+import clause_tokenizer
 import greeting_cache
 import hours
 import kokoro_tts
@@ -1449,12 +1450,22 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
             raise ValueError(
                 "tts_provider is 'kokoro' but KOKORO_URL is not set on this "
                 "server - it has no default, see migration 059")
-        return kokoro_tts.TTS(
-            base_url=KOKORO_URL,
-            model=((cfg.tts_model if use_config_model else None)
-                   or tts_defaults.KOKORO_MODEL),
-            voice=((cfg.tts_voice if use_config_model else None)
-                   or tts_defaults.KOKORO_VOICE),
+        # Wrapped here rather than left to the session, which would wrap it
+        # with livekit's own splitter - blingfire, which breaks on . ! ? and
+        # nothing else. On call 670 two answers were a single clause-joined
+        # sentence, so it had nothing to break on until the model had finished
+        # writing: first_audio 3945 ms with text_complete NEGATIVE, meaning the
+        # whole reply was written before a word was spoken. The model's first
+        # token had arrived in 200 ms.
+        return lk_tts.StreamAdapter(
+            tts=kokoro_tts.TTS(
+                base_url=KOKORO_URL,
+                model=((cfg.tts_model if use_config_model else None)
+                       or tts_defaults.KOKORO_MODEL),
+                voice=((cfg.tts_voice if use_config_model else None)
+                       or tts_defaults.KOKORO_VOICE),
+            ),
+            sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
         )
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
