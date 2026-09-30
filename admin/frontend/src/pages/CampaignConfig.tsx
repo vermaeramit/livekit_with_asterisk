@@ -151,13 +151,16 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
   // read, in which case the voice list is empty too and the campaign should
   // not be saved on it anyway.
   kokoro: [{ value: 'kokoro', label: 'kokoro — ~200ms measured on the LAN' }],
-  // No catalogue endpoint is read for these, so this list is the only copy.
-  // Flash rather than Pro because this sits in a phone call, where a better
-  // answer that arrives later is a worse answer. Neither has been measured
-  // here yet — wired before benched, at the owner's call.
+  // Read off the API on 30 Sep 2026, not remembered:
+  //   provider-catalog.py gemini tts-models
+  // The three with "preview" in the name can be withdrawn without notice; the
+  // 3.8 pair cannot, which is the difference the warning below keys on.
   gemini: [
-    { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — not yet measured' },
-    { value: 'gemini-2.5-pro-preview-tts', label: 'gemini-2.5-pro-preview-tts — slower, not yet measured' },
+    { value: 'gemini-3.8-flash-tts', label: 'gemini-3.8-flash-tts' },
+    { value: 'gemini-3.8-flash-lite-tts', label: 'gemini-3.8-flash-lite-tts — lightest, try first for latency' },
+    { value: 'gemini-3.1-flash-tts-preview', label: 'gemini-3.1-flash-tts-preview — preview' },
+    { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — preview, measured 3.8s to first audio' },
+    { value: 'gemini-2.5-pro-preview-tts', label: 'gemini-2.5-pro-preview-tts — preview, slower still' },
   ],
 }
 
@@ -851,17 +854,20 @@ export function CampaignConfig() {
               </Note>
             )}
 
-            {/* A different risk with the same remedy. Both Gemini TTS models
-                carry "preview" in the name, and a preview model can be
-                withdrawn on a date nothing here would warn about — Soniox
-                removed seven voices with tts-rt-v2 and any campaign left on
-                one would have gone silent mid-call. */}
-            {value.tts_provider === 'gemini' && !value.tts_fallback_provider && (
+            {/* A different risk with the same remedy — but only for the models
+                that actually say "preview". Three of Gemini's five do, and one
+                of those can be withdrawn on a date nothing here would warn
+                about: Soniox removed seven voices with tts-rt-v2 and any
+                campaign left on one would have gone silent mid-call. The 3.8
+                pair carry no such label, so they get no such warning. */}
+            {value.tts_provider === 'gemini'
+              && value.tts_model?.includes('preview')
+              && !value.tts_fallback_provider && (
               <Note tone="warn">
-                Gemini&rsquo;s voice models are preview releases and can be
-                withdrawn without notice. With no fallback, these calls would
-                have no voice at all from that moment — pick a fallback provider
-                below.
+                This is a preview model and can be withdrawn without notice.
+                With no fallback, these calls would have no voice at all from
+                that moment — pick a fallback provider below, or choose one of
+                the 3.8 models, which are not previews.
               </Note>
             )}
 

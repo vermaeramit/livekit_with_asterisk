@@ -85,7 +85,7 @@ KNOWN = {
     # has not used before, and on purpose: the provider was required. The
     # numbers still have to be taken, and this row is what makes that one flag
     # rather than a day. Kokoro is the bar: 96-212 ms and no stalls.
-    "gemini": ("gemini-2.5-flash-preview-tts", "Kore"),
+    "gemini": ("gemini-3.8-flash-tts", "Kore"),
 }
 
 # Providers with no account, and so no key to look for - the same set the agent
@@ -133,14 +133,19 @@ def line(provider: str, mode: str, text: str, r: dict) -> str:
 
 
 async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
-                regions: dict | None = None) -> None:
+                regions: dict | None = None, model_override: str | None = None) -> None:
     import voice_agent
 
-    if provider == cfg.tts_provider:
+    if provider == cfg.tts_provider and not model_override:
         pcfg = cfg
     else:
         model, voice = KNOWN[provider]
-        pcfg = dataclasses.replace(cfg, tts_provider=provider, tts_model=model, tts_voice=voice)
+        # A named model wins over both the campaign's and KNOWN's. Gemini is
+        # why: it serves five TTS models at once and the question is which of
+        # them, not whether. Comparing them across separate runs would compare
+        # two different afternoons on somebody else's servers.
+        pcfg = dataclasses.replace(cfg, tts_provider=provider,
+                                   tts_model=model_override or model, tts_voice=voice)
     if provider not in keys and provider not in KEYLESS:
         print(f"{provider}: no key for this campaign - skipped")
         return
@@ -219,7 +224,11 @@ async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("campaign", help="agent_config name, e.g. default")
-    ap.add_argument("--providers", default="soniox,sarvam")
+    # "gemini:gemini-3.8-flash-tts" pins a model for that leg; a bare name
+    # uses the campaign's, or KNOWN's. Several legs of the same provider are
+    # allowed, which is the whole point.
+    ap.add_argument("--providers", default="soniox,sarvam",
+                    help="comma-separated, each optionally provider:model")
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--quick", action="store_true",
                     help="one long sentence only - for repeated sampling")
@@ -246,13 +255,14 @@ async def main() -> None:
           f"keys for {', '.join(sorted(keys)) or 'nothing'}")
 
     async with http_context.open():
-        for provider in [p.strip() for p in args.providers.split(",") if p.strip()]:
+        for leg in [p.strip() for p in args.providers.split(",") if p.strip()]:
+            provider, _, model_override = leg.partition(":")
             if provider not in KNOWN:
                 print(f"{provider}: not a TTS this bench knows - skipped")
                 continue
             try:
                 await bench(provider, cfg, keys, args.runs, args.quick,
-                            regions)
+                            regions, model_override or None)
             except Exception as e:
                 # The name only, by default: a provider's error text can echo
                 # the request, and the request carries the key.

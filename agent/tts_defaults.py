@@ -63,15 +63,26 @@ QWEN_LLM_MODEL = "qwen3-32b"
 # which is a different product with different voices and different credentials.
 # See gemini_tts.py.
 #
-# The flash model rather than the pro one: this sits in a phone call, where a
-# reply that is better but later is worse. The voices are the prebuilt set the
-# API offers by name; Kore is female and reads Devanagari as well as any of
-# them, which is the bar this system has had since hf_alpha.
+# Read off the API on 30 Sep 2026 rather than remembered - the first value here
+# was gemini-2.5-flash-preview-tts, chosen from memory, and the key can reach
+# five TTS models of which that is the oldest:
 #
-# "preview" is in the model name and that is a real risk, not a label: a
-# preview model can be withdrawn on a date nothing here would warn about,
-# exactly as Soniox withdrew seven voices with tts-rt-v2.
-GEMINI_MODEL = "gemini-2.5-flash-preview-tts"
+#     gemini-2.5-flash-preview-tts     gemini-3.1-flash-tts-preview
+#     gemini-2.5-pro-preview-tts       gemini-3.8-flash-lite-tts
+#                                      gemini-3.8-flash-tts
+#
+#   docker exec -i admin-api python - < server-configs/provider-catalog.py gemini tts-models
+#
+# Flash rather than pro: this sits in a phone call, where a better reply that
+# arrives later is a worse reply. The 3.8 pair carry no "preview" in the name,
+# which is the one thing that separates them from the other three - a preview
+# model can be withdrawn on a date nothing here would warn about, exactly as
+# Soniox withdrew seven voices with tts-rt-v2.
+#
+# lite is the latency candidate and is not the default until it has been
+# measured. 2.5-flash-preview-tts was 3,832 ms to first audio against kokoro's
+# 114 - see the bench.
+GEMINI_MODEL = "gemini-3.8-flash-tts"
 GEMINI_VOICE = "Kore"
 
 # There is no rate parameter on these models. Delivery is steered by prompting,
