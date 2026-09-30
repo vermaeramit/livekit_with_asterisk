@@ -74,7 +74,11 @@ _RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000, "kokoro": 24000,
          # Gemini offers no sample-rate parameter at all; 24 kHz is what its
          # models return and the response says so in its own mimeType, which
          # ttspreview reads rather than assumes.
-         "gemini": 24000}
+         "gemini": 24000,
+         # Google takes sampleRateHertz, so it is asked for the rate Asterisk
+         # will play - the same 8 kHz Soniox and Sarvam are asked for, and
+         # three quarters fewer bytes than building 24 kHz to throw away.
+         "google": 8000}
 
 
 class RenderError(Exception):
@@ -180,6 +184,14 @@ async def _synthesise(provider: str, api_key: str, model: str | None,
             data = await ttspreview.gemini(
                 api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text, response_format="pcm")
+        elif provider == "google":
+            # LINEAR16 at the rate above. It arrives inside a RIFF container
+            # rather than raw, which _strip_header handles because it reads the
+            # bytes instead of trusting the request.
+            data = await ttspreview.google(
+                api_key, model=model or "", voice=voice or "", speed=speed,
+                language=language, text=text, response_format="pcm",
+                sample_rate=want)
         else:
             data = await ttspreview.openai(
                 api_key, model=model or "", voice=voice or "", speed=speed,

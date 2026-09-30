@@ -27,8 +27,17 @@ log = logging.getLogger("admin-api")
 # gemini is the Gemini API - generativelanguage.googleapis.com, a plain API
 # key. NOT Google Cloud TTS, whose credential is a service-account JSON and
 # would not fit this table, which stores one encrypted string.
-PROVIDERS = ("openai", "sarvam", "soniox", "openrouter", "gemini")
-Provider = Literal["openai", "sarvam", "soniox", "openrouter", "gemini"]
+#
+# google is Google CLOUD Text-to-Speech, whose credential is a service-account
+# JSON rather than a key. It is stored here anyway, because this table holds an
+# encrypted STRING and JSON is one - it is parsed where it is used. What the
+# shape does change is the console, which cannot ask for 2 KB in a one-line box.
+PROVIDERS = ("openai", "sarvam", "soniox", "openrouter", "gemini", "google")
+Provider = Literal["openai", "sarvam", "soniox", "openrouter", "gemini", "google"]
+
+# Providers whose credential is a document, not a line. The key page renders a
+# textarea for these and says what belongs in it.
+JSON_CREDENTIAL = ("google",)
 
 # Soniox is the only provider here that offers a choice of region, and a key
 # belongs to exactly one: a project picks its region when it is created and its
@@ -333,9 +342,50 @@ def _check_gemini(key: str) -> Validation:
     return Validation(False, f"Gemini returned {code}")
 
 
+def _check_google(key: str) -> Validation:
+    """Mint a token from the service account, then read the voice list with it.
+
+    Two failures worth telling apart, and this separates them: a credential that
+    cannot produce a token at all (revoked, malformed, wrong clock) and one that
+    can but has not been granted Text-to-Speech. Both look like "it does not
+    work" from a campaign, and they need opposite answers.
+
+    voices.list because it is free and read-only. Synthesising a character to
+    check a key - the Sarvam shape - is not needed where a real authenticated
+    endpoint exists, which is also why _check_soniox does not.
+    """
+    from . import googleauth
+
+    try:
+        creds = googleauth.parse(key)
+    except googleauth.AuthError as e:
+        return Validation(False, str(e))
+    try:
+        token, _ = googleauth.mint(creds)
+    except googleauth.AuthError as e:
+        return Validation(False, str(e))
+
+    req = urllib.request.Request(
+        "https://texttospeech.googleapis.com/v1/voices?languageCode=hi-IN",
+        headers={"Authorization": f"Bearer {token}"}, method="GET")
+    code, body = _status_of(req)
+    if code == 200:
+        return Validation(True, f"accepted by Google Cloud "
+                                f"({creds.get('project_id') or 'no project id'})")
+    if code == 403:
+        # The account is real; it just cannot use this API. Naming the service
+        # is the difference between a five-minute fix and an afternoon.
+        return Validation(False, "the service account is valid but has no access "
+                                 "to Cloud Text-to-Speech - enable the API on "
+                                 "the project and grant the account a role")
+    if code == 0:
+        return Validation(False, f"could not reach Google: {body}")
+    return Validation(False, f"Google returned {code}")
+
+
 _CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
            "soniox": _check_soniox, "openrouter": _check_openrouter,
-           "gemini": _check_gemini}
+           "gemini": _check_gemini, "google": _check_google}
 
 
 async def validate(provider: str, key: str,

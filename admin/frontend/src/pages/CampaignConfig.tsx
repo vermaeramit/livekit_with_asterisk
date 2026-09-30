@@ -97,6 +97,7 @@ const TTS_PROVIDERS = [
   ...PROVIDERS,
   { value: 'kokoro', label: 'Our own server' },
   { value: 'gemini', label: 'Gemini' },
+  { value: 'google', label: 'Google Cloud' },
 ]
 
 // Speech-to-text has one of its own: Qwen3-ASR on our GPU box, which only
@@ -166,6 +167,10 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — preview, ~4.0s and stalls' },
     { value: 'gemini-2.5-pro-preview-tts', label: 'gemini-2.5-pro-preview-tts — preview, slower still' },
   ],
+  // Cloud TTS has no model field. The family — Chirp3-HD, Neural2, Wavenet,
+  // Standard — is part of the voice name, so it is chosen by choosing the
+  // voice. This single entry exists so the dropdown is not empty and says so.
+  google: [{ value: '', label: 'Chosen with the voice — Cloud TTS has no separate model' }],
 }
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
@@ -1019,6 +1024,8 @@ export function CampaignConfig() {
                 hint={
                   value.tts_provider === 'kokoro'
                     ? `${liveVoices.length || 'The'} voices, read from the box, and four mixes at the top. A mix is two voices at once — the numbers are weights, and Custom… takes any pair.`
+                    : value.tts_provider === 'google' && liveVoices.length
+                      ? `${liveVoices.length} voices Google serves for this campaign's language. The family in each label — Chirp3-HD, Neural2, Wavenet, Standard — is the model; newest first.`
                     : liveVoices.length
                       ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
                       : 'A voice the chosen model does not have fails before the call is answered, not on save.'

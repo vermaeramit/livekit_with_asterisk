@@ -86,6 +86,10 @@ KNOWN = {
     # numbers still have to be taken, and this row is what makes that one flag
     # rather than a day. Kokoro is the bar: 96-212 ms and no stalls.
     "gemini": ("gemini-3.8-flash-tts", "Kore"),
+    # Google Cloud TTS. Both empty on purpose: it has no model field, and the
+    # voice is left for Google to pick for the language rather than named from
+    # memory - see tts_defaults.GOOGLE_VOICE for why that matters.
+    "google": ("", ""),
 }
 
 # Providers with no account, and so no key to look for - the same set the agent

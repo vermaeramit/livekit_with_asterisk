@@ -16,7 +16,23 @@ const PROVIDERS: Record<string, { label: string; used: string }> = {
   soniox: { label: 'Soniox', used: 'Speech to text, and the voice' },
   openrouter: { label: 'OpenRouter', used: 'Language model, through a gateway to many' },
   gemini: { label: 'Gemini', used: 'The voice' },
+  google: { label: 'Google Cloud', used: 'The voice, through Cloud Text-to-Speech' },
 }
+
+// Providers whose credential is a document rather than a line. Google Cloud is
+// a service account: a ~2 KB JSON file, which a one-line password box will take
+// but nobody can check they pasted correctly.
+const JSON_CREDENTIAL = ['google']
+
+// A template literal, so the newlines are real rather than escaped into a JSX
+// attribute - which is a string that has to survive two levels of quoting and
+// does not.
+const SA_PLACEHOLDER = `{
+  "type": "service_account",
+  "project_id": "…",
+  "private_key": "-----BEGIN PRIVATE KEY-----…",
+  "client_email": "…@….iam.gserviceaccount.com"
+}`
 
 // Providers that run the same API in more than one region, and the regions
 // they run it in. A key belongs to exactly one: it is issued by a project,
@@ -257,16 +273,45 @@ export function ProviderKeys({ scope, id, inUse = ['openai', 'sarvam'] }: {
       >
         <div className="space-y-3">
           <div>
-            <Label htmlFor="provider-key">Key</Label>
-            <Input
-              id="provider-key"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={value}
-              placeholder="Paste the key"
-              onChange={(e) => { setValue(e.target.value); setError(null) }}
-            />
+            <Label htmlFor="provider-key">
+              {editing && JSON_CREDENTIAL.includes(editing)
+                ? 'Service account JSON'
+                : 'Key'}
+            </Label>
+            {editing && JSON_CREDENTIAL.includes(editing) ? (
+              <>
+                {/* Not type=password. The whole file has to be pasted and its
+                    shape checked by eye; masking 2 KB of JSON hides a truncated
+                    paste, which is the likeliest mistake here. The value is
+                    encrypted the moment it is saved and never read back. */}
+                <textarea
+                  id="provider-key"
+                  autoComplete="off"
+                  spellCheck={false}
+                  rows={8}
+                  value={value}
+                  placeholder={SA_PLACEHOLDER}
+                  onChange={(e) => { setValue(e.target.value); setError(null) }}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  The whole file from Google Cloud → IAM → Service Accounts →
+                  Keys → Add key → JSON. Not an API key: Cloud Text-to-Speech
+                  does not take one. The project also needs the
+                  Text-to-Speech API enabled.
+                </p>
+              </>
+            ) : (
+              <Input
+                id="provider-key"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={value}
+                placeholder="Paste the key"
+                onChange={(e) => { setValue(e.target.value); setError(null) }}
+              />
+            )}
           </div>
           {editing && REGIONAL[editing] && (
             <div>

@@ -30,7 +30,7 @@ Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
 # Separate rather than added to Provider, because allowing it for stt_provider
 # or llm_provider would let the console save a row the database then refuses -
 # the failure would land on a save, not on a dropdown. Migration 059.
-TtsProvider = Literal["openai", "sarvam", "soniox", "kokoro", "gemini"]
+TtsProvider = Literal["openai", "sarvam", "soniox", "kokoro", "gemini", "google"]
 
 # And speech-to-text has its own, for the same reason: qwen runs on our box and
 # only listens, so offering it as a TTS or an LLM would let the console save a

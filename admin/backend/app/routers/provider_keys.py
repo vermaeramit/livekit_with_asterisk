@@ -214,7 +214,26 @@ def _media_of(audio: bytes) -> str:
     return "audio/wav" if audio[:4] == b"RIFF" else "audio/mpeg"
 
 
-_HAS_CATALOG = ("soniox", "kokoro")
+_HAS_CATALOG = ("soniox", "kokoro", "google")
+
+
+def _google_family(name: str) -> str:
+    """hi-IN-Chirp3-HD-Aoede -> Chirp3-HD. The model, which lives in the name.
+
+    Cloud TTS has no separate model field: the family IS part of the voice, so
+    this is how a campaign is told what it is choosing. Anything that does not
+    parse keeps its whole name rather than being dropped - a voice we cannot
+    classify is still a voice somebody may want.
+    """
+    parts = name.split("-")
+    # language ("hi"), region ("IN"), family..., voice suffix
+    return "-".join(parts[2:-1]) if len(parts) >= 4 else name
+
+
+# Newest and best first. A campaign should have to work to pick Standard, which
+# is the cheapest and the most obviously synthetic on a phone line.
+_GOOGLE_FAMILY_ORDER = ("Chirp3-HD", "Chirp-HD", "Chirp", "Neural2", "Studio",
+                        "Wavenet", "Standard")
 
 
 def _fetch_kokoro_voices(url: str) -> list[str]:
@@ -306,7 +325,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
              "sarvam": ttspreview.sarvam,
              "openai": ttspreview.openai,
              "kokoro": ttspreview.kokoro,
-             "gemini": ttspreview.gemini}.get(body.provider)
+             "gemini": ttspreview.gemini,
+             "google": ttspreview.google}.get(body.provider)
     if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
@@ -532,6 +552,41 @@ async def tts_catalog(campaign_id: int, provider: str,
             status.HTTP_409_CONFLICT,
             f"no {provider} key on this campaign or client - add one first, "
             "the voice list comes from the provider")
+
+    if provider == "google":
+        # The campaign's own language, because Google serves hundreds of voices
+        # and a list of all of them is not a list anybody reads. Read from the
+        # config rather than taken as a parameter: the voice has to match the
+        # language the call will actually run in.
+        row = await db.pool().fetchrow(
+            "SELECT language FROM agent_config WHERE campaign_id = $1", campaign_id)
+        language = (row and row["language"]) or "hi-IN"
+        try:
+            voices = await ttspreview.google_voices(keys[provider], language)
+        except ttspreview.PreviewError as e:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+        except Exception as e:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                f"could not read the Google catalogue: "
+                                f"{type(e).__name__}")
+
+        def rank(v: dict) -> tuple:
+            fam = _google_family(v.get("name", ""))
+            i = (_GOOGLE_FAMILY_ORDER.index(fam)
+                 if fam in _GOOGLE_FAMILY_ORDER else len(_GOOGLE_FAMILY_ORDER))
+            return (i, v.get("name", ""))
+
+        # One model, holding every voice. Cloud TTS has no model field to set -
+        # see tts_defaults.GOOGLE_IGNORES_MODEL - so splitting these into
+        # several would offer a choice the campaign cannot store.
+        out = TtsCatalog(provider=provider, models=[
+            TtsModel(id="google", name=f"Google Cloud ({language})", voices=[
+                TtsVoice(id=v["name"],
+                         gender=(v.get("ssmlGender") or "").lower() or None,
+                         description=_google_family(v["name"]))
+                for v in sorted(voices, key=rank) if v.get("name")])])
+        _cache[cache_key] = (time.monotonic(), out)
+        return out
 
     try:
         raw = await asyncio.to_thread(_fetch_soniox_models, keys[provider],

@@ -63,6 +63,7 @@ import logging
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import wave
@@ -71,6 +72,7 @@ import websockets
 
 # The Soniox host depends on the region its key was issued in, and that mapping
 # lives with the keys - see provider_keys.soniox_host and migration 058.
+from . import googleauth
 from .provider_keys import soniox_host
 
 log = logging.getLogger("admin-api")
@@ -81,6 +83,11 @@ SARVAM_URL = "https://api.sarvam.ai/text-to-speech"
 # Cloud TTS: a different product, different voices, and a service-account
 # credential that would not fit provider_keys. See agent/gemini_tts.py.
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+# Google Cloud Text-to-Speech. A different product from GEMINI_URL above and a
+# different credential - a service account, exchanged for a bearer token by
+# googleauth, because this image has no livekit plugin to do it for us.
+GOOGLE_URL = "https://texttospeech.googleapis.com/v1"
 _GEMINI_RATE_IN_MIME = re.compile(r"rate=(\d+)")
 
 # mp3 so the browser can play the bytes as they are. PCM would mean sending a
@@ -399,3 +406,96 @@ async def gemini(api_key: str, *, model: str, voice: str, language: str,
              "speechConfig": {
                  "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}})
     return pcm if response_format == "pcm" else _wav(pcm, rate)
+
+
+def _google_blocking(token: str, path: str, payload: dict | None) -> dict:
+    body = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        f"{GOOGLE_URL}{path}", data=body,
+        method="POST" if payload is not None else "GET",
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/json",
+                 "User-Agent": "AIVoice-Console/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        raise PreviewError(f"{e.code}: {detail or e.reason}")
+    except Exception as e:
+        # Never the exception text: it can quote the request, and the request
+        # carried a bearer token.
+        log.warning("google tts failed: %s", type(e).__name__)
+        raise PreviewError(f"could not reach the provider ({type(e).__name__})")
+
+
+async def google(api_key: str, *, model: str, voice: str, language: str,
+                 text: str, speed: float = 1.0,
+                 response_format: str = _FORMAT,
+                 sample_rate: int | None = None,
+                 pitch: float = 0.0) -> bytes:
+    """-> mp3 bytes, or LINEAR16 when asked for pcm.
+
+    `api_key` is the service-account JSON, as stored - one encrypted string,
+    parsed here. The name is kept because every provider in this module shares
+    one signature and the dispatch above has no special cases.
+
+    `model` is ignored. Cloud TTS carries the model family inside the voice
+    name - hi-IN-Chirp3-HD-... IS the model - so there is nothing else to set.
+    See tts_defaults.GOOGLE_IGNORES_MODEL.
+
+    LINEAR16 comes back inside a RIFF container rather than raw. That needs no
+    handling here: holdaudio._strip_header reads what arrived instead of
+    trusting what was asked for, which is exactly the case it was written for.
+    """
+    try:
+        creds = googleauth.parse(api_key)
+        token = await googleauth.access_token(creds)
+    except googleauth.AuthError as e:
+        raise PreviewError(str(e))
+
+    audio_cfg: dict = {
+        "audioEncoding": "LINEAR16" if response_format == "pcm" else "MP3",
+        "speakingRate": speed,
+        "pitch": pitch,
+    }
+    if sample_rate:
+        audio_cfg["sampleRateHertz"] = sample_rate
+
+    voice_cfg: dict = {"languageCode": language}
+    # Left out when empty so Google picks for the language. A name we invented
+    # is a 400 at best and the wrong voice at worst.
+    if voice:
+        voice_cfg["name"] = voice
+
+    data = await asyncio.to_thread(
+        _google_blocking, token, "/text:synthesize",
+        {"input": {"text": text}, "voice": voice_cfg, "audioConfig": audio_cfg})
+
+    content = data.get("audioContent")
+    if not content:
+        raise PreviewError("the provider produced no audio")
+    return base64.b64decode(content)
+
+
+async def google_voices(api_key: str, language: str) -> list[dict]:
+    """-> what Google actually serves for this language, right now.
+
+    Read rather than listed for the reason the Soniox catalogue is read from
+    Soniox: Google publishes hundreds of voices across four model families and
+    a literal here would go stale without anybody noticing until a call failed.
+    """
+    try:
+        creds = googleauth.parse(api_key)
+        token = await googleauth.access_token(creds)
+    except googleauth.AuthError as e:
+        raise PreviewError(str(e))
+
+    q = urllib.parse.quote(language)
+    data = await asyncio.to_thread(_google_blocking, token,
+                                   f"/voices?languageCode={q}", None)
+    return data.get("voices") or []

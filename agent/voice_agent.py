@@ -1311,7 +1311,12 @@ _TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000,
                     # even though it matches the default: a provider missing from
                     # this map is indistinguishable from one that happens to agree
                     # with it, and the next rate that differs would be silent.
-                    "gemini": 24000}
+                    "gemini": 24000,
+                    # Whatever we ASK Google for - it is a parameter here, not a
+                    # property of the provider. Kept in step with the constant
+                    # rather than repeated, because two numbers that must agree
+                    # and are written twice eventually do not.
+                    "google": tts_defaults.GOOGLE_SAMPLE_RATE}
 
 
 # Conservative, and ours rather than Soniox's - their published limit is not
@@ -1516,6 +1521,46 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
             ),
             sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
         )
+    if provider == "google":
+        # Google Cloud Text-to-Speech, through livekit's own plugin - the one
+        # case where the plugin IS the right tool. Read off the installed 1.6.7
+        # on 30 Sep 2026: TTSCapabilities(streaming=use_streaming) with
+        # use_streaming defaulting to True, a real SynthesizeStream over
+        # streaming_synthesize. So no StreamAdapter and no per-clause fixed
+        # cost - unlike kokoro and gemini.
+        #
+        # IMPORTED HERE, NOT AT THE TOP. voice_agent.py:38 records why the top
+        # import was removed: this plugin pulls in the Google auth stack, and
+        # this module is imported in every job process - six workers with four
+        # idle processes each. Inside the branch, only a campaign that actually
+        # speaks with it pays.
+        from livekit.plugins import google as google_plugin
+
+        # The credential is a service-account JSON, stored as the string every
+        # other key is stored as and parsed here. There is no api_key parameter
+        # on this plugin; see migration 064.
+        try:
+            creds = json.loads(key) if key else None
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "the Google key on this campaign is not valid JSON - it should "
+                "be the whole service-account file, not an API key") from e
+        if not creds:
+            raise ValueError(
+                "tts_provider is 'google' but no service-account JSON is stored "
+                "for it on this campaign or client")
+
+        kw = {"language": cfg.language,
+              "sample_rate": tts_defaults.GOOGLE_SAMPLE_RATE,
+              "credentials_info": creds,
+              "speaking_rate": _tts_speed(cfg)}
+        # Left unset rather than defaulted: Google picks a voice for the
+        # language, and a name written from memory is how a campaign goes
+        # silent mid-call. See tts_defaults.GOOGLE_VOICE.
+        voice = (cfg.tts_voice if use_config_model else None) or tts_defaults.GOOGLE_VOICE
+        if voice:
+            kw["voice_name"] = voice
+        return google_plugin.TTS(**kw)
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
         # Soniox one when Soniox is. The console validates that pairing; here we

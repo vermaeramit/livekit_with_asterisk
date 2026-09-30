@@ -92,6 +92,40 @@ GEMINI_VOICE = "Kore"
 # which is the bug that was just fixed for every other provider.
 GEMINI_IGNORES_SPEED = True
 
+# Google Cloud Text-to-Speech - texttospeech.googleapis.com, through livekit's
+# own plugin. A different product from 'gemini' above; see migration 064.
+#
+# NO DEFAULT VOICE, and that is the point of this file working against itself
+# for once. Google publishes hundreds of hi-IN voices across Chirp3-HD, Neural2,
+# WaveNet and Standard, and every one of them is a name that fails at
+# construction if it is wrong - which is exactly how Soniox campaigns went
+# silent mid-call when seven voices were withdrawn. Writing one here from
+# memory would be that mistake made deliberately.
+#
+# So the voice is left unset and Google picks for the language, and the console
+# reads the real list from voices.list - the same arrangement Soniox and Kokoro
+# already have. See _HAS_CATALOG.
+GOOGLE_VOICE = None
+
+# The model field does nothing on this provider. Cloud TTS carries the model
+# family INSIDE the voice name - hi-IN-Chirp3-HD-... and hi-IN-Neural2-... are
+# the model, chosen by choosing the voice - so there is no second thing to set.
+# The plugin's own `model_name` parameter is for reaching Gemini TTS models
+# through this API, which is a different feature and not what this wires.
+GOOGLE_IGNORES_MODEL = True
+
+# What we ask for on a CALL. 24 kHz because that is what every other provider
+# on the agent path returns and nothing in the pipeline has ever carried 8 kHz
+# TTS - the hold-message path does, but that is a file Asterisk reads, not a
+# track LiveKit publishes.
+#
+# Worth revisiting WITH A MEASUREMENT, not on reasoning: the line carries 8 kHz
+# and this plugin accepts sample_rate, so three quarters of these bytes are
+# built, sent and then thrown away. That is a real latency lever and the first
+# one this system has had; it is not taken here because "should be fine" is how
+# a call ends up sounding like a chipmunk with nothing in the log.
+GOOGLE_SAMPLE_RATE = 24000
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than
