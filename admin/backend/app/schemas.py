@@ -1642,7 +1642,16 @@ class ProviderKeySet(BaseModel):
     # No format validation. Providers change their key prefixes, and a regex
     # that rejects a valid new-style key is worse than one that lets a typo
     # through - the live check against the provider catches the typo anyway.
-    key: str = Field(min_length=8, max_length=512)
+    # 512 until Google Cloud arrived, which is not a key at all: the credential
+    # is a service-account JSON of about 2.3 KB, and the cap rejected it at the
+    # schema before anything else got a chance to say anything useful. The
+    # column is TEXT and stores the encrypted form, so nothing below this cared.
+    #
+    # 8192 rather than removing the cap. It is not a format check - there is
+    # deliberately none of those, see below - it is a guard against somebody
+    # pasting a file that is not a credential at all, and a bound that no real
+    # one comes near still does that job.
+    key: str = Field(min_length=8, max_length=8192)
     # Which of the provider's regions this key was issued in. Soniox only
     # today; NULL for everything else, and for a Soniox key on the default
     # host. A key works in its own region alone, so this is part of the key,
