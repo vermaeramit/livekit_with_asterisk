@@ -32,7 +32,19 @@ BASES = {
     "soniox": "https://api.soniox.com",
     "sarvam": "https://api.sarvam.ai",
     "openai": "https://api.openai.com",
+    "gemini": "https://generativelanguage.googleapis.com",
 }
+
+# Gemini does not take a bearer token. Every other provider here does, and
+# sending the wrong one gets a 401 that reads like a bad key rather than like
+# the wrong header - which is a morning lost to rotating a key that was fine.
+AUTH = {
+    "gemini": lambda key: {"x-goog-api-key": key},
+}
+
+
+def auth_headers(provider: str, key: str) -> dict:
+    return AUTH.get(provider, lambda k: {"Authorization": f"Bearer {k}"})(key)
 
 ENDPOINTS = {
     "soniox": {
@@ -50,6 +62,16 @@ ENDPOINTS = {
     },
     "openai": {
         "models": "https://api.openai.com/v1/models",
+    },
+    "gemini": {
+        # pageSize because the default page is small and the list is long;
+        # nextPageToken is followed below so "models" really means all of them.
+        "models": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+        # The same call, filtered to what can speak. Added 30 Sep 2026 because
+        # the model name in tts_defaults was chosen from memory, and memory has
+        # a date on it - asking the API is the only way to find out what this
+        # key can actually call TODAY.
+        "tts-models": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
     },
 }
 
@@ -78,10 +100,10 @@ async def fetch_key(provider: str) -> str:
     return crypto.decrypt(row["key_enc"])
 
 
-def get(url: str, key: str) -> str:
+def get(url: str, key: str, provider: str = "") -> str:
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"Bearer {key}",
+        headers={**auth_headers(provider, key),
                  # The default urllib UA gets 403 from WAFs - see agent/tools.py.
                  "User-Agent": "AIVoice-Agent/1.0"},
     )
@@ -110,12 +132,35 @@ async def main() -> None:
             "\n  ".join(f"{p} {w}" for p, ws in ENDPOINTS.items() for w in ws))
 
     key = await fetch_key(provider)
-    body = get(url, key)
+    body = get(url, key, provider)
 
     try:
-        print(json.dumps(json.loads(body), indent=2, ensure_ascii=False))
+        data = json.loads(body)
     except json.JSONDecodeError:
         print(body[:4000])
+        return
+
+    if provider == "gemini":
+        # Follow the pages, then print one line per model rather than the full
+        # record: each carries a description, token limits and a method list,
+        # and fifty of those is a screen nobody reads.
+        models = list(data.get("models") or [])
+        token = data.get("nextPageToken")
+        while token:
+            more = json.loads(get(f"{url}&pageToken={token}", key, provider))
+            models += more.get("models") or []
+            token = more.get("nextPageToken")
+
+        if what == "tts-models":
+            models = [m for m in models if "tts" in (m.get("name") or "").lower()]
+        print(f"{len(models)} models")
+        print()
+        for m in sorted(models, key=lambda m: m.get("name") or ""):
+            name = (m.get("name") or "").removeprefix("models/")
+            print(f"{name:<42} {m.get('displayName', '')}")
+        return
+
+    print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 asyncio.run(main())
