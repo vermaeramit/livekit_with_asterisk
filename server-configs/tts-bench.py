@@ -81,6 +81,11 @@ KNOWN = {
     # audio frames the first thing worth knowing was whether it does so against
     # the vendor it was written for.
     "openai": ("gpt-4o-mini-tts", "ash"),
+    # Added 30 Sep 2026, wired before it was measured - the order this project
+    # has not used before, and on purpose: the provider was required. The
+    # numbers still have to be taken, and this row is what makes that one flag
+    # rather than a day. Kokoro is the bar: 96-212 ms and no stalls.
+    "gemini": ("gemini-2.5-flash-preview-tts", "Kore"),
 }
 
 # Providers with no account, and so no key to look for - the same set the agent

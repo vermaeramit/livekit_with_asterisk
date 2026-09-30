@@ -199,6 +199,21 @@ _RETIRING = {"tts-rt-v1": "Soniox removes this on 31 Aug 2026",
 # depends on the region the key belongs to, so the URL cannot be a constant -
 # a US host asked with an India key answers 401, and this endpoint would report
 # that as "could not read the soniox catalogue" with no hint of the real cause.
+def _media_of(audio: bytes) -> str:
+    """What these bytes actually are, rather than what was asked for.
+
+    Most providers return mp3 and the phone-line preview returns a WAV, so the
+    header used to be picked from the request. Gemini broke that: its models
+    return raw PCM only, so ttspreview wraps it in a WAV for the browser, and a
+    WAV served as audio/mpeg is a file some browsers refuse to play with no
+    error worth reading.
+
+    The bytes say what they are - the same reasoning as holdaudio._strip_header,
+    and it cannot go stale when a provider changes format.
+    """
+    return "audio/wav" if audio[:4] == b"RIFF" else "audio/mpeg"
+
+
 _HAS_CATALOG = ("soniox", "kokoro")
 
 
@@ -274,10 +289,9 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     cache_key = (f"{body.provider}:{region or 'us'}:{body.model}:{body.voice}:"
                  f"{body.language}:{body.speed}:{body.telephone}:"
                  f"{tenant_id}:{hash(text)}")
-    media = "audio/wav" if body.telephone else "audio/mpeg"
     hit = _preview_cache.get(cache_key)
     if hit:
-        return Response(content=hit, media_type=media,
+        return Response(content=hit, media_type=_media_of(hit),
                         headers={"Cache-Control": "no-store"})
 
     keys = await pk.resolve(tenant_id=tenant_id, campaign_id=campaign_id)
@@ -291,7 +305,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
     synth = {"soniox": ttspreview.soniox,
              "sarvam": ttspreview.sarvam,
              "openai": ttspreview.openai,
-             "kokoro": ttspreview.kokoro}.get(body.provider)
+             "kokoro": ttspreview.kokoro,
+             "gemini": ttspreview.gemini}.get(body.provider)
     if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
@@ -325,7 +340,7 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
             _preview_cache.pop(k, None)
     _preview_cache[cache_key] = audio
 
-    return Response(content=audio, media_type=media,
+    return Response(content=audio, media_type=_media_of(audio),
                     headers={"Cache-Control": "no-store"})
 
 

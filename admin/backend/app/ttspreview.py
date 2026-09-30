@@ -57,12 +57,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 import uuid
+import wave
 
 import websockets
 
@@ -73,6 +76,12 @@ from .provider_keys import soniox_host
 log = logging.getLogger("admin-api")
 
 SARVAM_URL = "https://api.sarvam.ai/text-to-speech"
+
+# Gemini's own TTS models - NOT texttospeech.googleapis.com, which is Google
+# Cloud TTS: a different product, different voices, and a service-account
+# credential that would not fit provider_keys. See agent/gemini_tts.py.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+_GEMINI_RATE_IN_MIME = re.compile(r"rate=(\d+)")
 
 # mp3 so the browser can play the bytes as they are. PCM would mean sending a
 # WAV header we assembled ourselves for no gain.
@@ -307,3 +316,86 @@ async def kokoro(api_key: str, *, model: str, voice: str, language: str,
     return await openai(api_key or "not-needed", model=model, voice=voice,
                         language=language, text=text, speed=speed,
                         response_format=response_format, base_url=url)
+
+
+def _wav(pcm: bytes, rate: int) -> bytes:
+    """Raw samples wrapped so a browser will play them.
+
+    Only Gemini needs this. The other providers can return mp3 and do; these
+    models return raw PCM and nothing else, so the header has to come from
+    somewhere and this is the cheapest somewhere - no encoder, no dependency.
+    """
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _gemini_blocking(api_key: str, model: str, payload: dict) -> tuple[bytes, int]:
+    """-> (raw signed 16-bit PCM, sample rate as the response declared it)."""
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{GEMINI_URL}/models/{model}:generateContent", data=body, method="POST",
+        # In a header, not the query string: a URL carrying a key is written to
+        # every proxy and access log between here and Google.
+        headers={"x-goog-api-key": api_key,
+                 "Content-Type": "application/json",
+                 "User-Agent": "AIVoice-Console/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        raise PreviewError(f"{e.code}: {detail or e.reason}")
+    except Exception as e:
+        # Never the exception text: it can quote the request, and the request
+        # carried the key in a header.
+        log.warning("gemini preview failed: %s", type(e).__name__)
+        raise PreviewError(f"could not reach the provider ({type(e).__name__})")
+
+    for cand in data.get("candidates") or []:
+        for part in (cand.get("content") or {}).get("parts") or []:
+            inline = part.get("inlineData") or part.get("inline_data")
+            if not inline or not inline.get("data"):
+                continue
+            mime = inline.get("mimeType") or inline.get("mime_type") or ""
+            m = _GEMINI_RATE_IN_MIME.search(mime)
+            return base64.b64decode(inline["data"]), int(m.group(1)) if m else 24000
+
+    # A 200 with no audio in it. The model can decline a line, and "produced no
+    # audio" on its own sends somebody looking at the network.
+    block = (data.get("promptFeedback") or {}).get("blockReason")
+    if block:
+        raise PreviewError(f"Gemini declined the text: {block}")
+    raise PreviewError("the provider produced no audio")
+
+
+async def gemini(api_key: str, *, model: str, voice: str, language: str,
+                 text: str, speed: float = 1.0,
+                 response_format: str = _FORMAT) -> bytes:
+    """-> a WAV the browser can play, or raw PCM when asked for it.
+
+    `language` is accepted and ignored, like OpenAI's: these models have no
+    language parameter and speak whatever the text is written in. A Hindi
+    campaign on Gemini therefore needs Hindi in the box, not a setting.
+
+    `speed` is accepted and ignored too, and that one is worth stating rather
+    than hiding: there is no rate parameter on these models. Delivery is steered
+    by prompting, and an instruction glued onto the caller's sentence is a line
+    the model may read out loud. The console says so beside the slider.
+    """
+    pcm, rate = await asyncio.to_thread(
+        _gemini_blocking, api_key, model,
+        {"contents": [{"parts": [{"text": text}]}],
+         "generationConfig": {
+             "responseModalities": ["AUDIO"],
+             "speechConfig": {
+                 "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}})
+    return pcm if response_format == "pcm" else _wav(pcm, rate)

@@ -59,6 +59,28 @@ QWEN_STT_MODEL = "qwen3-asr"
 # in the first place, after one 6286 ms turn ended a call.
 QWEN_LLM_MODEL = "qwen3-32b"
 
+# Gemini's own TTS models, reached over the Gemini API - NOT Google Cloud TTS,
+# which is a different product with different voices and different credentials.
+# See gemini_tts.py.
+#
+# The flash model rather than the pro one: this sits in a phone call, where a
+# reply that is better but later is worse. The voices are the prebuilt set the
+# API offers by name; Kore is female and reads Devanagari as well as any of
+# them, which is the bar this system has had since hf_alpha.
+#
+# "preview" is in the model name and that is a real risk, not a label: a
+# preview model can be withdrawn on a date nothing here would warn about,
+# exactly as Soniox withdrew seven voices with tts-rt-v2.
+GEMINI_MODEL = "gemini-2.5-flash-preview-tts"
+GEMINI_VOICE = "Kore"
+
+# There is no rate parameter on these models. Delivery is steered by prompting,
+# and an instruction glued onto the caller's sentence is one the model may read
+# out loud. So the campaign's tts_speed is ignored on Gemini, and the console
+# says so rather than leaving somebody to move a slider that does nothing -
+# which is the bug that was just fixed for every other provider.
+GEMINI_IGNORES_SPEED = True
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than

@@ -166,6 +166,11 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
   const { play, stop, playing, missing } = useSpeak(campaignId, value)
   const blocked = missing || !text.trim() || play.isPending
   const pending = play.isPending
+  // Gemini's TTS models have no rate parameter - delivery is steered by
+  // prompting, and an instruction glued onto the line is one the model may read
+  // out to the caller. A slider that silently does nothing is the bug that was
+  // just fixed for every other provider; say so instead of repeating it.
+  const ignoresSpeed = value.tts_provider === 'gemini'
 
   return (
     <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
@@ -192,7 +197,7 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="tts-speed" className="text-2xs">
-            Speed {speed.toFixed(2)}×
+            {ignoresSpeed ? 'Speed — not on Gemini' : `Speed ${speed.toFixed(2)}×`}
           </Label>
           <input
             id="tts-speed"
@@ -201,8 +206,9 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
             max={1.3}
             step={0.05}
             value={speed}
+            disabled={ignoresSpeed}
             onChange={(e) => onSpeedChange(Number(e.target.value))}
-            className="w-40 accent-primary"
+            className="w-40 accent-primary disabled:opacity-40"
           />
         </div>
 
@@ -251,8 +257,17 @@ export function VoicePreview({ value, campaignId, onSpeedChange }: {
       </div>
 
       <p className="text-2xs text-muted-foreground">
-        Speed is saved with the campaign — what you hear here is what a caller gets.
-        A little slower often sounds less synthetic on a phone line.
+        {ignoresSpeed ? (
+          <>
+            Gemini has no speed control — its models take no rate setting, so this
+            slider is off rather than pretending. The voice above is the lever.
+          </>
+        ) : (
+          <>
+            Speed is saved with the campaign — what you hear here is what a caller
+            gets. A little slower often sounds less synthetic on a phone line.
+          </>
+        )}
       </p>
       <p className="text-2xs leading-relaxed text-muted-foreground">
         <span className="font-medium">Phone line</span> plays the same words at

@@ -70,7 +70,11 @@ _MIN_BYTES = 16000
 # pcm is fixed at 24 kHz and there is no parameter for it, and Kokoro on our
 # own box serves 24 kHz with no parameter either. The rate that comes back is
 # checked rather than trusted - see _strip_header.
-_RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000, "kokoro": 24000}
+_RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000, "kokoro": 24000,
+         # Gemini offers no sample-rate parameter at all; 24 kHz is what its
+         # models return and the response says so in its own mimeType, which
+         # ttspreview reads rather than assumes.
+         "gemini": 24000}
 
 
 class RenderError(Exception):
@@ -168,6 +172,12 @@ async def _synthesise(provider: str, api_key: str, model: str | None,
         elif provider == "kokoro":
             # Same wire format as OpenAI, different address and no account.
             data = await ttspreview.kokoro(
+                api_key, model=model or "", voice=voice or "", speed=speed,
+                language=language, text=text, response_format="pcm")
+        elif provider == "gemini":
+            # Asked for pcm so nothing has to be unwrapped: ttspreview only
+            # adds a WAV header when the browser is going to play the bytes.
+            data = await ttspreview.gemini(
                 api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text, response_format="pcm")
         else:

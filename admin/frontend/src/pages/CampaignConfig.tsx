@@ -91,9 +91,12 @@ const PROVIDERS = [
 // Separate list because it only speaks — offering it for speech-to-text would
 // let somebody save a row the database refuses, and the failure would land on
 // the save rather than on the dropdown.
+// Gemini is a voice provider only. It is the Gemini API — a plain key — not
+// Google Cloud TTS, which is a different product with a different credential.
 const TTS_PROVIDERS = [
   ...PROVIDERS,
   { value: 'kokoro', label: 'Our own server' },
+  { value: 'gemini', label: 'Gemini' },
 ]
 
 // Speech-to-text has one of its own: Qwen3-ASR on our GPU box, which only
@@ -148,6 +151,14 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
   // read, in which case the voice list is empty too and the campaign should
   // not be saved on it anyway.
   kokoro: [{ value: 'kokoro', label: 'kokoro — ~200ms measured on the LAN' }],
+  // No catalogue endpoint is read for these, so this list is the only copy.
+  // Flash rather than Pro because this sits in a phone call, where a better
+  // answer that arrives later is a worse answer. Neither has been measured
+  // here yet — wired before benched, at the owner's call.
+  gemini: [
+    { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — not yet measured' },
+    { value: 'gemini-2.5-pro-preview-tts', label: 'gemini-2.5-pro-preview-tts — slower, not yet measured' },
+  ],
 }
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
@@ -175,6 +186,19 @@ const VOICES: Record<string, { value: string; label: string }[]> = {
   ].map((v) => ({ value: v, label: v })),
   openai: [
     'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer',
+  ].map((v) => ({ value: v, label: v })),
+  // Gemini's prebuilt voices, by name. There is no catalogue endpoint to read
+  // them from the way Soniox and our own box are read, so this list is the
+  // only copy — and a name the model does not have fails at construction, so
+  // it is the kind of list that goes silent on a call when it rots. The model
+  // carries "preview" in its name, which makes that likelier here than
+  // anywhere else.
+  gemini: [
+    'Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Leda', 'Orus', 'Aoede',
+    'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba',
+    'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar',
+    'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi',
+    'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
   ].map((v) => ({ value: v, label: v })),
   // Fallback only - the real list is read from the box, which serves 72 and
   // can gain more without a release. These are the four Hindi ones, so a
@@ -824,6 +848,20 @@ export function CampaignConfig() {
                 This campaign speaks on our own server and has no fallback. If
                 that box stops answering, these calls have no voice at all —
                 pick a fallback provider below.
+              </Note>
+            )}
+
+            {/* A different risk with the same remedy. Both Gemini TTS models
+                carry "preview" in the name, and a preview model can be
+                withdrawn on a date nothing here would warn about — Soniox
+                removed seven voices with tts-rt-v2 and any campaign left on
+                one would have gone silent mid-call. */}
+            {value.tts_provider === 'gemini' && !value.tts_fallback_provider && (
+              <Note tone="warn">
+                Gemini&rsquo;s voice models are preview releases and can be
+                withdrawn without notice. With no fallback, these calls would
+                have no voice at all from that moment — pick a fallback provider
+                below.
               </Note>
             )}
 

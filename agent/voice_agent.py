@@ -41,6 +41,7 @@ from livekit.agents import llm as lk_llm, stt as lk_stt, tts as lk_tts
 from livekit.plugins import openai, sarvam, silero, soniox
 
 import clause_tokenizer
+import gemini_tts
 import greeting_cache
 import hours
 import kokoro_tts
@@ -1304,7 +1305,13 @@ ATTEMPT_TIMEOUT = float(os.getenv("FALLBACK_ATTEMPT_TIMEOUT", "3.0"))
 # the common path then never resamples, and only a firing fallback pays for it.
 _TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000,
                     # Kokoro's own output rate, and what its server reports.
-                    "kokoro": 24000}
+                    "kokoro": 24000,
+                    # Gemini's models return 24 kHz and say so in the response's
+                    # mimeType, which gemini_tts reads rather than assumes. Listed
+                    # even though it matches the default: a provider missing from
+                    # this map is indistinguishable from one that happens to agree
+                    # with it, and the next rate that differs would be silent.
+                    "gemini": 24000}
 
 
 # Conservative, and ours rather than Soniox's - their published limit is not
@@ -1483,6 +1490,29 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
                 voice=((cfg.tts_voice if use_config_model else None)
                        or tts_defaults.KOKORO_VOICE),
                 speed=_tts_speed(cfg),
+            ),
+            sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
+        )
+    if provider == "gemini":
+        # Gemini's own TTS models, not Google Cloud TTS - see gemini_tts.py for
+        # why livekit's google plugin cannot reach these and what importing it
+        # would have cost every job process.
+        #
+        # Wrapped for the same reason kokoro is: generateContent returns the
+        # whole utterance in one JSON body, so nothing arrives early and the
+        # caller waits for the entire reply unless the text is split first.
+        # Clause splitting took 1.3 s off first audio on call 671.
+        #
+        # _tts_speed is not passed. These models have no rate parameter, and a
+        # style instruction glued onto the text is a sentence the model may read
+        # out loud to the caller. See tts_defaults.GEMINI_IGNORES_SPEED.
+        return lk_tts.StreamAdapter(
+            tts=gemini_tts.TTS(
+                api_key=key,
+                model=((cfg.tts_model if use_config_model else None)
+                       or tts_defaults.GEMINI_MODEL),
+                voice=((cfg.tts_voice if use_config_model else None)
+                       or tts_defaults.GEMINI_VOICE),
             ),
             sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
         )

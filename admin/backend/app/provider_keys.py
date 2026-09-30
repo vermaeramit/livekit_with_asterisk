@@ -23,8 +23,12 @@ log = logging.getLogger("admin-api")
 
 # openrouter speaks OpenAI's wire format, so it needs no new plugin - only
 # a key and a base_url. What it buys is every model it fronts.
-PROVIDERS = ("openai", "sarvam", "soniox", "openrouter")
-Provider = Literal["openai", "sarvam", "soniox", "openrouter"]
+#
+# gemini is the Gemini API - generativelanguage.googleapis.com, a plain API
+# key. NOT Google Cloud TTS, whose credential is a service-account JSON and
+# would not fit this table, which stores one encrypted string.
+PROVIDERS = ("openai", "sarvam", "soniox", "openrouter", "gemini")
+Provider = Literal["openai", "sarvam", "soniox", "openrouter", "gemini"]
 
 # Soniox is the only provider here that offers a choice of region, and a key
 # belongs to exactly one: a project picks its region when it is created and its
@@ -296,8 +300,42 @@ def _check_soniox(key: str, region: str | None = None) -> Validation:
     return Validation(False, f"Soniox returned {code}")
 
 
+def _check_gemini(key: str) -> Validation:
+    """GET /v1beta/models - free, read-only, and genuinely authenticated.
+
+    The Soniox shape rather than the Sarvam one: there is a real authenticated
+    endpoint here that costs nothing, so there is no reason to spend a synthesis
+    to find out whether a key is a typo.
+
+    A bad key comes back 400, not 401 - Gemini reports it as INVALID_ARGUMENT
+    with "API key not valid" in the body. Treating 400 as "unknown" would mark
+    every mistyped key as acceptable, which is the one outcome this check exists
+    to prevent.
+    """
+    req = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": key},
+        method="GET",
+    )
+    code, body = _status_of(req)
+    if code == 200:
+        return Validation(True, "key accepted by Gemini")
+    if code in (400, 401, 403):
+        return Validation(False, "Gemini rejected this key")
+    if code == 429:
+        # The key is real - an unknown one would not get this far - but the
+        # project is rate limited or out of quota, which is the Sarvam 402
+        # situation wearing Google's clothes.
+        return Validation(True, "key is valid but the Gemini project is out of quota",
+                          no_credits=True)
+    if code == 0:
+        return Validation(False, f"could not reach Gemini: {body}")
+    return Validation(False, f"Gemini returned {code}")
+
+
 _CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
-           "soniox": _check_soniox, "openrouter": _check_openrouter}
+           "soniox": _check_soniox, "openrouter": _check_openrouter,
+           "gemini": _check_gemini}
 
 
 async def validate(provider: str, key: str,

@@ -15,6 +15,7 @@ const PROVIDERS: Record<string, { label: string; used: string }> = {
   sarvam: { label: 'Sarvam', used: 'Speech to text, and the voice' },
   soniox: { label: 'Soniox', used: 'Speech to text, and the voice' },
   openrouter: { label: 'OpenRouter', used: 'Language model, through a gateway to many' },
+  gemini: { label: 'Gemini', used: 'The voice' },
 }
 
 // Providers that run the same API in more than one region, and the regions
