@@ -155,11 +155,15 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
   //   provider-catalog.py gemini tts-models
   // The three with "preview" in the name can be withdrawn without notice; the
   // 3.8 pair cannot, which is the difference the warning below keys on.
+  // Measured 30 Sep 2026, two samples each, against kokoro's 113-162 ms on the
+  // same line. lite is NOT faster than flash - 2277/3024 against 2498/2834,
+  // which overlaps - so it is listed without a recommendation rather than with
+  // the wrong one.
   gemini: [
-    { value: 'gemini-3.8-flash-tts', label: 'gemini-3.8-flash-tts' },
-    { value: 'gemini-3.8-flash-lite-tts', label: 'gemini-3.8-flash-lite-tts — lightest, try first for latency' },
-    { value: 'gemini-3.1-flash-tts-preview', label: 'gemini-3.1-flash-tts-preview — preview' },
-    { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — preview, measured 3.8s to first audio' },
+    { value: 'gemini-3.8-flash-tts', label: 'gemini-3.8-flash-tts — measured ~2.5s to first audio' },
+    { value: 'gemini-3.8-flash-lite-tts', label: 'gemini-3.8-flash-lite-tts — measured ~2.6s, no faster than flash' },
+    { value: 'gemini-3.1-flash-tts-preview', label: 'gemini-3.1-flash-tts-preview — preview, ~3.8s' },
+    { value: 'gemini-2.5-flash-preview-tts', label: 'gemini-2.5-flash-preview-tts — preview, ~4.0s and stalls' },
     { value: 'gemini-2.5-pro-preview-tts', label: 'gemini-2.5-pro-preview-tts — preview, slower still' },
   ],
 }
