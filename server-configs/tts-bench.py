@@ -86,9 +86,11 @@ KNOWN = {
     # numbers still have to be taken, and this row is what makes that one flag
     # rather than a day. Kokoro is the bar: 96-212 ms and no stalls.
     "gemini": ("gemini-3.8-flash-tts", "Kore"),
-    # Google Cloud TTS. Both empty on purpose: it has no model field, and the
-    # voice is left for Google to pick for the language rather than named from
-    # memory - see tts_defaults.GOOGLE_VOICE for why that matters.
+    # Google Cloud TTS has no model field, and no usable default voice: an
+    # empty one does not fall back to a Cloud TTS voice, it routes the call to a
+    # Gemini model on Agent Platform. So a voice must be named on the command
+    # line - "google::hi-IN-Neural2-A" - and this row cannot supply one from
+    # memory. See tts_defaults.GOOGLE_VOICE.
     "google": ("", ""),
 }
 
@@ -137,19 +139,23 @@ def line(provider: str, mode: str, text: str, r: dict) -> str:
 
 
 async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
-                regions: dict | None = None, model_override: str | None = None) -> None:
+                regions: dict | None = None, model_override: str | None = None,
+                voice_override: str | None = None) -> None:
     import voice_agent
 
-    if provider == cfg.tts_provider and not model_override:
+    if provider == cfg.tts_provider and not (model_override or voice_override):
         pcfg = cfg
     else:
         model, voice = KNOWN[provider]
-        # A named model wins over both the campaign's and KNOWN's. Gemini is
-        # why: it serves five TTS models at once and the question is which of
-        # them, not whether. Comparing them across separate runs would compare
-        # two different afternoons on somebody else's servers.
+        # A named model or voice wins over both the campaign's and KNOWN's.
+        # Gemini is why the model override exists - five TTS models at once, and
+        # the question is which. Google is why the voice one does: its families
+        # are different products behind one API, and an empty voice does not
+        # even reach Cloud TTS. Comparing them across separate runs would
+        # compare two different afternoons on somebody else's servers.
         pcfg = dataclasses.replace(cfg, tts_provider=provider,
-                                   tts_model=model_override or model, tts_voice=voice)
+                                   tts_model=model_override or model,
+                                   tts_voice=voice_override or voice)
     if provider not in keys and provider not in KEYLESS:
         print(f"{provider}: no key for this campaign - skipped")
         return
@@ -228,11 +234,12 @@ async def bench(provider: str, cfg, keys: dict, runs: int, quick: bool = False,
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("campaign", help="agent_config name, e.g. default")
-    # "gemini:gemini-3.8-flash-tts" pins a model for that leg; a bare name
-    # uses the campaign's, or KNOWN's. Several legs of the same provider are
-    # allowed, which is the whole point.
+    # "gemini:gemini-3.8-flash-tts" pins a model, "google::hi-IN-Neural2-A"
+    # pins a voice, "p:model:voice" pins both; a bare name uses the campaign's,
+    # or KNOWN's. Several legs of the same provider are allowed, which is the
+    # whole point.
     ap.add_argument("--providers", default="soniox,sarvam",
-                    help="comma-separated, each optionally provider:model")
+                    help="comma-separated, each optionally provider:model:voice")
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--quick", action="store_true",
                     help="one long sentence only - for repeated sampling")
@@ -260,13 +267,15 @@ async def main() -> None:
 
     async with http_context.open():
         for leg in [p.strip() for p in args.providers.split(",") if p.strip()]:
-            provider, _, model_override = leg.partition(":")
+            provider, _, rest = leg.partition(":")
+            model_override, _, voice_override = rest.partition(":")
             if provider not in KNOWN:
                 print(f"{provider}: not a TTS this bench knows - skipped")
                 continue
             try:
                 await bench(provider, cfg, keys, args.runs, args.quick,
-                            regions, model_override or None)
+                            regions, model_override or None,
+                            voice_override or None)
             except Exception as e:
                 # The name only, by default: a provider's error text can echo
                 # the request, and the request carries the key.

@@ -95,16 +95,29 @@ GEMINI_IGNORES_SPEED = True
 # Google Cloud Text-to-Speech - texttospeech.googleapis.com, through livekit's
 # own plugin. A different product from 'gemini' above; see migration 064.
 #
-# NO DEFAULT VOICE, and that is the point of this file working against itself
-# for once. Google publishes hundreds of hi-IN voices across Chirp3-HD, Neural2,
-# WaveNet and Standard, and every one of them is a name that fails at
-# construction if it is wrong - which is exactly how Soniox campaigns went
-# silent mid-call when seven voices were withdrawn. Writing one here from
-# memory would be that mistake made deliberately.
+# NO DEFAULT VOICE, AND NO LETTING GOOGLE PICK EITHER. Both halves were
+# learned the hard way on 30 Sep 2026.
 #
-# So the voice is left unset and Google picks for the language, and the console
-# reads the real list from voices.list - the same arrangement Soniox and Kokoro
-# already have. See _HAS_CATALOG.
+# Naming one here is the mistake Soniox taught: hundreds of hi-IN voices exist
+# across Chirp3-HD, Neural2, WaveNet and Standard, every name fails at
+# construction if it is wrong, and seven Soniox voices were withdrawn at once.
+# A name written from memory is a campaign that goes silent mid-call.
+#
+# But leaving it EMPTY is worse, and that is the part that was not obvious. With
+# no voice the plugin does not fall back to a plain Cloud TTS voice - Google
+# routes the request to a Gemini TTS model on Agent Platform instead:
+#
+#   Permission 'aiplatform.endpoints.predict' denied on resource
+#   '.../publishers/google/models/gemini-2.5-flash-tts'
+#
+# A different backend, different permissions, different billing, and the oldest
+# Gemini TTS model at that - the one this project measured at 3832 ms against
+# kokoro's 114. Silently taking that road because a field was blank is the
+# opposite of what an empty field should do.
+#
+# So there is no default and the agent REFUSES to build without one, saying
+# which field to fill. The console reads the real list from voices.list - the
+# same arrangement Soniox and Kokoro have. See _HAS_CATALOG.
 GOOGLE_VOICE = None
 
 # The model field does nothing on this provider. Cloud TTS carries the model

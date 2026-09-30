@@ -1554,12 +1554,20 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
               "sample_rate": tts_defaults.GOOGLE_SAMPLE_RATE,
               "credentials_info": creds,
               "speaking_rate": _tts_speed(cfg)}
-        # Left unset rather than defaulted: Google picks a voice for the
-        # language, and a name written from memory is how a campaign goes
-        # silent mid-call. See tts_defaults.GOOGLE_VOICE.
+        # Refused rather than left to Google, which does not do what an empty
+        # field looks like it should: with no voice it routes the request to a
+        # Gemini TTS model on Agent Platform - another backend, another
+        # permission (aiplatform.endpoints.predict), and the slowest model this
+        # project has measured. Failing here names the field; guessing sends
+        # the call somewhere nobody chose. See tts_defaults.GOOGLE_VOICE.
         voice = (cfg.tts_voice if use_config_model else None) or tts_defaults.GOOGLE_VOICE
-        if voice:
-            kw["voice_name"] = voice
+        if not voice:
+            raise ValueError(
+                "tts_provider is 'google' but no voice is set on this campaign. "
+                "Pick one on the Voice tab - Google has no usable default here: "
+                "an empty voice sends the call to a Gemini model on Agent "
+                "Platform instead of to Cloud Text-to-Speech")
+        kw["voice_name"] = voice
         return google_plugin.TTS(**kw)
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
