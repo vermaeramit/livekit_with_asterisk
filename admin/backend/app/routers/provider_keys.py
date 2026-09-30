@@ -570,21 +570,42 @@ async def tts_catalog(campaign_id: int, provider: str,
                                 f"could not read the Google catalogue: "
                                 f"{type(e).__name__}")
 
-        def rank(v: dict) -> tuple:
-            fam = _google_family(v.get("name", ""))
-            i = (_GOOGLE_FAMILY_ORDER.index(fam)
-                 if fam in _GOOGLE_FAMILY_ORDER else len(_GOOGLE_FAMILY_ORDER))
-            return (i, v.get("name", ""))
-
-        # One model, holding every voice. Cloud TTS has no model field to set -
-        # see tts_defaults.GOOGLE_IGNORES_MODEL - so splitting these into
-        # several would offer a choice the campaign cannot store.
-        out = TtsCatalog(provider=provider, models=[
-            TtsModel(id="google", name=f"Google Cloud ({language})", voices=[
-                TtsVoice(id=v["name"],
+        # ONE MODEL PER FAMILY, and the reason is money rather than tidiness.
+        #
+        # This used to return a single model holding every voice, on the
+        # reasoning that Cloud TTS has no model field to set. True for
+        # synthesis - the voice name carries the family - and wrong for
+        # everything else: costing looks a rate up by
+        # (tts_provider_used, tts_model_used, kind), tts_model_used is the
+        # campaign's tts_model, and Google charges per family:
+        #
+        #     Standard      $4 / 1M characters
+        #     WaveNet      $16
+        #     Chirp3-HD    $30
+        #     Studio      $160
+        #
+        # read from Google's own billing catalogue on 30 Sep 2026. With one
+        # lumped model there is nowhere to put four different prices, and every
+        # call prices at whichever one somebody guessed.
+        by_family: dict[str, list] = {}
+        for v in voices:
+            name = v.get("name")
+            if not name:
+                continue
+            by_family.setdefault(_google_family(name), []).append(
+                TtsVoice(id=name,
                          gender=(v.get("ssmlGender") or "").lower() or None,
-                         description=_google_family(v["name"]))
-                for v in sorted(voices, key=rank) if v.get("name")])])
+                         description=None))
+
+        def rank(fam: str) -> tuple:
+            return ((_GOOGLE_FAMILY_ORDER.index(fam)
+                     if fam in _GOOGLE_FAMILY_ORDER
+                     else len(_GOOGLE_FAMILY_ORDER)), fam)
+
+        out = TtsCatalog(provider=provider, models=[
+            TtsModel(id=fam, name=f"{fam} ({language})",
+                     voices=sorted(by_family[fam], key=lambda x: x.id))
+            for fam in sorted(by_family, key=rank)])
         _cache[cache_key] = (time.monotonic(), out)
         return out
 

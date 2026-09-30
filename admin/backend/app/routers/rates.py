@@ -15,6 +15,7 @@ import asyncio
 import datetime
 import json
 import logging
+import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 
@@ -217,6 +218,155 @@ async def import_openrouter_rates(actor: CurrentUser = Depends(superadmin)):
         note=f"Prices read from OpenRouter on {today}. Where a model publishes "
              f"no cached-read price, cached tokens are charged at the full "
              f"input rate - which overstates rather than under.")
+
+
+_BILLING = "https://cloudbilling.googleapis.com/v1"
+
+# SKU description -> the voice family this table prices by. Matched explicitly
+# rather than parsed, because a wrong match here misprices every Google call on
+# the system, and Google's own wording is not uniform: "Count of characters for
+# Chirp3-HD voices" beside "Count of characters for using wavenet voices".
+#
+# The keys are matched against a lowercased description, and only on SKUs whose
+# description begins with "count of characters" - which leaves out the Gemini
+# per-token SKUs, the on-device ones and Custom Voice, none of which this table
+# can express. "Chirp Voice Cloning" contains "chirp" and deliberately matches
+# nothing here; it is a feature, not a family in voices.list.
+#
+# Family names are spelled exactly as _google_family in routers/provider_keys.py
+# derives them from a voice name, because that is what lands in tts_model and
+# what costing joins on.
+_GOOGLE_SKU_FAMILY = {
+    "chirp3-hd": "Chirp3-HD",
+    "neural2": "Neural2",
+    "studio": "Studio",
+    "wavenet": "Wavenet",
+    "standard": "Standard",
+}
+
+
+def _fetch_google_tts_prices(token: str) -> dict[str, Decimal]:
+    """-> {voice family: USD per million characters}, from Google's own catalogue.
+
+    Google quotes these per single character, as units + nanos. Per million is
+    what this table stores and what the pricing page shows, so the conversion
+    happens here rather than in somebody's head.
+    """
+    def get(url: str) -> dict:
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {token}",
+                          "User-Agent": "AIVoice-Console/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+
+    services = get(f"{_BILLING}/services?pageSize=500").get("services") or []
+    svc = next((s for s in services
+                if "text-to-speech" in (s.get("displayName") or "").lower()), None)
+    if svc is None:
+        raise RuntimeError("no Text-to-Speech service in Google's catalogue")
+
+    out: dict[str, Decimal] = {}
+    for sku in get(f"{_BILLING}/{svc['name']}/skus?pageSize=500").get("skus") or []:
+        desc = (sku.get("description") or "").lower()
+        if not desc.startswith("count of characters"):
+            continue
+        family = next((f for k, f in _GOOGLE_SKU_FAMILY.items() if k in desc), None)
+        if family is None:
+            continue
+        for info in sku.get("pricingInfo") or []:
+            for tier in (info.get("pricingExpression") or {}).get("tieredRates") or []:
+                unit = tier.get("unitPrice") or {}
+                per_char = (Decimal(str(unit.get("units") or 0))
+                            + Decimal(str(unit.get("nanos") or 0)) / 1_000_000_000)
+                # A zero tier is the free allowance, not a price. Taking it
+                # would price every call at nothing and look like a bargain.
+                if per_char > 0:
+                    out.setdefault(family, per_char * 1_000_000)
+    return out
+
+
+@router.post("/rates/import/google", response_model=RateImport)
+async def import_google_rates(actor: CurrentUser = Depends(superadmin)):
+    """Take Google's own published prices for Cloud Text-to-Speech.
+
+    The same argument as the OpenRouter importer above, with one difference
+    worth stating: Google prices by VOICE FAMILY, four-fold apart end to end -
+    $4 per million characters for Standard against $160 for Studio. A single
+    rate for "google" is not a rounding error, it is a wrong answer, so the
+    family goes in the model column and the tts-catalog endpoint puts the same
+    family in tts_model when a campaign picks a voice.
+
+    The credential is the service account already stored for google. The
+    project needs the Cloud Billing API enabled; without it Google answers 403
+    and says so, and that message is passed through rather than swallowed.
+    """
+    from .. import googleauth, secretlib
+
+    if not secretlib.available():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "SECRETS_KEY is not set on this server, so the "
+                            "stored credential cannot be read")
+
+    row = await db.pool().fetchrow(
+        "SELECT key_enc FROM provider_keys WHERE provider = 'google' "
+        "ORDER BY campaign_id NULLS FIRST, id LIMIT 1")
+    if row is None:
+        return RateImport(written=[], missing=[],
+                          note="No Google service account is stored yet - add "
+                               "one on a client or campaign first.")
+
+    try:
+        creds = googleauth.parse(secretlib.crypto().decrypt(row["key_enc"]))
+        token, _ = await asyncio.to_thread(googleauth.mint, creds)
+    except googleauth.AuthError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+    try:
+        prices = await asyncio.to_thread(_fetch_google_tts_prices, token)
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"Google returned {e.code} for its price catalogue. "
+                            f"{detail}")
+    except Exception as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"could not read Google's prices: {type(e).__name__}")
+
+    if not prices:
+        return RateImport(written=[], missing=[],
+                          note="Google's catalogue listed no per-character "
+                               "text-to-speech prices.")
+
+    today = datetime.date.today().isoformat()
+    written = []
+    for family in sorted(prices):
+        await db.pool().execute(
+            """INSERT INTO provider_rates
+                   (provider, model, kind, unit, price, currency, note, updated_by)
+               VALUES ('google', $1, 'tts_characters', 'per_million', $2, 'USD',
+                       $3, $4)
+               ON CONFLICT (provider, coalesce(model, ''), kind) DO UPDATE
+                   SET unit = EXCLUDED.unit, price = EXCLUDED.price,
+                       currency = EXCLUDED.currency, note = EXCLUDED.note,
+                       updated_at = now(), updated_by = EXCLUDED.updated_by""",
+            family, prices[family], f"From Google's billing catalogue, {today}",
+            actor.id)
+        written.append(family)
+
+    await audit.record(actor, entity="provider_rate", entity_id="google",
+                       action="import",
+                       changes={"families": {"from": None,
+                                             "to": ", ".join(written)}})
+    return RateImport(
+        written=written, missing=[],
+        note=f"Prices read from Google's billing catalogue on {today}, per "
+             f"voice family. A campaign prices by the family in its "
+             f"text-to-speech model; calls made before that field held a "
+             f"family will show no rate.")
 
 
 @router.delete("/rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)

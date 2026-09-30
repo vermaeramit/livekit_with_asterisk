@@ -107,6 +107,25 @@ export function Rates() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not import'),
   })
 
+  // Google prices per VOICE FAMILY, and four-fold apart end to end — $4 per
+  // million characters for Standard against $160 for Studio. So this writes one
+  // row per family, and a campaign prices by the family in its voice model.
+  const importGoogle = useMutation({
+    mutationFn: () => api<RateImport>('/rates/import/google', { method: 'POST' }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['rates'] })
+      if (!r.written.length) {
+        toast.success('Nothing to import', r.note)
+      } else {
+        toast.success(
+          `Priced ${r.written.length} voice ${r.written.length === 1 ? 'family' : 'families'}`,
+          r.note,
+        )
+      }
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not import'),
+  })
+
   const remove = useMutation({
     mutationFn: (id: number) => api(`/rates/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -146,6 +165,15 @@ export function Rates() {
             >
               <Download className="h-3.5 w-3.5" />
               Import OpenRouter prices
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importGoogle.mutate()}
+              loading={importGoogle.isPending}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Import Google prices
             </Button>
             <Button size="sm" onClick={() => setEditing({ ...BLANK })}>
               <Plus className="h-3.5 w-3.5" />
