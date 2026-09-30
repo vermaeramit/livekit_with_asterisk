@@ -1025,7 +1025,7 @@ export function CampaignConfig() {
                   value.tts_provider === 'kokoro'
                     ? `${liveVoices.length || 'The'} voices, read from the box, and four mixes at the top. A mix is two voices at once — the numbers are weights, and Custom… takes any pair.`
                     : value.tts_provider === 'google' && liveVoices.length
-                      ? `${liveVoices.length} voices Google serves for this campaign's language. The family in each label — Chirp3-HD, Neural2, Wavenet, Standard — is the model; newest first.`
+                      ? `${liveVoices.length} voices Google serves for this campaign's language. The family in each label — Chirp3-HD, Neural2, Wavenet, Standard — is the model; newest first. Chirp3-HD measured ~304ms to first audio. Leaving this on “Provider default” does not work here — an empty voice sends the call to a Gemini model on Agent Platform instead.`
                     : liveVoices.length
                       ? `${liveVoices.length} voices, read from ${value.tts_provider} for this model.`
                       : 'A voice the chosen model does not have fails before the call is answered, not on save.'
