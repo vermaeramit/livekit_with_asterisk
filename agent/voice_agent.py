@@ -1535,6 +1535,8 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
         # idle processes each. Inside the branch, only a campaign that actually
         # speaks with it pays.
         from livekit.plugins import google as google_plugin
+        # For the encoding constant below. It comes with the plugin.
+        from google.cloud import texttospeech as gcloud_tts
 
         # The credential is a service-account JSON, stored as the string every
         # other key is stored as and parsed here. There is no api_key parameter
@@ -1553,7 +1555,27 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
         kw = {"language": cfg.language,
               "sample_rate": tts_defaults.GOOGLE_SAMPLE_RATE,
               "credentials_info": creds,
-              "speaking_rate": _tts_speed(cfg)}
+              "speaking_rate": _tts_speed(cfg),
+              # LINEAR16, not the plugin's default of PCM. Calls 820, 821 and
+              # 822 each ended on one 400, and the message listed what the
+              # voice does take:
+              #
+              #   This voice currently only supports the following audio
+              #   encodings: LINEAR16, MP3, OGG_OPUS, MULAW, ALAW.
+              #
+              # PCM is not in that list, and Chirp3-HD is the family the
+              # console offers first. The streaming path was never the problem
+              # - it forces PCM on itself and works, which the bench measured
+              # at 304 ms and those seven turns confirmed. Something else in a
+              # session synthesises through the NON-streaming path, where the
+              # configured encoding is used as given, and that is the request
+              # that failed each time, about twenty seconds after the caller
+              # had already hung up.
+              #
+              # Setting LINEAR16 changes only that path. The plugin's own
+              # SynthesizeStream coerces anything other than OGG_OPUS or PCM
+              # back to PCM, so streaming keeps exactly what already works.
+              "audio_encoding": gcloud_tts.AudioEncoding.LINEAR16}
         # Refused rather than left to Google, which does not do what an empty
         # field looks like it should: with no voice it routes the request to a
         # Gemini TTS model on Agent Platform - another backend, another
