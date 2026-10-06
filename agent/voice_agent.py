@@ -47,6 +47,7 @@ import hours
 import kokoro_tts
 import prompt as prompt_mod
 import qwen_stt
+import raya_tts
 import tools as tools_mod
 import providers as providers_mod
 import tts_defaults
@@ -1316,7 +1317,10 @@ _TTS_NATIVE_RATE = {"sarvam": 22050, "openai": 24000, "soniox": 24000,
                     # property of the provider. Kept in step with the constant
                     # rather than repeated, because two numbers that must agree
                     # and are written twice eventually do not.
-                    "google": tts_defaults.GOOGLE_SAMPLE_RATE}
+                    "google": tts_defaults.GOOGLE_SAMPLE_RATE,
+                    # Whatever we ask Raya for, same as Google - it is a
+                    # request parameter, not a property of the provider.
+                    "raya": tts_defaults.RAYA_SAMPLE_RATE}
 
 
 # Conservative, and ours rather than Soniox's - their published limit is not
@@ -1591,6 +1595,33 @@ def _build_tts(provider: str, cfg, key: str, use_config_model: bool,
                 "Platform instead of to Cloud Text-to-Speech")
         kw["voice_name"] = voice
         return google_plugin.TTS(**kw)
+    if provider == "raya":
+        # Our own client rather than livekit-plugins-raya: that plugin is not
+        # on PyPI and installs from a git clone, and everything in
+        # requirements.txt is pinned exactly because this is the call path.
+        # See raya_tts.py.
+        #
+        # Wrapped for the same reason kokoro and gemini are: one request
+        # carries a whole sentence, so nothing is spoken until a sentence
+        # exists. Clause splitting took 1.3 s off first audio on call 671.
+        voice = (cfg.tts_voice if use_config_model else None) or tts_defaults.RAYA_VOICE
+        if not voice:
+            raise ValueError(
+                "tts_provider is 'raya' but no voice is set on this campaign. "
+                "Pick one on the Voice tab - Raya's voices are ids, so there "
+                "is no default worth guessing")
+        return lk_tts.StreamAdapter(
+            tts=raya_tts.TTS(
+                api_key=key,
+                voice_id=voice,
+                language=cfg.language,
+                model=((cfg.tts_model if use_config_model else None)
+                       or tts_defaults.RAYA_MODEL),
+                sample_rate=tts_defaults.RAYA_SAMPLE_RATE,
+                speed=_tts_speed(cfg),
+            ),
+            sentence_tokenizer=clause_tokenizer.ClauseTokenizer(),
+        )
     if provider == "soniox":
         # tts_voice holds a Sarvam speaker name when Sarvam is primary, and a
         # Soniox one when Soniox is. The console validates that pairing; here we

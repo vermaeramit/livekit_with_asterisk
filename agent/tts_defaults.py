@@ -139,6 +139,31 @@ GOOGLE_IGNORES_MODEL = True
 # a call ends up sounding like a chipmunk with nothing in the log.
 GOOGLE_SAMPLE_RATE = 24000
 
+# Raya (Bakbak), hub.getraya.app. Indic-first, and the first provider here
+# whose own API offers the rate a phone line actually carries.
+#
+# NO DEFAULT VOICE, for the Soniox reason and one of its own: the voice is a
+# UUID, not a name, so there is nothing to write here that reads as anything.
+# The console lists them from /v1/voices and the agent refuses without one.
+RAYA_VOICE = None
+
+# "m1" over "standard" - it is what the vendor's own livekit plugin defaults to
+# and what the probe measured. The console lists both from /v1/voices, and
+# unlike Google this IS a real model field: it goes in the request.
+RAYA_MODEL = "m1"
+
+# Measured from .243 on 6 Oct 2026, same short Hindi line, fresh connection:
+#
+#      8 kHz   ttfb 341 ms   first audio 342 ms
+#     24 kHz   ttfb 541 ms   first audio 571 ms
+#
+# 229 ms, for asking for the rate the trunk carries instead of four times it.
+# That is the largest single saving any setting in this file has offered, and
+# it is NOT taken yet: nothing on the agent path has ever published 8 kHz TTS -
+# the hold-message path has, but that is a file Asterisk reads, not a track
+# LiveKit carries. One line to change, after one call proves it sounds right.
+RAYA_SAMPLE_RATE = 24000
+
 # OpenAI is not given a voice at all - see _build_tts. Whatever the livekit
 # plugin defaults to is what speaks, and the console's voice field does nothing
 # on an OpenAI campaign. Recorded here so the warning can say so rather than

@@ -17,6 +17,7 @@ const PROVIDERS: Record<string, { label: string; used: string }> = {
   openrouter: { label: 'OpenRouter', used: 'Language model, through a gateway to many' },
   gemini: { label: 'Gemini', used: 'The voice' },
   google: { label: 'Google Cloud', used: 'The voice, through Cloud Text-to-Speech' },
+  raya: { label: 'Raya', used: 'The voice' },
 }
 
 // Providers whose credential is a document rather than a line. Google Cloud is

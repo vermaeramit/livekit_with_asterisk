@@ -92,6 +92,9 @@ KNOWN = {
     # line - "google::hi-IN-Neural2-A" - and this row cannot supply one from
     # memory. See tts_defaults.GOOGLE_VOICE.
     "google": ("", ""),
+    # Raya's voice is a UUID and there is no default worth writing here, so a
+    # voice must be named on the command line: "raya:m1:<voice-id>".
+    "raya": ("m1", ""),
 }
 
 # Providers with no account, and so no key to look for - the same set the agent

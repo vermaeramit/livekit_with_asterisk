@@ -88,6 +88,11 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
 # different credential - a service account, exchanged for a bearer token by
 # googleauth, because this image has no livekit plugin to do it for us.
 GOOGLE_URL = "https://texttospeech.googleapis.com/v1"
+
+# Raya (Bakbak). A plain API key in X-API-Key, and the one-shot endpoint rather
+# than the streaming one: a preview plays a whole clip, so there is nothing for
+# SSE to save here and a complete body is simpler to be wrong about.
+RAYA_URL = "https://hub.getraya.app/v1"
 _GEMINI_RATE_IN_MIME = re.compile(r"rate=(\d+)")
 
 # mp3 so the browser can play the bytes as they are. PCM would mean sending a
@@ -498,4 +503,82 @@ async def google_voices(api_key: str, language: str) -> list[dict]:
     q = urllib.parse.quote(language)
     data = await asyncio.to_thread(_google_blocking, token,
                                    f"/voices?languageCode={q}", None)
+    return data.get("voices") or []
+
+
+def _raya_blocking(api_key: str, path: str, payload: dict | None) -> dict | bytes:
+    body = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        f"{RAYA_URL}{path}", data=body,
+        method="POST" if payload is not None else "GET",
+        headers={"X-API-Key": api_key, "Content-Type": "application/json",
+                 "User-Agent": "AIVoice-Console/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            raw = r.read()
+            ctype = r.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        raise PreviewError(f"{e.code}: {detail or e.reason}")
+    except Exception as e:
+        # Never the exception text: it can quote the request, and the request
+        # carried the key in a header.
+        log.warning("raya request failed: %s", type(e).__name__)
+        raise PreviewError(f"could not reach the provider ({type(e).__name__})")
+
+    if "json" in ctype:
+        return json.loads(raw.decode("utf-8", "replace"))
+    return raw
+
+
+async def raya(api_key: str, *, model: str, voice: str, language: str,
+               text: str, speed: float = 1.0,
+               response_format: str = _FORMAT,
+               sample_rate: int = 24000) -> bytes:
+    """-> mp3 bytes, or raw signed 16-bit PCM when asked for it.
+
+    Raya's own `pcm` is FLOAT32, which nothing else here returns and which no
+    browser and no Asterisk will play. So pcm is asked for as `wav`, which
+    arrives as ordinary 16-bit inside a RIFF container - and holdaudio._strip_
+    header already reads what arrived rather than trusting what was requested,
+    which is exactly the case it exists for.
+
+    `language` is converted, not passed through: a campaign stores hi-IN and
+    Raya wants hi. See agent/raya_tts.language_for - the rule is shared in
+    spirit, kept separate because this image cannot import the agent.
+    """
+    base, _, region = (language or "").partition("-")
+    base = base.lower()
+    lang = f"{base}-{region.lower()}" if base == "en" and region else base
+
+    data = await asyncio.to_thread(
+        _raya_blocking, api_key, "/text-to-speech",
+        {"text": text, "voice_id": voice, "language": lang,
+         "model": model or "m1",
+         "codec": "wav" if response_format == "pcm" else "mp3",
+         "sample_rate": sample_rate, "speed": speed})
+    if isinstance(data, dict):
+        # Some shapes return the audio base64 in a field rather than as bytes.
+        for field in ("audio", "data", "audio_content"):
+            if data.get(field):
+                return base64.b64decode(data[field])
+        raise PreviewError("the provider produced no audio")
+    return data
+
+
+async def raya_voices(api_key: str) -> list[dict]:
+    """-> every voice Raya serves, with its language and model.
+
+    Read rather than listed for the reason the Soniox catalogue is: a literal
+    goes stale and nobody finds out until a call fails. Raya's voices are UUIDs,
+    which makes a stale local copy worse than useless - there is no name to
+    recognise.
+    """
+    data = await asyncio.to_thread(_raya_blocking, api_key, "/voices", None)
+    if not isinstance(data, dict):
+        raise PreviewError("the voice list did not come back as JSON")
     return data.get("voices") or []

@@ -78,7 +78,11 @@ _RATE = {"soniox": 8000, "sarvam": 8000, "openai": 24000, "kokoro": 24000,
          # Google takes sampleRateHertz, so it is asked for the rate Asterisk
          # will play - the same 8 kHz Soniox and Sarvam are asked for, and
          # three quarters fewer bytes than building 24 kHz to throw away.
-         "google": 8000}
+         "google": 8000,
+         # Raya serves 8 kHz from its own API, so the file Asterisk plays is
+         # rendered at the rate it will play at. Asked for as wav rather than
+         # pcm because Raya's pcm is float32 - see ttspreview.raya.
+         "raya": 8000}
 
 
 class RenderError(Exception):
@@ -184,6 +188,11 @@ async def _synthesise(provider: str, api_key: str, model: str | None,
             data = await ttspreview.gemini(
                 api_key, model=model or "", voice=voice or "", speed=speed,
                 language=language, text=text, response_format="pcm")
+        elif provider == "raya":
+            data = await ttspreview.raya(
+                api_key, model=model or "", voice=voice or "", speed=speed,
+                language=language, text=text, response_format="pcm",
+                sample_rate=want)
         elif provider == "google":
             # LINEAR16 at the rate above. It arrives inside a RIFF container
             # rather than raw, which _strip_header handles because it reads the

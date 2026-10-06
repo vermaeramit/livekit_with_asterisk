@@ -32,8 +32,10 @@ log = logging.getLogger("admin-api")
 # JSON rather than a key. It is stored here anyway, because this table holds an
 # encrypted STRING and JSON is one - it is parsed where it is used. What the
 # shape does change is the console, which cannot ask for 2 KB in a one-line box.
-PROVIDERS = ("openai", "sarvam", "soniox", "openrouter", "gemini", "google")
-Provider = Literal["openai", "sarvam", "soniox", "openrouter", "gemini", "google"]
+PROVIDERS = ("openai", "sarvam", "soniox", "openrouter", "gemini", "google",
+             "raya")
+Provider = Literal["openai", "sarvam", "soniox", "openrouter", "gemini",
+                   "google", "raya"]
 
 # Providers whose credential is a document, not a line. The key page renders a
 # textarea for these and says what belongs in it.
@@ -383,9 +385,35 @@ def _check_google(key: str) -> Validation:
     return Validation(False, f"Google returned {code}")
 
 
+def _check_raya(key: str) -> Validation:
+    """GET /v1/voices - free, read-only, and authenticated.
+
+    The Soniox shape rather than the Sarvam one: there is a real authenticated
+    endpoint that costs nothing, so there is no reason to spend a synthesis on
+    a key check. That matters more here than usual - this account is bought in
+    small amounts of credit.
+    """
+    req = urllib.request.Request(
+        "https://hub.getraya.app/v1/voices",
+        headers={"X-API-Key": key, "User-Agent": "AIVoice-Console/1.0"},
+        method="GET")
+    code, body = _status_of(req)
+    if code == 200:
+        return Validation(True, "key accepted by Raya")
+    if code in (401, 403):
+        return Validation(False, "Raya rejected this key")
+    if code == 402:
+        return Validation(True, "key is valid but the Raya account is out of credit",
+                          no_credits=True)
+    if code == 0:
+        return Validation(False, f"could not reach Raya: {body}")
+    return Validation(False, f"Raya returned {code}")
+
+
 _CHECKS = {"openai": _check_openai, "sarvam": _check_sarvam,
            "soniox": _check_soniox, "openrouter": _check_openrouter,
-           "gemini": _check_gemini, "google": _check_google}
+           "gemini": _check_gemini, "google": _check_google,
+           "raya": _check_raya}
 
 
 async def validate(provider: str, key: str,

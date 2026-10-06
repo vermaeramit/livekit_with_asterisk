@@ -214,7 +214,7 @@ def _media_of(audio: bytes) -> str:
     return "audio/wav" if audio[:4] == b"RIFF" else "audio/mpeg"
 
 
-_HAS_CATALOG = ("soniox", "kokoro", "google")
+_HAS_CATALOG = ("soniox", "kokoro", "google", "raya")
 
 
 def _google_family(name: str) -> str:
@@ -326,7 +326,8 @@ async def tts_preview(campaign_id: int, body: TtsPreviewIn,
              "openai": ttspreview.openai,
              "kokoro": ttspreview.kokoro,
              "gemini": ttspreview.gemini,
-             "google": ttspreview.google}.get(body.provider)
+             "google": ttspreview.google,
+             "raya": ttspreview.raya}.get(body.provider)
     if synth is None:
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
@@ -552,6 +553,42 @@ async def tts_catalog(campaign_id: int, provider: str,
             status.HTTP_409_CONFLICT,
             f"no {provider} key on this campaign or client - add one first, "
             "the voice list comes from the provider")
+
+    if provider == "raya":
+        # Grouped by Raya's own `model` field - "standard" and "m1" - which
+        # unlike Google's is a real parameter that goes in the request, so the
+        # campaign's tts_model means something to the agent AND to costing.
+        #
+        # Filtered to the campaign's language: Raya returns every voice in
+        # every language in one list, and a Hindi campaign offered a Tamil
+        # voice is a campaign that will eventually be saved on one.
+        row = await db.pool().fetchrow(
+            "SELECT language FROM agent_config WHERE campaign_id = $1", campaign_id)
+        language = (row and row["language"]) or "hi-IN"
+        base, _, region = language.partition("-")
+        base = base.lower()
+        want = f"{base}-{region.lower()}" if base == "en" and region else base
+
+        try:
+            voices = await ttspreview.raya_voices(keys[provider])
+        except ttspreview.PreviewError as e:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e))
+
+        by_model: dict[str, list] = {}
+        for v in voices:
+            if not v.get("id") or (v.get("language") or "").lower() != want:
+                continue
+            by_model.setdefault(v.get("model") or "m1", []).append(
+                TtsVoice(id=v["id"], description=v.get("name")))
+
+        out = TtsCatalog(provider=provider, models=[
+            TtsModel(id=m, name=f"{m} ({want})",
+                     voices=sorted(by_model[m], key=lambda x: x.description or x.id))
+            # m1 first: it is what the vendor's own plugin defaults to and what
+            # the probe measured.
+            for m in sorted(by_model, key=lambda m: (m != "m1", m))])
+        _cache[cache_key] = (time.monotonic(), out)
+        return out
 
     if provider == "google":
         # The campaign's own language, because Google serves hundreds of voices

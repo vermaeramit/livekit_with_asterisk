@@ -98,6 +98,7 @@ const TTS_PROVIDERS = [
   { value: 'kokoro', label: 'Our own server' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'google', label: 'Google Cloud' },
+  { value: 'raya', label: 'Raya' },
 ]
 
 // Speech-to-text has one of its own: Qwen3-ASR on our GPU box, which only
@@ -171,6 +172,12 @@ const TTS_MODELS: Record<string, { value: string; label: string }[]> = {
   // Standard — is part of the voice name, so it is chosen by choosing the
   // voice. This single entry exists so the dropdown is not empty and says so.
   google: [{ value: '', label: 'Chosen with the voice — Cloud TTS has no separate model' }],
+  // Fallback only — the real list comes from /v1/voices, grouped by Raya's own
+  // model field. Unlike Google's, this one is a real request parameter.
+  raya: [
+    { value: 'm1', label: 'm1 — measured 342ms to first audio at 8 kHz' },
+    { value: 'standard', label: 'standard' },
+  ],
 }
 
 // bulbul:v3's speakers, taken from the plugin's own rejection message rather
@@ -1024,6 +1031,8 @@ export function CampaignConfig() {
                 hint={
                   value.tts_provider === 'kokoro'
                     ? `${liveVoices.length || 'The'} voices, read from the box, and four mixes at the top. A mix is two voices at once — the numbers are weights, and Custom… takes any pair.`
+                    : value.tts_provider === 'raya' && liveVoices.length
+                      ? `${liveVoices.length} voices Raya serves for this campaign's language. The names are labels — the value saved is the voice id, which is what their API takes.`
                     : value.tts_provider === 'google' && liveVoices.length
                       ? `${liveVoices.length} voices Google serves for this campaign's language. The family in each label — Chirp3-HD, Neural2, Wavenet, Standard — is the model; newest first. Chirp3-HD measured ~304ms to first audio. Leaving this on “Provider default” does not work here — an empty voice sends the call to a Gemini model on Agent Platform instead.`
                     : liveVoices.length
