@@ -1435,6 +1435,38 @@ class TtsVoice(BaseModel):
     description: str | None = None
 
 
+class ComparedRate(BaseModel):
+    """One provider's price, converted to a basis the others can be read against."""
+    provider: str
+    model: str | None
+    # What the provider actually bills: tts_characters, tts_seconds, llm_input…
+    kind: str
+    # The price as entered, in the currency it was entered in - so a reader can
+    # check the converted figure against the provider's own page.
+    price: float
+    unit: str
+    currency: str
+    # The comparable figure. Rupees per minute of speech for tts and stt,
+    # rupees per million tokens for llm. None when it could not be worked out -
+    # a USD price with no exchange rate set, say - because a missing number is
+    # better than an invented one.
+    inr: float | None
+    # Why inr is None, or what had to be assumed to produce it.
+    caveat: str | None = None
+    note: str | None = None
+
+
+class RateComparison(BaseModel):
+    usd_to_inr: float | None
+    # Characters of speech per second, used to put a per-character price and a
+    # per-second price on one axis. Measured, not guessed - see
+    # agent/clause_tokenizer.py.
+    chars_per_second: float
+    tts: list[ComparedRate]
+    stt: list[ComparedRate]
+    llm: list[ComparedRate]
+
+
 class RateImport(BaseModel):
     written: list[str]
     # Models the catalogue does not list. Named rather than dropped: an

@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .. import audit, db
 from ..deps import CurrentUser, require_perm
-from ..schemas import (PlatformSetting, ProviderRateIn, ProviderRateOut,
+from ..schemas import (ComparedRate, PlatformSetting, ProviderRateIn,
+                       ProviderRateOut, RateComparison,
                        RateImport)
 
 log = logging.getLogger("admin-api")
@@ -61,6 +62,101 @@ async def usd_to_inr() -> Decimal | None:
     except (InvalidOperation, ValueError):
         return None
     return rate if rate > 0 else None
+
+
+# Characters of speech per second. Measured on this system's own calls and
+# already load-bearing elsewhere - agent/clause_tokenizer.py splits clauses by
+# it. It is here because without it text-to-speech cannot be compared at all:
+# Sarvam, Google and Raya bill per character while Soniox and Kokoro bill per
+# second, and rupees-per-million-characters against rupees-per-hour is not a
+# comparison, it is two different questions printed side by side.
+#
+# It is an average of Hindi speech at speed 1.0. A campaign running at 1.1 says
+# more characters per second and pays slightly more per minute than this shows.
+CHARS_PER_SECOND = Decimal("12.7")
+
+_LAYER = {"tts_characters": "tts", "tts_seconds": "tts",
+          "stt_seconds": "stt",
+          "llm_input": "llm", "llm_cached": "llm", "llm_output": "llm"}
+
+# What one unit of each kind means in the layer's comparable basis.
+#   tts and stt -> rupees per MINUTE
+#   llm         -> rupees per MILLION tokens
+_PER_MINUTE = {"per_hour": Decimal(1) / 60, "per_minute": Decimal(1)}
+
+
+def _comparable(kind: str, unit: str, price: Decimal) -> tuple[Decimal | None, str | None]:
+    """-> (the figure for this layer's axis, what had to be assumed)."""
+    if kind in ("llm_input", "llm_cached", "llm_output"):
+        if unit == "per_million":
+            return price, None
+        return None, f"priced {unit}, which this page cannot put beside per-million"
+
+    if kind == "tts_characters":
+        if unit != "per_million":
+            return None, f"priced {unit}, not per million characters"
+        # chars in a minute of speech / a million, times the price
+        per_min = price * (CHARS_PER_SECOND * 60) / Decimal(1_000_000)
+        return per_min, f"at {CHARS_PER_SECOND} characters of speech per second"
+
+    # tts_seconds and stt_seconds are billed by time already.
+    factor = _PER_MINUTE.get(unit)
+    if factor is None:
+        return None, f"priced {unit}, which is not a duration"
+    return price * factor, None
+
+
+@router.get("/rates/comparison", response_model=RateComparison)
+async def compare_rates(user: CurrentUser = Depends(superadmin)):
+    """Every stored price, in rupees, on one axis per layer.
+
+    THE POINT IS THE AXIS, not the list. The rates table holds what each
+    provider bills and in the unit it bills it - per million characters, per
+    hour of audio, per million tokens, in dollars or rupees - because a table
+    that reads back differently from the page it was copied from invites
+    somebody to "fix" it. That is right for storing and useless for choosing.
+
+    So this converts, and shows its working: the price as entered stays in the
+    row beside the converted figure, and anything that had to be assumed is
+    named in `caveat` rather than folded silently into the number.
+
+    A price that cannot be converted comes back with inr=None and the reason.
+    A blank is honest; a zero reads exactly like something that is free.
+    """
+    rate = await usd_to_inr()
+    out: dict[str, list[ComparedRate]] = {"tts": [], "stt": [], "llm": []}
+
+    for r in await load_rates():
+        layer = _LAYER.get(r["kind"])
+        if layer is None:
+            continue
+        price = Decimal(str(r["price"]))
+        inr, caveat = _comparable(r["kind"], r["unit"], price)
+
+        if inr is not None and r["currency"] == "USD":
+            if rate is None:
+                # Said rather than converted at a guess. A made-up rupee figure
+                # is acted on exactly as readily as a real one - the same
+                # reasoning as usd_to_inr returning None.
+                inr, caveat = None, "priced in USD and no exchange rate is set"
+            else:
+                inr = inr * rate
+
+        out[layer].append(ComparedRate(
+            provider=r["provider"], model=r["model"], kind=r["kind"],
+            price=float(price), unit=r["unit"], currency=r["currency"],
+            inr=float(round(inr, 4)) if inr is not None else None,
+            caveat=caveat, note=r.get("note")))
+
+    for rows in out.values():
+        # Cheapest first, and anything unpriced last rather than sorted as if
+        # it were free.
+        rows.sort(key=lambda c: (c.inr is None, c.inr or 0, c.provider))
+
+    return RateComparison(
+        usd_to_inr=float(rate) if rate else None,
+        chars_per_second=float(CHARS_PER_SECOND),
+        tts=out["tts"], stt=out["stt"], llm=out["llm"])
 
 
 @router.get("/rates", response_model=list[ProviderRateOut])

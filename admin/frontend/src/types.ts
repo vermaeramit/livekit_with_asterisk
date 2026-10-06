@@ -951,3 +951,28 @@ export interface ProviderRate {
   updated_at: string
   updated_by_email: string | null
 }
+
+
+export type ComparedRate = {
+  provider: string
+  model: string | null
+  kind: string
+  // As entered, in the currency it was entered in — so the converted figure
+  // beside it can be checked against the provider's own page.
+  price: number
+  unit: string
+  currency: 'USD' | 'INR'
+  // Rupees per minute of speech (tts, stt) or per million tokens (llm).
+  // null when it could not be worked out; the reason is in `caveat`.
+  inr: number | null
+  caveat: string | null
+  note: string | null
+}
+
+export type RateComparison = {
+  usd_to_inr: number | null
+  chars_per_second: number
+  tts: ComparedRate[]
+  stt: ComparedRate[]
+  llm: ComparedRate[]
+}

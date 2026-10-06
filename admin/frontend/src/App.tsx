@@ -8,6 +8,7 @@ import { Activity } from '@/pages/Activity'
 import { System } from '@/pages/System'
 import { Diallers } from '@/pages/Diallers'
 import { Rates } from '@/pages/Rates'
+import { PriceComparison } from '@/pages/PriceComparison'
 import { Roles } from '@/pages/Roles'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
@@ -81,6 +82,7 @@ export function App() {
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/gaps" element={<KnowledgeGaps />} />
         <Route path="/rates" element={<Rates />} />
+        <Route path="/rates/comparison" element={<PriceComparison />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/system" element={<System />} />
         <Route path="/diallers" element={<Diallers />} />
