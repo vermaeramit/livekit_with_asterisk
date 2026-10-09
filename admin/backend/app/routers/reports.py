@@ -127,23 +127,12 @@ async def _provider_cost_rows(user: CurrentUser, tenant_id: int | None,
                 return None
             return float(round(v / minutes, 4))
 
-        # Usage per minute does NOT depend on having an exchange rate - it is a
-        # count, not a price. Gating it on have_money would blank three columns
-        # for a reason that has nothing to do with them.
-        def rate_of(v, places: int = 1) -> float | None:
-            if minutes <= 0:
-                return None
-            return float(round(Decimal(str(v)) / minutes, places))
-
         rows.append(ProviderCostRow(
             stt=stt, llm=llm, tts=tts,
             calls=g["calls"], minutes=float(round(minutes, 2)),
             llm_tokens=g["llm_tokens"],
             stt_seconds=float(round(g["stt_seconds"], 1)),
             tts_characters=g["tts_characters"],
-            llm_tokens_per_minute=rate_of(g["llm_tokens"], 0),
-            stt_seconds_per_minute=rate_of(g["stt_seconds"], 1),
-            tts_characters_per_minute=rate_of(g["tts_characters"], 0),
             inr_stt=money(g["inr"]["stt"]), inr_llm=money(g["inr"]["llm"]),
             inr_tts=money(g["inr"]["tts"]), inr_total=money(total),
             inr_stt_per_minute=per_minute(g["inr"]["stt"]),
@@ -236,7 +225,6 @@ async def provider_cost_csv(
     w = csv.writer(buf)
     w.writerow(["STT", "LLM", "TTS", "Calls", "Minutes",
                 "LLM tokens", "STT seconds", "TTS characters",
-                "LLM tokens/min", "STT seconds/min", "TTS characters/min",
                 "STT INR", "LLM INR", "TTS INR", "Total INR",
                 "STT INR/min", "LLM INR/min", "TTS INR/min", "Total INR/min",
                 "Priced calls", "Missing rates"])
@@ -249,8 +237,6 @@ async def provider_cost_csv(
     for r in report.rows:
         w.writerow([r.stt or "", r.llm or "", r.tts or "", r.calls, r.minutes,
                     r.llm_tokens, r.stt_seconds, r.tts_characters,
-                    cell(r.llm_tokens_per_minute), cell(r.stt_seconds_per_minute),
-                    cell(r.tts_characters_per_minute),
                     cell(r.inr_stt), cell(r.inr_llm), cell(r.inr_tts),
                     cell(r.inr_total),
                     cell(r.inr_stt_per_minute), cell(r.inr_llm_per_minute),

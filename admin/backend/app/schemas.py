@@ -1485,19 +1485,6 @@ class ProviderCostRow(BaseModel):
     stt_seconds: float
     tts_characters: int
 
-    # The same usage over the same minutes. Worth having beside the
-    # totals because it is the shape of a call rather than the size of a
-    # window: tokens per minute says how much the model writes, characters
-    # per minute how much the agent talks, and seconds of audio per minute
-    # what share of the call is being listened to - which should sit just
-    # under sixty, and says something is wrong if it does not.
-    #
-    # None when the rows have no duration to divide by. Zero would read as
-    # "nothing was used", which is a different thing.
-    llm_tokens_per_minute: float | None
-    stt_seconds_per_minute: float | None
-    tts_characters_per_minute: float | None
-
     # None rather than 0 when nothing in the group could be priced. A confident
     # zero reads as "free", and one provider here really is.
     #
