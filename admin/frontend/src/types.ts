@@ -202,6 +202,9 @@ export interface CallDetail extends CallListItem {
   // Absent when the viewer may not see usage.
   usage?: CallUsage | null
   cost?: CallCost | null
+  // Absent when the campaign had no postback configured when the call
+  // ended. Absence is the answer, not a gap.
+  postback?: CallPostback | null
   turns: Turn[]
   tools: ToolInvocation[]
 }
@@ -1019,4 +1022,19 @@ export interface ProviderCostReport {
   usd_to_inr: number | null
   rows: ProviderCostRow[]
   caveats: string[]
+}
+
+
+export interface CallPostback {
+  // pending | sent | failed | skipped. `skipped` is not a failure: extraction
+  // found nothing worth sending.
+  status: string
+  attempts: number
+  last_status_code?: number | null
+  last_error?: string | null
+  created_at?: string | null
+  sent_at?: string | null
+  next_attempt_at?: string | null
+  // Exactly what went over the wire, kept as it was sent.
+  payload?: Record<string, unknown> | unknown[] | null
 }

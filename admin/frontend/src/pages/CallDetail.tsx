@@ -23,7 +23,7 @@ import { LanguageBreakdown } from '@/components/SpokenLanguages'
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, Skeleton } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import { cn, formatDateTime, formatDuration, formatMs, formatNumber, formatPercent, latencyTone } from '@/lib/utils'
-import type { CallCost, CallDetail as CallDetailType, KbChunk, ToolInvocation, Turn } from '@/types'
+import type { CallCost, CallDetail as CallDetailType, CallPostback, KbChunk, ToolInvocation, Turn } from '@/types'
 import { EndReasonBadge } from './Calls'
 
 function Stat({
@@ -905,6 +905,7 @@ export function CallDetail() {
       )}
 
       {c.cost && <CostCard cost={c.cost} />}
+      {c.postback && <PostbackCard pb={c.postback} />}
     </div>
   )
 }
@@ -919,6 +920,101 @@ export function CallDetail() {
  * The one thing it must never do is show 0.00 for "we do not know", which is
  * how a costing page loses the reader's trust for good.
  */
+/**
+ * What was sent to the client's API about this call.
+ *
+ * Shown only when a postback row exists, which is only when the campaign had
+ * "Send to API" on at the moment the call ended. Turning it on today does not
+ * invent one for yesterday's calls, so an absent card is the answer rather
+ * than a gap.
+ *
+ * The payload is printed as it was sent. A transcript can be in there - see
+ * postback_include_transcript - so long values are clamped and the whole thing
+ * is left in a details block underneath, because "what exactly did they
+ * receive" is the question this card exists for.
+ */
+function PostbackCard({ pb }: { pb: CallPostback }) {
+  const tone =
+    pb.status === 'sent' ? 'text-success'
+    : pb.status === 'failed' ? 'text-destructive'
+    : pb.status === 'pending' ? 'text-warning'
+    : 'text-muted-foreground'
+
+  const fields =
+    pb.payload && !Array.isArray(pb.payload) && typeof pb.payload === 'object'
+      ? Object.entries(pb.payload as Record<string, unknown>)
+      : []
+
+  const show = (v: unknown) => {
+    const t = typeof v === 'string' ? v : JSON.stringify(v)
+    if (t === undefined || t === null) return '—'
+    // Clamped, with the real length named. A truncation that hides how much it
+    // hid invites somebody to believe they have read the whole field.
+    return t.length > 300 ? `${t.slice(0, 300)}… (${t.length} characters)` : t
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sent to API</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-2 text-sm">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className={cn('font-medium capitalize', tone)}>{pb.status}</span>
+          <span className="text-2xs text-muted-foreground">
+            {pb.sent_at
+              ? `delivered ${formatDateTime(pb.sent_at)}`
+              : pb.next_attempt_at
+                ? `next attempt ${formatDateTime(pb.next_attempt_at)}`
+                : 'not delivered'}
+            {pb.attempts > 0 && ` · ${pb.attempts} attempt${pb.attempts === 1 ? '' : 's'}`}
+            {pb.last_status_code != null && ` · HTTP ${pb.last_status_code}`}
+          </span>
+        </div>
+
+        {pb.last_error && (
+          <p className="text-2xs leading-relaxed text-destructive">
+            {pb.last_error}
+          </p>
+        )}
+
+        {pb.status === 'skipped' && (
+          <p className="text-2xs leading-relaxed text-muted-foreground">
+            Nothing was sent because extraction found nothing worth sending.
+            That is not a failure.
+          </p>
+        )}
+
+        {fields.length > 0 ? (
+          <div className="divide-y divide-border/40">
+            {fields.map(([k, v]) => (
+              <div key={k} className="flex gap-4 py-1.5">
+                <span className="w-44 shrink-0 text-muted-foreground">{k}</span>
+                <span className="min-w-0 flex-1 break-words">{show(v)}</span>
+              </div>
+            ))}
+          </div>
+        ) : pb.payload ? (
+          <pre className="overflow-x-auto rounded bg-muted/40 p-2 text-2xs">
+            {JSON.stringify(pb.payload, null, 2)}
+          </pre>
+        ) : null}
+
+        {fields.length > 0 && (
+          <details className="text-2xs">
+            <summary className="cursor-pointer text-muted-foreground">
+              The exact body that was sent
+            </summary>
+            <pre className="mt-1 overflow-x-auto rounded bg-muted/40 p-2">
+              {JSON.stringify(pb.payload, null, 2)}
+            </pre>
+          </details>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 function CostCard({ cost }: { cost: CallCost }) {
   const money = (usd: number, inr?: number | null) =>
     cost.inr && inr != null

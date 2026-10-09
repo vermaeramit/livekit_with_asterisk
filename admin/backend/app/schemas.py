@@ -1308,6 +1308,33 @@ class PlatformSetting(BaseModel):
     value: Decimal = Field(gt=0, max_digits=16, decimal_places=6)
 
 
+class CallPostback(BaseModel):
+    """What was sent to the client's API about this call, and how it went.
+
+    Only present when a postback row exists, which is only when the campaign
+    had "Send to API" on at the moment the call ended. Turning it on later does
+    not invent one for calls that already happened, and the page shows nothing
+    rather than implying it did.
+
+    The payload is kept exactly as it was sent - see migration 020. "What did
+    we tell them about this call" is asked months later, and re-deriving it
+    from a transcript is not an answer.
+    """
+    # pending | sent | failed | skipped. `skipped` is not a failure: extraction
+    # found nothing worth sending.
+    status: str
+    attempts: int
+    last_status_code: int | None = None
+    # The response body, truncated. A 422 naming the field it disliked is the
+    # difference between a fix and a guess.
+    last_error: str | None = None
+    created_at: datetime | None = None
+    sent_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    # Exactly what went over the wire.
+    payload: dict | list | None = None
+
+
 class CallCost(BaseModel):
     """What a call cost, and what could not be priced.
 
@@ -1726,6 +1753,8 @@ class CallDetail(CallListItem):
     # What that usage cost, at today's rates. See costing.py for why it is
     # calculated on the way out rather than stamped on the call.
     cost: CallCost | None = None
+    # None when no postback row exists - see CallPostback.
+    postback: CallPostback | None = None
     turns: list[TurnOut]
     tools: list[ToolInvocationOut] = []
 

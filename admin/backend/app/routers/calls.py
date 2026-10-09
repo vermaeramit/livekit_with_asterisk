@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from .. import costing, db
 from . import rates
 from ..deps import CurrentUser, active_user, require_perm, tenant_scope
-from ..schemas import (CallCost, CallDetail, CallListItem, CallListResponse, CallUsage,
-                       ToolInvocationOut, TurnOut)
+from ..schemas import (CallCost, CallDetail, CallListItem, CallListResponse,
+                       CallPostback, CallUsage, ToolInvocationOut, TurnOut)
 
 router = APIRouter(prefix="/calls", tags=["calls"])
 
@@ -174,6 +174,19 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
              FROM tool_invocations WHERE call_id = $1 ORDER BY created_at, id""",
         call_id)
 
+    # What was sent to the client's API about this call. A row exists only if
+    # the campaign had "Send to API" on when the call ended, so its absence is
+    # the answer rather than a gap - turning the feature on today does not make
+    # one appear against yesterday's calls.
+    #
+    # Read under calls.read with the rest of the page: the payload is derived
+    # from the transcript, which is already on this screen, so gating it apart
+    # would guard nothing while suggesting it guards something.
+    pb = await db.pool().fetchrow(
+        """SELECT status, attempts, last_status_code, last_error,
+                  created_at, sent_at, next_attempt_at, payload
+             FROM call_postbacks WHERE call_id = $1""", call_id)
+
     d = _decoded(row)
     # asyncpg returns JSONB as text unless a codec is registered, and none is.
     if isinstance(d.get("dialer_context"), str):
@@ -224,8 +237,17 @@ async def get_call(call_id: int, user: CurrentUser = Depends(active_user)):
             t["arguments"] = json.loads(t["arguments"])
         return ToolInvocationOut(**t)
 
+    postback = None
+    if pb is not None:
+        pbd = dict(pb)
+        # JSONB arrives as text here too - no codec is registered on the pool.
+        if isinstance(pbd.get("payload"), str):
+            pbd["payload"] = json.loads(pbd["payload"])
+        postback = CallPostback(**pbd)
+
     return CallDetail(**d, usage=usage,
                       cost=CallCost(**cost) if cost else None,
+                      postback=postback,
                       # Reported as absent to anyone who may not play it.
                       # Otherwise the console offers a player that answers 403,
                       # which reads as a broken recording rather than as a
