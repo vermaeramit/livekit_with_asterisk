@@ -8,6 +8,8 @@ export type Role = 'superadmin' | 'tenant_admin' | 'agent' | 'viewer'
  * page never offers one this build does not enforce.
  */
 export type Permission =
+  | 'reports.read'
+  | 'reports.export'
   | 'calls.read'
   | 'calls.recording'
   | 'analytics.read'
@@ -975,4 +977,31 @@ export type RateComparison = {
   tts: ComparedRate[]
   stt: ComparedRate[]
   llm: ComparedRate[]
+}
+
+
+export interface ProviderCostRow {
+  // As recorded on the call. A comma means a fallback served part of it.
+  stt: string | null
+  llm: string | null
+  tts: string | null
+  calls: number
+  minutes: number
+  llm_tokens: number
+  stt_seconds: number
+  tts_characters: number
+  // null, not 0, when nothing in the group could be priced — one provider
+  // here really is free and the two must not look the same.
+  inr_total: number | null
+  inr_per_minute: number | null
+  priced_calls: number
+  missing_rates: string[]
+}
+
+export interface ProviderCostReport {
+  date_from: string
+  date_to: string
+  usd_to_inr: number | null
+  rows: ProviderCostRow[]
+  caveats: string[]
 }

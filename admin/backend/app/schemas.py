@@ -1467,6 +1467,45 @@ class RateComparison(BaseModel):
     llm: list[ComparedRate]
 
 
+class ProviderCostRow(BaseModel):
+    """One combination of providers, over the chosen window."""
+    # As recorded on the call. A comma means a fallback fired mid-call and both
+    # served part of it; kept whole rather than collapsed to the primary,
+    # because that really was a different thing happening.
+    stt: str | None
+    llm: str | None
+    tts: str | None
+
+    calls: int
+    minutes: float
+
+    # The usage these calls actually consumed, which is what the price is
+    # worked out from.
+    llm_tokens: int
+    stt_seconds: float
+    tts_characters: int
+
+    # None rather than 0 when nothing in the group could be priced. A confident
+    # zero reads as "free", and one provider here really is.
+    inr_total: float | None
+    inr_per_minute: float | None
+
+    # How many of this row's calls could be priced at all. When it is short of
+    # `calls`, the total is short too - said rather than hidden.
+    priced_calls: int
+    # Named, not counted: "add a rate for google - tts_characters" is a job.
+    missing_rates: list[str]
+
+
+class ProviderCostReport(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    usd_to_inr: float | None
+    rows: list[ProviderCostRow]
+    # Everything the figures depend on that is not in a row.
+    caveats: list[str]
+
+
 class RateImport(BaseModel):
     written: list[str]
     # Models the catalogue does not list. Named rather than dropped: an

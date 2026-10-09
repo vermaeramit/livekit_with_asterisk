@@ -489,3 +489,26 @@ export function buildQuery(params: Record<string, unknown>): string {
   const s = q.toString()
   return s ? `?${s}` : ''
 }
+
+
+/**
+ * Fetch a file with the session's token and hand it to the browser to save.
+ *
+ * A plain <a href> cannot do this: the API takes a bearer token and an anchor
+ * sends none, so the link would come back 401 as an HTML error page saved as a
+ * .csv. The blob URL is revoked immediately - the browser has already copied
+ * the bytes by the time the click returns.
+ */
+export async function download(path: string, filename?: string): Promise<void> {
+  const blob = await authedBlob(path)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  // The server sends a Content-Disposition name; this is the fallback for
+  // browsers that ignore it on a blob URL, which is most of them.
+  a.download = filename || path.split('/').pop()?.split('?')[0] || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}

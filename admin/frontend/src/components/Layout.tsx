@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import {
-  Bell, BookOpenCheck, Building2, ShieldCheck, Scale, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, ListTree, Server, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Stethoscope, Sun, Users2, X,
+  Bell, BookOpenCheck, Building2, ShieldCheck, Scale, Wallet, ChevronDown, Database, KeyRound, LayoutDashboard, ListTree, Server, LogOut, Megaphone, Menu, Moon, PhoneCall, PhoneForwarded, Radio, Receipt, Stethoscope, Sun, Users2, X,
 } from 'lucide-react'
 import { TopProgress } from '@/components/TopProgress'
 import { useAuth } from '@/lib/auth'
@@ -49,6 +49,13 @@ const NAV: NavItem[] = [
   { kind: 'link', to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts', needs: ['alerts.read'] },
   { kind: 'link', to: '/activity', label: 'Activity', icon: ListTree, needs: ['campaign.write'] },
   { kind: 'link', to: '/gaps', label: 'Knowledge gaps', icon: BookOpenCheck, badge: 'gaps', needs: ['gaps.read'] },
+  // Its own section because reports will grow, and each one is permission
+  // gated in its own right - a report showing money needs cost.read as well,
+  // so a role that cannot see cost never sees the row. Past six or so of these
+  // the section should collapse rather than keep growing down the sidebar.
+  { kind: 'section', label: 'Reports' },
+  { kind: 'link', to: '/reports/provider-cost', label: 'Cost by provider', icon: Receipt,
+    needs: ['reports.read', 'cost.read', 'usage.read'] },
   { kind: 'section', label: 'Manage' },
   { kind: 'link', to: '/campaigns', label: 'Campaigns', icon: Megaphone, needs: ['campaign.write'] },
   { kind: 'link', to: '/users', label: 'Users', icon: Users2, needs: ['users.manage'] },
@@ -133,9 +140,15 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   })
 
   // A section heading with nothing under it is just a stray label.
+  //
+  // "Under it" means before the NEXT heading, not anywhere below. With one
+  // section that distinction never mattered; with two, an empty Reports would
+  // have been kept alive by Manage's links further down.
   const pruned = visible.filter((item, i) => {
     if (item.kind === 'link') return true
-    return visible.slice(i + 1).some((n) => n.kind === 'link')
+    const until = visible.slice(i + 1)
+    const next = until.findIndex((n) => n.kind === 'section')
+    return (next === -1 ? until : until.slice(0, next)).some((n) => n.kind === 'link')
   })
 
   return (

@@ -12,7 +12,7 @@ from . import alerting, db, postback
 from .config import settings
 from .routers import (activity, agent_config, alerts, analytics, auth, calls,
                       diallers, dialler_api, gaps,
-                      rates, roles,
+                      rates, reports, roles,
                       campaigns, chat, kb, kb_sources, live,
                       provider_keys, system, tenants,
                       tools, users, widget)
@@ -93,6 +93,7 @@ app.include_router(live.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(gaps.router, prefix="/api")
 app.include_router(rates.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(diallers.router, prefix="/api")
 app.include_router(kb.router, prefix="/api")

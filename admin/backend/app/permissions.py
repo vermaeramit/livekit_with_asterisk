@@ -53,6 +53,16 @@ PERMISSIONS: dict[str, tuple[str, str, str]] = {
         "Calls", "Knowledge gaps",
         "Questions the agent could not answer, and marking them handled."),
 
+    "reports.read": (
+        "Reports", "Reports",
+        "Open the Reports section. Each report also needs whatever its own "
+        "columns need - a report showing cost needs the cost permission too, "
+        "so reports cannot become a way around the rest of this list."),
+    "reports.export": (
+        "Reports", "Download reports",
+        "Take a report away as a file. Separate from reading one on purpose: "
+        "a figure on screen stays here, a download does not."),
+
     # ---- a client's own configuration ----
     "campaign.write": (
         "Campaigns", "Edit campaigns",

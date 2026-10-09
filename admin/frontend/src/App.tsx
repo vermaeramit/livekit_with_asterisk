@@ -9,6 +9,7 @@ import { System } from '@/pages/System'
 import { Diallers } from '@/pages/Diallers'
 import { Rates } from '@/pages/Rates'
 import { PriceComparison } from '@/pages/PriceComparison'
+import { ProviderCost } from '@/pages/reports/ProviderCost'
 import { Roles } from '@/pages/Roles'
 import { Calls } from '@/pages/Calls'
 import { CallDetail } from '@/pages/CallDetail'
@@ -83,6 +84,7 @@ export function App() {
         <Route path="/gaps" element={<KnowledgeGaps />} />
         <Route path="/rates" element={<Rates />} />
         <Route path="/rates/comparison" element={<PriceComparison />} />
+        <Route path="/reports/provider-cost" element={<ProviderCost />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/system" element={<System />} />
         <Route path="/diallers" element={<Diallers />} />
