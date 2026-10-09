@@ -942,16 +942,30 @@ function CostCard({ cost }: { cost: CallCost }) {
           </p>
         ) : (
           <>
+            {/* Each leg carries its own per-minute as well as its total. The
+                total per minute says what the call costs; only the split says
+                which third to go and change, and it is usually not the one
+                people guess. The three add up to the figure below them. */}
             {(
               [
-                ['LLM', cost.usd.llm, cost.inr?.llm],
-                ['Text to speech', cost.usd.tts, cost.inr?.tts],
-                ['Speech to text', cost.usd.stt, cost.inr?.stt],
+                ['LLM', cost.usd.llm, cost.inr?.llm,
+                 cost.usd_per_minute_legs?.llm, cost.inr_per_minute_legs?.llm],
+                ['Text to speech', cost.usd.tts, cost.inr?.tts,
+                 cost.usd_per_minute_legs?.tts, cost.inr_per_minute_legs?.tts],
+                ['Speech to text', cost.usd.stt, cost.inr?.stt,
+                 cost.usd_per_minute_legs?.stt, cost.inr_per_minute_legs?.stt],
               ] as const
-            ).map(([label, usd, inr]) => (
+            ).map(([label, usd, inr, perMinUsd, perMinInr]) => (
               <div key={label} className="flex justify-between gap-4 border-b border-border/40 pb-1.5">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="tnum font-medium">{money(usd, inr)}</span>
+                <span className="text-right">
+                  <span className="tnum block font-medium">{money(usd, inr)}</span>
+                  {perMinUsd != null && (
+                    <span className="tnum block text-2xs text-muted-foreground">
+                      {money(perMinUsd, perMinInr ?? null)} / min
+                    </span>
+                  )}
+                </span>
               </div>
             ))}
             <div className="flex justify-between gap-4 border-b border-border/40 pb-1.5 pt-0.5">

@@ -887,6 +887,10 @@ export interface CallCost {
   usd_total: number
   // Per minute of call. null when there is no duration to divide by.
   usd_per_minute?: number | null
+  // The same division, per leg — the three add up to usd_per_minute. A total
+  // per minute does not say which of the three to go and change.
+  usd_per_minute_legs?: { llm: number | null; tts: number | null; stt: number | null }
+  inr_per_minute_legs?: { llm: number | null; tts: number | null; stt: number | null } | null
   inr?: { llm: number; tts: number; stt: number } | null
   inr_total?: number | null
   inr_per_minute?: number | null

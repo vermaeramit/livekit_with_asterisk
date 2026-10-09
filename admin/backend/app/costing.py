@@ -213,10 +213,22 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
     minutes = Decimal(str(call.get("duration_ms") or 0)) / Decimal(60_000)
     per_min = (total / minutes) if minutes > 0 and priced_any else None
 
+    # The same division, per leg. "This call cost Rs 1.55 a minute" does not
+    # say which of the three to go and change, and the answer is usually not
+    # the one people guess - on today's calls the voice is three times the
+    # recogniser. Divided by the same minutes as the total, so the three add
+    # up to it.
+    per_min_legs = ({k: v / minutes for k, v in legs.items()}
+                    if minutes > 0 and priced_any else
+                    {k: None for k in legs})
+
     out = {
         "usd": {k: float(round(v, 6)) for k, v in legs.items()},
         "usd_total": float(round(total, 6)),
         "usd_per_minute": float(round(per_min, 6)) if per_min is not None else None,
+        "usd_per_minute_legs": {
+            k: float(round(v, 6)) if v is not None else None
+            for k, v in per_min_legs.items()},
         # Named, not counted. "add a rate for soniox · stt_seconds" is a job;
         # "3 rates missing" is a puzzle.
         "missing_rates": sorted(set(missing)),
@@ -231,6 +243,9 @@ def price_call(call: dict, rates: list[dict], usd_to_inr: Decimal | None) -> dic
     }
     if usd_to_inr:
         out["inr"] = {k: float(round(v * usd_to_inr, 4)) for k, v in legs.items()}
+        out["inr_per_minute_legs"] = {
+            k: float(round(v * usd_to_inr, 4)) if v is not None else None
+            for k, v in per_min_legs.items()}
         out["inr_total"] = float(round(total * usd_to_inr, 4))
         out["inr_per_minute"] = (float(round(per_min * usd_to_inr, 4))
                                  if per_min is not None else None)
