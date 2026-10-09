@@ -1005,6 +1005,8 @@ export interface ProviderCostRow {
   inr_per_minute: number | null
   priced_calls: number
   missing_rates: string[]
+  // False when the row consumed nothing at all — not the same as unpriced.
+  any_usage: boolean
 }
 
 export interface ProviderCostReport {

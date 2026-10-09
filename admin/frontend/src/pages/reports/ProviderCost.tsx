@@ -211,11 +211,20 @@ export function ProviderCost() {
                           short — no rate for {r.missing_rates.join(', ')}
                         </div>
                       )}
-                      {r.priced_calls < r.calls && (
+                      {/* "0 of 23 calls priced" read like a missing rate when
+                          it was nothing of the kind: those calls ended after
+                          the greeting, which plays from a cached file, so no
+                          provider was ever asked for anything. Say that
+                          instead - there is nothing to go and fix. */}
+                      {!r.any_usage ? (
+                        <div className="text-2xs font-normal text-muted-foreground">
+                          no usage — ended after the greeting
+                        </div>
+                      ) : r.priced_calls < r.calls ? (
                         <div className="text-2xs font-normal text-muted-foreground">
                           {r.priced_calls} of {r.calls} calls priced
                         </div>
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 ))}

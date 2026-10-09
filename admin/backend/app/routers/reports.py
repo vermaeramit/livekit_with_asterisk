@@ -141,6 +141,8 @@ async def _provider_cost_rows(user: CurrentUser, tenant_id: int | None,
             inr_per_minute=per_minute(total),
             priced_calls=g["priced"],
             missing_rates=sorted(g["missing"]),
+            any_usage=bool(g["llm_tokens"] or g["tts_characters"]
+                           or g["stt_seconds"] > 0),
         ))
 
     # Dearest per minute first - that is the row somebody opened this to find.
@@ -163,10 +165,19 @@ async def _provider_cost_rows(user: CurrentUser, tenant_id: int | None,
             "Some legs had no rate. Those rows are short by whatever those legs "
             "cost - the missing rates are named on each row, and a row is only "
             "complete when that column is empty.")
-    if any(r.priced_calls < r.calls for r in rows):
+    # Only rows that actually used something. A row with no usage at all is
+    # not an unpriced row - there is nothing in it to price - and warning about
+    # it sends somebody to look for a rate that is not missing.
+    if any(r.priced_calls < r.calls and r.any_usage for r in rows):
         caveats.append(
             "Some calls could not be priced at all and contribute nothing to "
             "their row's total, though their minutes are still counted.")
+    if any(not r.any_usage for r in rows):
+        caveats.append(
+            "A row showing no usage is calls that ended before any provider "
+            "was asked for anything - usually after the greeting, which plays "
+            "from a cached file. They cost nothing and are shown so the call "
+            "count adds up.")
     if any("," in (r.llm or "") or "," in (r.tts or "") or "," in (r.stt or "")
            for r in rows):
         caveats.append(

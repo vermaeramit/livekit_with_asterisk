@@ -1506,6 +1506,12 @@ class ProviderCostRow(BaseModel):
     priced_calls: int
     # Named, not counted: "add a rate for google - tts_characters" is a job.
     missing_rates: list[str]
+    # No tokens, no characters, no audio: calls that ended before any
+    # provider was asked for anything. Held apart from "could not be
+    # priced", because nothing was consumed and nothing is missing - these
+    # are usually calls that stopped after the greeting, which plays from a
+    # cached file and costs nothing to replay.
+    any_usage: bool
 
 
 class ProviderCostReport(BaseModel):
