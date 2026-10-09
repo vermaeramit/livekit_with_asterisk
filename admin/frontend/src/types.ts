@@ -990,6 +990,11 @@ export interface ProviderCostRow {
   llm_tokens: number
   stt_seconds: number
   tts_characters: number
+  // The same usage over the same minutes. None when there is no duration
+  // to divide by — zero would read as 'nothing was used'.
+  llm_tokens_per_minute: number | null
+  stt_seconds_per_minute: number | null
+  tts_characters_per_minute: number | null
   // null, not 0, when nothing in the group could be priced — one provider
   // here really is free and the two must not look the same.
   //

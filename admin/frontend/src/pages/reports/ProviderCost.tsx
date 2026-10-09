@@ -33,6 +33,31 @@ const rupees = (n: number | null) =>
 
 const num = (n: number) => n.toLocaleString('en-IN')
 
+/**
+ * A usage figure: the rate per minute on top, the window's total underneath.
+ *
+ * The same shape as the money cells on purpose. Per minute is the shape of a
+ * call and compares between rows; the total is the size of the window and does
+ * not.
+ */
+function Usage({ perMinute, total, suffix = '' }: {
+  perMinute: number | null
+  total: number
+  suffix?: string
+}) {
+  return (
+    <td className="px-3 py-2 text-right">
+      <div className="tabular-nums">
+        {perMinute === null ? '—' : num(perMinute)}{suffix}
+        <span className="ml-1 text-2xs text-muted-foreground">/min</span>
+      </div>
+      <div className="text-2xs text-muted-foreground tabular-nums">
+        {num(total)}{suffix} total
+      </div>
+    </td>
+  )
+}
+
 /** One leg's price: the rate per minute, and what it came to over the window. */
 function Money({ perMinute, total }: { perMinute: number | null; total: number | null }) {
   return (
@@ -194,9 +219,9 @@ export function ProviderCost() {
                     <td className="px-3 py-2">{r.tts ?? '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{num(r.calls)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.minutes.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{num(r.llm_tokens)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.stt_seconds.toFixed(0)}s</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{num(r.tts_characters)}</td>
+                    <Usage perMinute={r.llm_tokens_per_minute} total={r.llm_tokens} />
+                    <Usage perMinute={r.stt_seconds_per_minute} total={Math.round(r.stt_seconds)} suffix="s" />
+                    <Usage perMinute={r.tts_characters_per_minute} total={r.tts_characters} />
                     <Money perMinute={r.inr_stt_per_minute} total={r.inr_stt} />
                     <Money perMinute={r.inr_llm_per_minute} total={r.inr_llm} />
                     <Money perMinute={r.inr_tts_per_minute} total={r.inr_tts} />
