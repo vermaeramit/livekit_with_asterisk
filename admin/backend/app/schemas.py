@@ -1318,7 +1318,15 @@ class CallCost(BaseModel):
     usd_total: float
     # Per minute of call. None when the call has no duration to divide by.
     usd_per_minute: float | None = None
+    # The same division, per leg - the three add up to usd_per_minute. A total
+    # per minute says what the call cost; only the split says which third to go
+    # and change.
+    #
+    # A value inside is None, not 0, when nothing could be priced: a confident
+    # zero reads as free, and one provider here is.
+    usd_per_minute_legs: dict[str, float | None] | None = None
     inr: dict[str, float] | None = None
+    inr_per_minute_legs: dict[str, float | None] | None = None
     inr_total: float | None = None
     inr_per_minute: float | None = None
     usd_to_inr: float | None = None
