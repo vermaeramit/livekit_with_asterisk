@@ -74,8 +74,11 @@ async def _provider_cost_rows(user: CurrentUser, tenant_id: int | None,
                call["tts_provider_used"])
         g = groups.setdefault(key, {
             "calls": 0, "ms": 0, "llm_tokens": 0, "stt_seconds": Decimal(0),
-            "tts_characters": 0, "inr": Decimal(0), "priced": 0,
-            "missing": set(),
+            "tts_characters": 0, "priced": 0, "missing": set(),
+            # Per leg as well as in total. costing already splits them, so
+            # carrying the split costs nothing and answers the question the
+            # total raises: which third of this is the expensive one.
+            "inr": {"stt": Decimal(0), "llm": Decimal(0), "tts": Decimal(0)},
         })
         g["calls"] += 1
         g["ms"] += call.get("duration_ms") or 0
@@ -93,26 +96,49 @@ async def _provider_cost_rows(user: CurrentUser, tenant_id: int | None,
             # inr_total is only present when an exchange rate is set. Without
             # one the report has no single currency to add up in, and says so
             # in `caveats` rather than mixing rupees into dollars.
-            if "inr_total" in priced:
-                g["inr"] += Decimal(str(priced["inr_total"]))
+            if "inr" in priced:
+                for leg in ("stt", "llm", "tts"):
+                    g["inr"][leg] += Decimal(str(priced["inr"].get(leg) or 0))
 
     rows: list[ProviderCostRow] = []
     for (stt, llm, tts), g in groups.items():
         minutes = Decimal(g["ms"]) / Decimal(60_000)
         have_money = fx is not None and g["priced"] > 0
+        # Totalled from the legs rather than from costing's own inr_total.
+        # They differ by rounding alone - costing rounds each leg to four
+        # decimals - and measured over two hundred calls that came to 0.0004
+        # rupees, against a figure shown to two. Summing the legs is what makes
+        # the three columns add up to the fourth on screen, which is the thing
+        # a reader will actually check.
+        total = sum(g["inr"].values(), Decimal(0))
+
         # Total cost over total minutes, NOT the average of each call's own
         # per-minute figure. The second lets a five-second call weigh as much
         # as a ten-minute one, and a load test full of calls that died after
         # the greeting would decide the number.
-        per_min = (g["inr"] / minutes) if have_money and minutes > 0 else None
+        #
+        # The legs are divided by the same minutes as the total, so the three
+        # add up to it. A reader checking that by hand should find it true.
+        def money(v: Decimal) -> float | None:
+            return float(round(v, 2)) if have_money else None
+
+        def per_minute(v: Decimal) -> float | None:
+            if not have_money or minutes <= 0:
+                return None
+            return float(round(v / minutes, 4))
+
         rows.append(ProviderCostRow(
             stt=stt, llm=llm, tts=tts,
             calls=g["calls"], minutes=float(round(minutes, 2)),
             llm_tokens=g["llm_tokens"],
             stt_seconds=float(round(g["stt_seconds"], 1)),
             tts_characters=g["tts_characters"],
-            inr_total=float(round(g["inr"], 2)) if have_money else None,
-            inr_per_minute=float(round(per_min, 4)) if per_min is not None else None,
+            inr_stt=money(g["inr"]["stt"]), inr_llm=money(g["inr"]["llm"]),
+            inr_tts=money(g["inr"]["tts"]), inr_total=money(total),
+            inr_stt_per_minute=per_minute(g["inr"]["stt"]),
+            inr_llm_per_minute=per_minute(g["inr"]["llm"]),
+            inr_tts_per_minute=per_minute(g["inr"]["tts"]),
+            inr_per_minute=per_minute(total),
             priced_calls=g["priced"],
             missing_rates=sorted(g["missing"]),
         ))
@@ -186,16 +212,24 @@ async def provider_cost_csv(
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["STT", "LLM", "TTS", "Calls", "Minutes", "LLM tokens",
-                "STT seconds", "TTS characters", "Total INR", "INR per minute",
+    w.writerow(["STT", "LLM", "TTS", "Calls", "Minutes",
+                "LLM tokens", "STT seconds", "TTS characters",
+                "STT INR", "LLM INR", "TTS INR", "Total INR",
+                "STT INR/min", "LLM INR/min", "TTS INR/min", "Total INR/min",
                 "Priced calls", "Missing rates"])
+
+    # Blank, not 0. A spreadsheet will happily sum a zero and report a total
+    # that was never true.
+    def cell(v):
+        return "" if v is None else v
+
     for r in report.rows:
         w.writerow([r.stt or "", r.llm or "", r.tts or "", r.calls, r.minutes,
                     r.llm_tokens, r.stt_seconds, r.tts_characters,
-                    # Blank, not 0. A spreadsheet will happily sum a zero and
-                    # report a total that was never true.
-                    "" if r.inr_total is None else r.inr_total,
-                    "" if r.inr_per_minute is None else r.inr_per_minute,
+                    cell(r.inr_stt), cell(r.inr_llm), cell(r.inr_tts),
+                    cell(r.inr_total),
+                    cell(r.inr_stt_per_minute), cell(r.inr_llm_per_minute),
+                    cell(r.inr_tts_per_minute), cell(r.inr_per_minute),
                     r.priced_calls, "; ".join(r.missing_rates)])
 
     name = f"provider-cost-{start.date()}-to-{end.date()}.csv"

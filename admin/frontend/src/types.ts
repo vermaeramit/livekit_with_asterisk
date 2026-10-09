@@ -992,7 +992,16 @@ export interface ProviderCostRow {
   tts_characters: number
   // null, not 0, when nothing in the group could be priced — one provider
   // here really is free and the two must not look the same.
+  //
+  // Split by leg as well as totalled: "Rs 0.62 a minute" does not say which
+  // third to go and change. The three add up to the total.
+  inr_stt: number | null
+  inr_llm: number | null
+  inr_tts: number | null
   inr_total: number | null
+  inr_stt_per_minute: number | null
+  inr_llm_per_minute: number | null
+  inr_tts_per_minute: number | null
   inr_per_minute: number | null
   priced_calls: number
   missing_rates: string[]

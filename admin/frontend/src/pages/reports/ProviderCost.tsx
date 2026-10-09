@@ -33,6 +33,19 @@ const rupees = (n: number | null) =>
 
 const num = (n: number) => n.toLocaleString('en-IN')
 
+/** One leg's price: the rate per minute, and what it came to over the window. */
+function Money({ perMinute, total }: { perMinute: number | null; total: number | null }) {
+  return (
+    <td className="px-3 py-2 text-right">
+      <div className="tabular-nums">
+        {rupees(perMinute)}
+        <span className="ml-1 text-2xs text-muted-foreground">/min</span>
+      </div>
+      <div className="text-2xs text-muted-foreground tabular-nums">{rupees(total)} total</div>
+    </td>
+  )
+}
+
 export function ProviderCost() {
   const { user, can } = useAuth()
   const [range, setRange] = useState(lastSevenDays)
@@ -164,8 +177,13 @@ export function ProviderCost() {
                   <th className="px-3 py-2 text-right font-medium">LLM tokens</th>
                   <th className="px-3 py-2 text-right font-medium">STT audio</th>
                   <th className="px-3 py-2 text-right font-medium">TTS chars</th>
-                  <th className="px-3 py-2 text-right font-medium">Total</th>
-                  <th className="px-3 py-2 text-right font-medium">Per minute</th>
+                  {/* Two numbers per cell: the rate per minute, and what
+                      that came to over the window. Per minute is what you
+                      compare between rows; the total is what you paid. */}
+                  <th className="px-3 py-2 text-right font-medium">Speech to text</th>
+                  <th className="px-3 py-2 text-right font-medium">Language model</th>
+                  <th className="px-3 py-2 text-right font-medium">Voice</th>
+                  <th className="px-3 py-2 text-right font-medium">All three</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -179,9 +197,12 @@ export function ProviderCost() {
                     <td className="px-3 py-2 text-right tabular-nums">{num(r.llm_tokens)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.stt_seconds.toFixed(0)}s</td>
                     <td className="px-3 py-2 text-right tabular-nums">{num(r.tts_characters)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{rupees(r.inr_total)}</td>
+                    <Money perMinute={r.inr_stt_per_minute} total={r.inr_stt} />
+                    <Money perMinute={r.inr_llm_per_minute} total={r.inr_llm} />
+                    <Money perMinute={r.inr_tts_per_minute} total={r.inr_tts} />
                     <td className="px-3 py-2 text-right">
-                      <div className="font-medium tabular-nums">{rupees(r.inr_per_minute)}</div>
+                      <div className="font-medium tabular-nums">{rupees(r.inr_per_minute)}<span className="ml-1 text-2xs font-normal text-muted-foreground">/min</span></div>
+                      <div className="text-2xs text-muted-foreground tabular-nums">{rupees(r.inr_total)} total</div>
                       {/* Said on the row that is short, not only in the banner.
                           A reader comparing two rows needs to know which one is
                           missing a leg at the moment they compare them. */}

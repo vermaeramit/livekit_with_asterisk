@@ -1487,7 +1487,18 @@ class ProviderCostRow(BaseModel):
 
     # None rather than 0 when nothing in the group could be priced. A confident
     # zero reads as "free", and one provider here really is.
+    #
+    # Split by leg as well as totalled, because "this stack costs Rs 0.62 a
+    # minute" does not say which third to go and change. The three legs add up
+    # to the total - they are the same figures divided, not a second estimate.
+    inr_stt: float | None
+    inr_llm: float | None
+    inr_tts: float | None
     inr_total: float | None
+
+    inr_stt_per_minute: float | None
+    inr_llm_per_minute: float | None
+    inr_tts_per_minute: float | None
     inr_per_minute: float | None
 
     # How many of this row's calls could be priced at all. When it is short of
